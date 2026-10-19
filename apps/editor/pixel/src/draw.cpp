@@ -249,6 +249,8 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
     s.parent = im.groups.empty() ? -1 : im.groups.back();
     const SiteRef site = im.site_ref(im.site);
     if (const CallSite* c = im.call(site); c && site.file == 0) s.line = c->line;
+    if (site.file == 0) s.site = site.site;
+    s.module = site.file > 0;
     if (!r.color("fill", s.fill) || !r.color("stroke", s.stroke)) return false;
     r.push("stroke_width");
     const bool width = !lua_isnil(L, -1);

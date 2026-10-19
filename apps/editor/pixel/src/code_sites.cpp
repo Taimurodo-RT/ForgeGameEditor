@@ -160,10 +160,29 @@ struct Walker : Luau::AstVisitor {
 // The line of a table's item: its key's, else its value's (1-based).
 u32 item_line(const Luau::AstExprTable::Item& item) { return (item.key ? item.key->location : item.value->location).begin.line + 1; }
 
+// A drawing function by its item (part 4е): where its body ends and its last statement starts.
+DrawingFunction drawing_function_of(const Builder& b, std::string_view name, const Luau::AstExprTable::Item& item) {
+    DrawingFunction f;
+    f.name = name;
+    f.line = item_line(item);
+    auto* fn = item.value->as<Luau::AstExprFunction>();
+    if (!fn) return f;
+    // The code parsed: its body ends with end.
+    f.function = true;
+    f.end = b.lines.at(fn->location.end) - 3;
+    if (fn->body->body.size > 0) {
+        Luau::AstStat* last = fn->body->body.data[fn->body->body.size - 1];
+        f.last = static_cast<i32>(b.lines.at(last->location.begin));
+        f.last_return = last->is<Luau::AstStatReturn>();
+    }
+    return f;
+}
+
 // return { clips = { name = function(p) … end } } at the top of the chunk; the lines of the module's keys and of the
-// items of its drawings (part 4д).
+// items of its drawings (part 4д), its drawing functions (part 4е).
 void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunction>& out,
-                std::vector<std::pair<std::string, u32>>& keys, std::vector<std::pair<std::string, u32>>& drawings) {
+                std::vector<std::pair<std::string, u32>>& keys, std::vector<std::pair<std::string, u32>>& drawings,
+                std::vector<DrawingFunction>& functions) {
     Luau::AstExprTable* module = nullptr;
     for (usize i = 0; i < root->body.size; ++i)
         if (auto* r = root->body.data[i]->as<Luau::AstStatReturn>(); r && r->list.size == 1)
@@ -172,9 +191,13 @@ void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunc
     for (usize i = 0; i < module->items.size; ++i) {
         const auto& item = module->items.data[i];
         if (const std::string_view k = key_text(item); !k.empty()) keys.emplace_back(std::string(k), item_line(item));
+        if (key_text(item) == "draw") functions.insert(functions.begin(), drawing_function_of(b, "draw", item));
         if (auto* d = key_text(item) == "drawings" ? item.value->as<Luau::AstExprTable>() : nullptr)
             for (usize j = 0; j < d->items.size; ++j)
-                if (const std::string_view k = key_text(d->items.data[j]); !k.empty()) drawings.emplace_back(std::string(k), item_line(d->items.data[j]));
+                if (const std::string_view k = key_text(d->items.data[j]); !k.empty()) {
+                    drawings.emplace_back(std::string(k), item_line(d->items.data[j]));
+                    functions.push_back(drawing_function_of(b, k, d->items.data[j]));
+                }
         auto* clips = key_text(item) == "clips" ? item.value->as<Luau::AstExprTable>() : nullptr;
         if (!clips) continue;
         for (usize j = 0; j < clips->items.size; ++j) {
@@ -249,6 +272,7 @@ bool CodeSites::parse(std::string_view source, std::string& why, u32& why_line) 
     clips_.clear();
     keys_.clear();
     drawings_.clear();
+    functions_.clear();
     why.clear();
     why_line = 0;
     Luau::Allocator allocator;
@@ -268,7 +292,7 @@ bool CodeSites::parse(std::string_view source, std::string& why, u32& why_line) 
     const Builder b{source_, Lines(source_), result.cstNodeMap};
     Walker walker(b, sites_);
     result.root->visit(&walker);
-    find_clips(b, result.root, clips_, keys_, drawings_);
+    find_clips(b, result.root, clips_, keys_, drawings_, functions_);
     return true;
 }
 
@@ -288,6 +312,12 @@ u32 CodeSites::drawing_line(std::string_view name) const {
     for (const auto& [k, line] : drawings_)
         if (k == name) return line;
     return 0;
+}
+
+const DrawingFunction* CodeSites::drawing_function(std::string_view name) const {
+    for (const DrawingFunction& f : functions_)
+        if (f.name == name) return &f;
+    return nullptr;
 }
 
 std::string CodeSites::instrumented(u32 first_id) const {
@@ -406,19 +436,25 @@ bool rewrite_arg(std::string_view source, const CallSite& site, usize index, std
     return true;
 }
 
+const CodeField* field_of(const CodeArg& table, std::string_view name) {
+    if (table.kind != ArgKind::Table) return nullptr;
+    for (auto f = table.fields.rbegin(); f != table.fields.rend(); ++f)
+        if (f->name == name) return &*f;
+    return nullptr;
+}
+
 bool rewrite_field(std::string_view source, const CodeArg& table, std::string_view name, std::string_view text,
                    std::string& out, std::string& why) {
     out.clear();
     why.clear();
     if (table.kind != ArgKind::Table) return why = "там не таблица", false;
     if (table.span.end > source.size()) return why = "код изменился: место вызова устарело", false;
-    for (const CodeField& f : table.fields)
-        if (f.name == name) {
-            std::vector<Edit> edits;
-            edits.push_back({f.value.span.begin, f.value.span.end, std::string(text)});
-            out = apply_edits(source, edits);
-            return true;
-        }
+    if (const CodeField* f = field_of(table, name)) {
+        std::vector<Edit> edits;
+        edits.push_back({f->value.span.begin, f->value.span.end, std::string(text)});
+        out = apply_edits(source, edits);
+        return true;
+    }
     const std::string field = (is_name(name) ? std::string(name) : "[" + quote_string(name) + "]") + " = " +
                               std::string(text);
     std::vector<Edit> edits;
@@ -443,9 +479,7 @@ bool rewrite_field(std::string_view source, const CodeArg& table, std::string_vi
 
 bool rewrite_field_number(std::string_view source, const CodeArg& table, std::string_view name, f64 old_value,
                           f64 value, std::string& out, std::string& why) {
-    if (table.kind == ArgKind::Table)
-        for (const CodeField& f : table.fields)
-            if (f.name == name) return rewrite_number(source, f.value, old_value, value, out, why);
+    if (const CodeField* f = field_of(table, name)) return rewrite_number(source, f->value, old_value, value, out, why);
     if (!std::isfinite(value)) {
         out.clear();
         return why = "новое значение — не число", false;
@@ -472,6 +506,43 @@ bool insert_clip_line(const CodeSites& code, std::string_view source, std::strin
         edits.push_back({at, at, indent_of(source, static_cast<u32>(c->first)) + std::string(line) + end});
     } else {
         edits.push_back({c->params_end, c->params_end, " " + std::string(line)});
+    }
+    out = apply_edits(source, edits);
+    return true;
+}
+
+bool insert_drawing_line(const CodeSites& code, std::string_view source, std::string_view name, std::string_view line,
+                         std::string& out, std::string& why) {
+    out.clear();
+    why.clear();
+    const DrawingFunction* f = code.drawing_function(name);
+    const std::string what = name == "draw" ? std::string("draw") : "рисунок «" + std::string(name) + "»";
+    if (!f) {
+        why = name == "draw" ? "в коде нет draw = function(p, rng) … end" : "в drawings нет рисунка «" + std::string(name) + "»";
+        return false;
+    }
+    if (!f->function) return why = what + " — не функция в этом файле: фигура не дописывается", false;
+    if (f->end + 3 > source.size() || source.substr(f->end, 3) != "end") return why = "код изменился: место рисунка устарело", false;
+    auto line_start = [&](u32 at) {
+        while (at > 0 && source[at - 1] != '\n') --at;
+        return at;
+    };
+    // Only spaces before it on its line.
+    auto starts_line = [&](u32 at) {
+        const u32 from = line_start(at);
+        return std::all_of(source.begin() + from, source.begin() + at, [](char c) { return c == ' ' || c == '\t'; });
+    };
+    auto ending = [&](u32 at) { return at >= 2 && source[at - 2] == '\r' ? "\r\n" : "\n"; };
+    std::vector<Edit> edits;
+    const u32 before = f->last_return ? static_cast<u32>(f->last) : f->end;
+    // Alone on its line (an end on the function's line has its header before it): the call on a line of its own.
+    if (starts_line(before)) {
+        const u32 at = line_start(before);
+        const std::string indent = f->last >= 0 ? indent_of(source, static_cast<u32>(f->last)) : indent_of(source, f->end) + "  ";
+        // Ended as the line above it is (the function's header is above it).
+        edits.push_back({at, at, indent + std::string(line) + ending(at)});
+    } else {
+        edits.push_back({before, before, std::string(line) + " "});
     }
     out = apply_edits(source, edits);
     return true;

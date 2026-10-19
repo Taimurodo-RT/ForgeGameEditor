@@ -63,6 +63,9 @@ struct CodeField {
     u32 key = 0; // where the item starts
     CodeArg value;
 };
+// A table's field of that name, as the table has it: the last written, since Lua assigns the fields in order
+// ({ y = 1, y = 2 } has y 2). Null when it has none or is not a table.
+const CodeField* field_of(const CodeArg& table, std::string_view name);
 
 struct CallSite {
     u32 line = 0;          // 1-based: the line of a method's name, else of the arguments' "("
@@ -84,6 +87,17 @@ struct ClipFunction {
     u32 first_line = 0;   // and its line
 };
 
+// A drawing function of the module (part 4е of docs/models/движение-модель.md): draw = function(p, rng) … end, or an
+// item of drawings = { open = function(p, rng) … end }; where a new last line of it goes.
+struct DrawingFunction {
+    std::string name;         // "draw", else the drawing's name
+    u32 line = 0;             // 1-based, of its key
+    bool function = false;    // written here as function … end; false for draw = shared.draw and the like
+    u32 end = 0;              // where its "end" starts
+    i32 last = -1;            // where its last statement starts; -1 when its body is empty
+    bool last_return = false; // that statement is return …
+};
+
 class CodeSites {
 public:
     // False with why (the parser's words) and its line when the code does not parse; sites() is then empty.
@@ -95,6 +109,9 @@ public:
     // (drawings = { angry = function(p, rng) … end }, part 4д); 0 when there is none.
     u32 module_line(std::string_view key) const;
     u32 drawing_line(std::string_view name) const;
+    // The drawing functions: draw, then the items of drawings in their order; by name, "draw" for draw (null for none).
+    const std::vector<DrawingFunction>& drawing_functions() const { return functions_; }
+    const DrawingFunction* drawing_function(std::string_view name) const;
 
     // The source with every call through __fc / __fm, numbered from first_id in sites() order: f(a, b) is
     // __fc(id, f, a, b) and o:m(a) is __fm(id, o, "m", a). Every token stays on its line.
@@ -105,6 +122,7 @@ private:
     std::vector<CallSite> sites_;
     std::vector<ClipFunction> clips_;
     std::vector<std::pair<std::string, u32>> keys_, drawings_;
+    std::vector<DrawingFunction> functions_;
 };
 
 // A number as the editor writes it: to thousandths, without trailing zeros ("0.25", "-3", "12.5").
@@ -131,5 +149,10 @@ bool rewrite_field_number(std::string_view source, const CodeArg& table, std::st
 // A new first line of a clip function: at(0.25, part("head").rot(5, 0.1)).
 bool insert_clip_line(const CodeSites& code, std::string_view source, std::string_view clip, std::string_view line,
                       std::string& out, std::string& why);
+// A new last line of drawing function `name` ("draw", or an item of drawings), part 4е: before the line of its "end",
+// indented as its last statement (an empty one as its "end" and two spaces more); before a return that ends it; on the
+// line of an "end" that shares it, before it. A file of CRLF lines stays one. False with why.
+bool insert_drawing_line(const CodeSites& code, std::string_view source, std::string_view name, std::string_view line,
+                         std::string& out, std::string& why);
 
 } // namespace forge::pixel

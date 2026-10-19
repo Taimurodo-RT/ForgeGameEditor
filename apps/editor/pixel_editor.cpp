@@ -357,6 +357,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     bind_motion(model);
     bind_mouse(model);
     bind_view(model);
+    bind_shapes(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -621,6 +622,12 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             timeline_drag(e.motion.x * density);
             return true;
         }
+        // Part 4е: a shape dragged; the pen's line to the mouse follows it.
+        if (tooling_) {
+            shape_drag(e.motion.x * density, e.motion.y * density);
+            return true;
+        }
+        if (tool_ == Tool::Pen && !pen_.empty()) view_dirty_ = true;
         if (!dragging_ && !moving_) return false;
         drag(e.motion.x * density, e.motion.y * density);
         return true;
@@ -631,6 +638,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         }
         if (tl_drag_ != Drag::None) {
             timeline_release();
+            return true;
+        }
+        if (tooling_) {
+            shape_release();
             return true;
         }
         if (!dragging_ && !moving_) return false;
@@ -647,13 +658,25 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_SPACE: play(!playing_); return true;
     case SDLK_LEFT: shift ? to_start() : step(-1); return true;
     case SDLK_RIGHT: shift ? to_end() : step(1); return true;
-    case SDLK_L: set_loop_view(!loop_view_); return true;
+    // Part 4е: the tools; L and P are the tab's own without Shift.
+    case SDLK_V: set_tool(Tool::Select); return true;
+    case SDLK_R: set_tool(Tool::Rect); return true;
+    case SDLK_O: set_tool(Tool::Ellipse); return true;
+    case SDLK_L: shift ? set_tool(Tool::Line) : set_loop_view(!loop_view_); return true;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+        if (tool_ != Tool::Pen || pen_.empty()) return false;
+        finish_pen();
+        return true;
     case SDLK_F: center_playhead(); return true;
     case SDLK_B: range_start_here(); return true;
     case SDLK_N: range_end_here(); return true;
     case SDLK_ESCAPE:
-        if (giving_) open_give(false);
+        if (!pen_.empty()) drop_pen();
+        else if (tooling_) tooling_ = false, view_dirty_ = true;
+        else if (giving_) open_give(false);
         else if (picking_) set_picking(false);
+        else if (tool_ != Tool::Select) set_tool(Tool::Select);
         else return false;
         return true;
     // Part 3в: the vector's zoom, the grid, the point under the mouse, the eyedropper, the preview's sound.
@@ -665,7 +688,10 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_MINUS:
     case SDLK_KP_MINUS: zoom_view_by(-1); return true;
     case SDLK_APOSTROPHE: set_grid(!grid_); return true;
-    case SDLK_P: copy_coords(); return true;
+    case SDLK_P:
+        if (shift) set_tool(Tool::Pen);
+        else copy_coords();
+        return true;
     case SDLK_I: set_picking(!picking_); return true;
     case SDLK_M: set_sound(!sound_on_); return true;
     case SDLK_UP:
@@ -741,6 +767,8 @@ bool PixelEditor::open(const std::string& rel) {
 }
 
 void PixelEditor::forget_character() {
+    pen_.clear(); // part 4е: the pen and a shape dragged are the character's
+    tooling_ = false;
     t_ = play_clock_ = 0;
     frame_ = 0;
     playing_ = true;
@@ -927,7 +955,9 @@ void PixelEditor::reload() {
     std::string why;
     if (pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes->data()), bytes->size()}, d, why)) doc_ = std::move(d);
     else doc_problem_ = "«" + path_to_utf8(file_.filename()) + "»: " + why;
+    const std::string script_was = script_text_;
     load_script();
+    if (script_text_ != script_was) drop_pen(), tooling_ = false; // part 4е: the code read again
     load_picture();
     load_drawings();
     pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr, &others_);
@@ -1110,6 +1140,9 @@ vector::Point PixelEditor::posed_pivot(const std::string& id) const {
 
 void PixelEditor::press(f32 x, f32 y) {
     if (!rig_.loaded()) return;
+    if (tool_ != Tool::Select) return shape_press(x, y); // part 4е
+    // «Привязка»: the grid's step at the zoom of the press, for the drag that follows.
+    snap_step_ = snapping_ ? snap_step() : 0;
     if (!part_.empty()) {
         f32 px, py;
         if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, view_w_ / kViewPx)) {
@@ -1159,9 +1192,11 @@ void PixelEditor::drag(f32 x, f32 y) {
     if (moving_) {
         if (!move_started_ && std::hypot(x - move_x_, y - move_y_) > kMoveStart * std::max(1.0f, dp_)) start_move();
         if (!move_started_) return;
-        // Back through what carries the part: the units of its own move, to tenths.
+        // Back through what carries the part: the units of its own move, to tenths (with «Привязка», whole steps of the
+        // grid, part 4е).
         const vector::Point a = move_inv_.apply(view_to_picture(x, y)), b = move_inv_.apply(move_from_);
-        const f64 dx = std::round((a.x - b.x) * 10) / 10, dy = std::round((a.y - b.y) * 10) / 10;
+        const f64 dx = snap_step_ > 0 ? pixel::snap_steps(a.x - b.x, snap_step_) : std::round((a.x - b.x) * 10) / 10,
+                  dy = snap_step_ > 0 ? pixel::snap_steps(a.y - b.y, snap_step_) : std::round((a.y - b.y) * 10) / 10;
         if (dx != move_dx_ || dy != move_dy_) {
             move_dx_ = dx, move_dy_ = dy;
             view_dirty_ = true;
@@ -1171,8 +1206,10 @@ void PixelEditor::drag(f32 x, f32 y) {
     if (!dragging_) return;
     const i32 i = rig_.shown().part(part_);
     if (i < 0) return;
-    // Back through what carries the pivot in the pose shown: it is kept in rest units, one for every drawing.
-    const vector::Point at = pixel::inverse(rig_.shown().carried(i)).apply(view_to_picture(x, y));
+    // Back through what carries the pivot in the pose shown: it is kept in rest units, one for every drawing; with
+    // «Привязка» on the grid's lines (part 4е).
+    vector::Point at = pixel::inverse(rig_.shown().carried(i)).apply(view_to_picture(x, y));
+    if (snap_step_ > 0) at = pixel::tool_point(at, snap_step_);
     rig_.set_pivot(part_, at);
     doc_.pivots[part_] = at; // shown at once; written on release
     drag_moved_ = true;
@@ -1297,6 +1334,7 @@ bool PixelEditor::select_clip(const std::string& state) {
     block_ = -1;
     tv_.scale = tv_.start = 0; // all of the clip in sight
     hush();
+    drop_pen(); // part 4е: another clip
     if (!note_.empty() && note_ == refused_) note_.clear(); // a mouse edit's refusal was about the clip left
     recount();
     select_block(-1);
@@ -1699,6 +1737,7 @@ void PixelEditor::redraw() {
                 shown.bounds(c.index, texels, box);
                 outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
             }
+    draw_tool(vec[0], texels); // the shape being drawn (part 4е)
     vector_shown_ = vec[0];
     show(vec[0], frame_px_);
     sync_problem();
@@ -1864,6 +1903,7 @@ void PixelEditor::rebuild() {
     rebuild_console();
     rebuild_gutter();
     rebuild_inspector();
+    rebuild_shape();
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);
