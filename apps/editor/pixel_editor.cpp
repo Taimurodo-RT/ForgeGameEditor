@@ -360,6 +360,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     bind_mouse(model);
     bind_view(model);
     bind_shapes(model);
+    bind_scene(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -715,10 +716,12 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_M: set_sound(!sound_on_); return true;
     case SDLK_UP:
     case SDLK_DOWN: {
-        if (listed_.empty()) return true;
-        const auto at = std::find(listed_.begin(), listed_.end(), rel_);
-        const i64 i = at == listed_.end() ? 0 : (at - listed_.begin()) + (k.key == SDLK_UP ? -1 : 1);
-        open(listed_[static_cast<usize>(std::clamp<i64>(i, 0, static_cast<i64>(listed_.size()) - 1))]);
+        // Through the list the open one is in: the characters, or the scenes (part 6а).
+        const std::vector<std::string>& list = scene_mode_ ? scenes_ : listed_;
+        if (list.empty()) return true;
+        const auto at = std::find(list.begin(), list.end(), rel_);
+        const i64 i = at == list.end() ? 0 : (at - list.begin()) + (k.key == SDLK_UP ? -1 : 1);
+        open(list[static_cast<usize>(std::clamp<i64>(i, 0, static_cast<i64>(list.size()) - 1))]);
         return true;
     }
     default: break;
@@ -726,7 +729,7 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     // 1, 2, 3…: the clips in their order.
     if (k.key >= SDLK_1 && k.key <= SDLK_9) {
         const usize i = static_cast<usize>(k.key - SDLK_1);
-        if (i < doc_.clips.size()) select_clip(doc_.clips[i].state);
+        if (i < doc_.clips.size() && !scene_mode_) select_clip(doc_.clips[i].state);
         return true;
     }
     return false;
@@ -734,6 +737,13 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
 
 std::string PixelEditor::status() const {
     if (!has_) return listed_.empty() ? "Векторная: персонажей пока нет" : "Векторная: персонаж не выбран";
+    if (scene_mode_) {
+        std::string s = "Векторная: сцена «" + name() + "»";
+        if (scene_) s += " · " + number_words(scene_->stage().width()) + " × " + number_words(scene_->stage().height());
+        if (selected_clip()) s += " · кадр " + std::to_string(frame_ + 1) + " из " + std::to_string(whole_.frames);
+        if (!problem_.empty()) s += " · есть ошибка";
+        return s + (playing_ ? " · играет" : " · пауза");
+    }
     std::string s = "Векторная: «" + name() + "» · кадр " + std::to_string(doc_.frame_w) + " × " + std::to_string(doc_.frame_h);
     if (const pixel::ClipSpec* c = selected_clip()) {
         s += " · «" + state_name(c->state) + "» " + std::to_string(frame_ + 1) + " из " + std::to_string(whole_.frames) + " · " + number_words(c->fps) + " к/с";
@@ -744,9 +754,16 @@ std::string PixelEditor::status() const {
 
 // --- the characters ----------------------------------------------------------------
 
-std::string PixelEditor::name() const { return stem_of(path_to_utf8(file_.filename())); }
+std::string PixelEditor::name() const {
+    const std::string file = path_to_utf8(file_.filename());
+    const std::string suffix = ".scene.json";
+    if (scene_mode_ && file.size() > suffix.size() && file.compare(file.size() - suffix.size(), suffix.size(), suffix) == 0)
+        return file.substr(0, file.size() - suffix.size());
+    return stem_of(file);
+}
 
 std::string PixelEditor::state_name(const std::string& id) const {
+    if (scene_mode_ && id == "scene") return "сцена";
     for (const auto& s : states_)
         if (s.id == id) return s.name;
     return id;
@@ -763,6 +780,12 @@ bool PixelEditor::open(const std::string& rel) {
     }
     rel_ = rel;
     file_ = assets_.abs(rel);
+    scene_mode_ = is_scene_file(rel); // part 6а: a scene opens as a character does
+    scene_.reset();
+    scene_doc_ = {};
+    scene_watch_.clear();
+    shown_rigs_.clear();
+    play_ = -1;
     doc_ = {};
     rig_ = {};
     script_ = {};
@@ -910,6 +933,12 @@ void PixelEditor::open_new(const fs::path& doc_file) {
         std::replace(rel.begin(), rel.end(), '\\', '/');
         rel_ = rel;
     }
+    scene_mode_ = is_scene_file(rel_);
+    scene_.reset();
+    scene_doc_ = {};
+    scene_watch_.clear();
+    shown_rigs_.clear();
+    play_ = -1;
     doc_ = {};
     rig_ = {};
     script_ = {};
@@ -939,6 +968,23 @@ bool PixelEditor::from_svg(const std::string& svg_rel) {
 
 void PixelEditor::check_files() {
     if (file_.empty()) return;
+    if (scene_mode_) {
+        // Part 6а: the scene's file, its code, or what its stage named (a character, its code or SVG, a picture, a module).
+        if (stamp_of(file_) != doc_watch_.stamp || stamp_of(script_file()) != script_watch_.stamp || scene_files_changed()) {
+            modules_changed();
+            reload();
+        } else if (modules_changed()) {
+            script().forget();
+            recount();
+            view_dirty_ = true;
+            rebuild();
+        } else if (sounds_changed()) {
+            find_sounds();
+            rebuild_console();
+            lay_timeline();
+        }
+        return;
+    }
     fs::path svg; // none watched while the code draws the picture
     if (const std::optional<Guid> id = drawn_ ? std::nullopt : Guid::parse(doc_.svg))
         if (const assets::AssetRecord* r = assets_.find_id(*id)) svg = assets_.abs(r->path);
@@ -948,7 +994,7 @@ void PixelEditor::check_files() {
         reload();
     } else if (modules_changed()) {
         // A module the clip requires changed: recorded again.
-        script_.forget();
+        script().forget();
         recount();
         view_dirty_ = true;
         rebuild();
@@ -961,6 +1007,7 @@ void PixelEditor::check_files() {
 }
 
 void PixelEditor::reload() {
+    if (scene_mode_) return reload_scene();
     doc_problem_.clear();
     const std::optional<std::vector<u8>> bytes = file_.empty() ? std::nullopt : bytes_of(file_);
     doc_watch_ = {file_, stamp_of(file_)};
@@ -979,10 +1026,10 @@ void PixelEditor::reload() {
     if (script_text_ != script_was) drop_pen(), tooling_ = false; // part 4е: the code read again
     load_picture();
     load_drawings();
-    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr, &others_);
+    pixel::apply_pivots(rig(), doc_, drawn_ ? &drawing_ : nullptr, &others_);
     if (std::none_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == clip_; }))
         clip_ = doc_.clips.empty() ? std::string() : doc_.clips.front().state;
-    if (!part_.empty() && rig_.holder(part_).part(part_) < 0) part_.clear();
+    if (!part_.empty() && rig().holder(part_).part(part_) < 0) part_.clear();
     recount();
     if (block_ >= 0) select_block(block_); // its info and lines from the recording as it is now
     check_edited();
@@ -994,7 +1041,7 @@ void PixelEditor::load_picture() {
     draw_problem_.clear();
     picture_note_.clear();
     draw_line_ = 0;
-    drawn_ = script_.loaded() && script_.has_draw();
+    drawn_ = script().loaded() && script().has_draw();
     if (!drawn_) {
         load_svg();
         return;
@@ -1009,33 +1056,33 @@ void PixelEditor::load_picture() {
         picture_note_ = "Рисунок — из draw кода «" + doc_.script + "»; " + svg + " не используется";
     }
     pixel::Drawing d;
-    if (!script_.draw(doc_.params, doc_.seed, d)) {
-        draw_problem_ = "Рисунок «" + doc_.script + "»: " + script_.error() + (rig_.loaded() ? " (показан прежний)" : "");
-        draw_line_ = script_.error_line();
+    if (!script().draw(doc_.params, doc_.seed, d)) {
+        draw_problem_ = "Рисунок «" + doc_.script + "»: " + script().error() + (rig().loaded() ? " (показан прежний)" : "");
+        draw_line_ = script().error_line();
         return;
     }
     std::string text = pixel::drawing_svg(d, doc_.frame_w, doc_.frame_h);
-    if (text == svg_text_ && rig_.loaded()) {
+    if (text == svg_text_ && rig().loaded()) {
         drawing_ = std::move(d);
         return;
     }
     pixel::Rig fresh;
     std::string why;
     if (!fresh.load(text, why)) {
-        draw_problem_ = "Рисунок «" + doc_.script + "»: " + why + (rig_.loaded() ? " (показан прежний)" : "");
+        draw_problem_ = "Рисунок «" + doc_.script + "»: " + why + (rig().loaded() ? " (показан прежний)" : "");
         return;
     }
     rig_ = std::move(fresh);
     svg_text_ = std::move(text);
     drawing_ = std::move(d);
-    script_.forget(); // its recordings checked the parts of the picture before
+    script().forget(); // its recordings checked the parts of the picture before
 }
 
 void PixelEditor::load_drawings() {
     std::vector<pixel::NamedDrawing> drawn;
     std::string why;
     u32 line = 0;
-    if (script_.loaded() && rig_.loaded() && !pixel::draw_drawings(script_, doc_, drawn, why, line)) {
+    if (script().loaded() && rig().loaded() && !pixel::draw_drawings(script(), doc_, drawn, why, line)) {
         // The rig keeps the drawings it had: the frame shows what was drawn before.
         draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why +
                         (others_.empty() ? "" : " (показан прежний)");
@@ -1044,13 +1091,13 @@ void PixelEditor::load_drawings() {
     }
     std::string key;
     for (const pixel::NamedDrawing& d : drawn) key += d.name + '\n' + d.svg + '\n';
-    if (key == others_key_ && rig_.drawings().size() == drawn.size()) {
+    if (key == others_key_ && rig().drawings().size() == drawn.size()) {
         others_ = std::move(drawn);
         return;
     }
     // A drawing gone from the code goes from the rig: the main picture again, the drawings on it.
     pixel::Rig fresh;
-    if (!rig_.loaded() || !fresh.load(svg_text_, why)) return;
+    if (!rig().loaded() || !fresh.load(svg_text_, why)) return;
     if (!pixel::add_drawings(fresh, drawn, why, line)) {
         draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why;
         if (!draw_line_) draw_line_ = line;
@@ -1060,7 +1107,7 @@ void PixelEditor::load_drawings() {
     others_ = std::move(drawn);
     others_key_ = std::move(key);
     shown_rig_ = nullptr;
-    script_.forget(); // its recordings checked the parts of the drawings before
+    script().forget(); // its recordings checked the parts of the drawings before
 }
 
 void PixelEditor::load_svg() {
@@ -1072,24 +1119,24 @@ void PixelEditor::load_svg() {
     std::string text;
     if (svg.empty() || !read_text(svg, text)) {
         svg_problem_ = id                  ? "Рисунка SVG этого персонажа нет в «Ресурсах» (его удалили?)"
-                       : script_.loaded() ? "Нет рисунка: допишите draw в код или сделайте персонажа из SVG"
+                       : script().loaded() ? "Нет рисунка: допишите draw в код или сделайте персонажа из SVG"
                                           : "Рисунок из кода появится, когда код «" + doc_.script + "» загрузится";
         return;
     }
-    if (text == svg_text_ && rig_.loaded()) {
-        for (const std::string& line : pixel::unsupported(rig_.outline())) svg_problem_ += (svg_problem_.empty() ? "" : "\n") + line;
+    if (text == svg_text_ && rig().loaded()) {
+        for (const std::string& line : pixel::unsupported(rig().outline())) svg_problem_ += (svg_problem_.empty() ? "" : "\n") + line;
         return;
     }
     pixel::Rig fresh;
     std::string why;
     if (!fresh.load(text, why)) {
-        svg_problem_ = "Рисунок «" + path_to_utf8(svg.filename()) + "»: " + why + (rig_.loaded() ? " (показан прежний)" : "");
+        svg_problem_ = "Рисунок «" + path_to_utf8(svg.filename()) + "»: " + why + (rig().loaded() ? " (показан прежний)" : "");
         return;
     }
     rig_ = std::move(fresh);
     svg_text_ = std::move(text);
-    script_.forget(); // its recordings checked the parts of the picture before
-    for (const std::string& line : pixel::unsupported(rig_.outline())) svg_problem_ += (svg_problem_.empty() ? "" : "\n") + line;
+    script().forget(); // its recordings checked the parts of the picture before
+    for (const std::string& line : pixel::unsupported(rig().outline())) svg_problem_ += (svg_problem_.empty() ? "" : "\n") + line;
 }
 
 void PixelEditor::load_script() {
@@ -1103,11 +1150,11 @@ void PixelEditor::load_script() {
         return;
     }
     adopt_code(text);
-    if (text == script_text_ && script_.loaded()) return;
+    if (text == script_text_ && script().loaded()) return;
     pixel::PoseScript fresh;
     fresh.set_module_reader(pixel::animations_reader(game_dir));
     if (!fresh.load(text)) {
-        script_problem_ = "Скрипт «" + doc_.script + "»: " + fresh.error() + (script_.loaded() ? " (показана последняя удачная поза)" : "");
+        script_problem_ = "Скрипт «" + doc_.script + "»: " + fresh.error() + (script().loaded() ? " (показана последняя удачная поза)" : "");
         error_line_ = fresh.error_line();
         return;
     }
@@ -1122,7 +1169,7 @@ void PixelEditor::load_script() {
 // --- parts and pivots --------------------------------------------------------------
 
 bool PixelEditor::select_part(const std::string& id) {
-    if (id == part_ || (!id.empty() && rig_.holder(id).part(id) < 0)) return false; // a part of any drawing (part 4д)
+    if (id == part_ || (!id.empty() && rig().holder(id).part(id) < 0)) return false; // a part of any drawing (part 4д)
     part_ = id;
     view_dirty_ = true;
     rebuild();
@@ -1130,7 +1177,8 @@ bool PixelEditor::select_part(const std::string& id) {
 }
 
 bool PixelEditor::set_pivot(const std::string& id, vector::Point at) {
-    if (!has_ || rig_.holder(id).part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
+    if (scene_mode_) return refuse_edit("Опорные точки — у персонажа: откройте его, а сцена ставит актёра своей pivot");
+    if (!has_ || rig().holder(id).part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
     at = {std::round(at.x * 100) / 100, std::round(at.y * 100) / 100};
     pixel::PixelDoc after = doc_;
     after.pivots[id] = at;
@@ -1144,7 +1192,7 @@ vector::Point PixelEditor::view_to_picture(f32 x, f32 y) const {
 }
 
 bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
-    if (view_w_ <= 0 || view_h_ <= 0 || !rig_.loaded()) return false;
+    if (view_w_ <= 0 || view_h_ <= 0 || !rig().loaded()) return false;
     const vector::Point v = to_view().apply(p);
     x = view_x_ + static_cast<f32>(v.x * view_w_ / kViewPx);
     y = view_y_ + static_cast<f32>(v.y * view_h_ / kViewPx);
@@ -1152,17 +1200,16 @@ bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
 }
 
 vector::Point PixelEditor::posed_pivot(const std::string& id) const {
-    const pixel::Rig& r = rig_.shown();
-    const i32 i = r.part(id);
-    return i < 0 ? vector::Point{} : r.carried(i).apply(r.pivot(i));
+    const ShownPart s = const_cast<PixelEditor*>(this)->shown_part(id); // an actor's part in a scene too (part 6а)
+    return s.rig ? s.outer.apply(s.rig->carried(s.index).apply(s.rig->pivot(s.index))) : vector::Point{};
 }
 
 void PixelEditor::press(f32 x, f32 y) {
-    if (!rig_.loaded()) return;
+    if (!rig().loaded()) return;
     if (tool_ != Tool::Select) return shape_press(x, y); // part 4е
     // «Привязка»: the grid's step at the zoom of the press, for the drag that follows.
     snap_step_ = snapping_ ? snap_step() : 0;
-    if (!part_.empty()) {
+    if (!part_.empty() && !scene_mode_) {
         f32 px, py;
         if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, view_w_ / kViewPx)) {
             play(false);
@@ -1173,7 +1220,7 @@ void PixelEditor::press(f32 x, f32 y) {
         }
     }
     const std::string best = part_at(x, y);
-    if (rig_.shown().copy(best) >= 0) { // part 4г: a copy is the code's
+    if (rig().shown().copy(best) >= 0) { // part 4г: a copy is the code's
         refuse_edit("копия «" + best + "» правится в коде: copies(…)");
         return;
     }
@@ -1188,9 +1235,10 @@ void PixelEditor::press(f32 x, f32 y) {
 std::string PixelEditor::part_at(f32 x, f32 y) {
     // The smallest part under the mouse, as it stands in the pose shown: a copy drawn too (part 4г), of the drawing
     // shown (in a swap the one it goes to, part 4д).
-    pixel::Rig& r = rig_.shown();
+    pixel::Rig& r = rig().shown();
     const pixel::Affine view = to_view();
     const vector::Point v = view.apply(view_to_picture(x, y));
+    if (scene_mode_) return scene_part_at(v, view); // part 6а
     std::string best;
     f64 best_area = 1e300;
     auto take = [&](i32 i, const std::string& id) {
@@ -1223,13 +1271,13 @@ void PixelEditor::drag(f32 x, f32 y) {
         return;
     }
     if (!dragging_) return;
-    const i32 i = rig_.shown().part(part_);
+    const i32 i = rig().shown().part(part_);
     if (i < 0) return;
     // Back through what carries the pivot in the pose shown: it is kept in rest units, one for every drawing; with
     // «Привязка» on the grid's lines (part 4е).
-    vector::Point at = pixel::inverse(rig_.shown().carried(i)).apply(view_to_picture(x, y));
+    vector::Point at = pixel::inverse(rig().shown().carried(i)).apply(view_to_picture(x, y));
     if (snap_step_ > 0) at = pixel::tool_point(at, snap_step_);
-    rig_.set_pivot(part_, at);
+    rig().set_pivot(part_, at);
     doc_.pivots[part_] = at; // shown at once; written on release
     drag_moved_ = true;
     view_dirty_ = true;
@@ -1258,10 +1306,11 @@ void PixelEditor::release() {
 
 bool PixelEditor::change(const pixel::PixelDoc& changed, std::string label) {
     if (!has_) return false;
+    if (scene_mode_) return change_scene(changed, std::move(label));
     // A clip of the code is written with its frames as counted from its range now.
     pixel::PixelDoc after = changed;
     std::string why;
-    if (script_.loaded()) pixel::count_frames(script_, rig_, after, why);
+    if (script().loaded()) pixel::count_frames(script(), rig(), after, why);
     if (after == doc_) return false;
     std::optional<std::vector<u8>> before = bytes_of(file_);
     std::vector<u8> bytes = text_bytes(pixel::write_pixel_doc(after));
@@ -1275,7 +1324,7 @@ bool PixelEditor::change(const pixel::PixelDoc& changed, std::string label) {
 }
 
 bool PixelEditor::set_param(const std::string& name_, f64 value) {
-    const auto& declared = script_.params();
+    const auto& declared = script().params();
     if (!std::isfinite(value) || std::none_of(declared.begin(), declared.end(), [&](const auto& p) { return p.name == name_; })) return false;
     pixel::PixelDoc after = doc_;
     after.params[name_] = value;
@@ -1529,13 +1578,14 @@ bool PixelEditor::bake(bool over_edits) {
         rebuild();
         return false;
     };
-    if (!has_ || !rig_.loaded()) return refuse("Нечего запекать: рисунок не открыт");
-    if (!script_.loaded()) return refuse("Нечего запекать: скрипт позы не работает");
+    if (!has_ || !rig().loaded()) return refuse("Нечего запекать: рисунок не открыт");
+    if (scene_mode_) return refuse("Сцена не запекается в кадры: она отдаётся игре в части 6г");
+    if (!script().loaded()) return refuse("Нечего запекать: скрипт позы не работает");
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: запеките через миг");
     const std::vector<pixel::Rgba8> colors = doc_.game_palette && game_colors ? game_colors() : std::vector<pixel::Rgba8>{};
     pixel::Strip strip;
     std::string why;
-    if (!pixel::bake_strip(rig_, script_, doc_, pixel::bake_options(doc_, colors), frame_limit(), strip, why)) {
+    if (!pixel::bake_strip(rig(), script(), doc_, pixel::bake_options(doc_, colors), frame_limit(), strip, why)) {
         view_dirty_ = true; // the rig is at rest now
         return refuse("Не запеклось: " + why);
     }
@@ -1613,6 +1663,7 @@ bool PixelEditor::give(u64 key) {
         rebuild();
         return false;
     };
+    if (scene_mode_) return refuse("Сцена отдаётся игре в части 6г, не объекту");
     objects::Library* lib = module_.library();
     const objects::Template* t = lib ? lib->find(key) : nullptr;
     if (!t) return refuse("Такого шаблона в игре нет");
@@ -1681,10 +1732,11 @@ bool PixelEditor::give_screen() {
         rebuild();
         return false;
     };
+    if (scene_mode_) return refuse("Сцена отдаётся игре в части 6г, не экрану");
     objects::Library* lib = module_.library();
     if (!lib || lib->pictures_folder().empty()) return refuse("Отдать экрану можно в открытой игре");
-    if (!has_ || !rig_.loaded()) return refuse("Нечего отдавать: рисунок не открыт");
-    if (!script_.loaded()) return refuse("Нечего отдавать: " + (problem_.empty() ? std::string("скрипт не работает") : problem_));
+    if (!has_ || !rig().loaded()) return refuse("Нечего отдавать: рисунок не открыт");
+    if (!script().loaded()) return refuse("Нечего отдавать: " + (problem_.empty() ? std::string("скрипт не работает") : problem_));
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: отдайте через миг");
     const std::string who = name();
     const fs::path svg_path = lib->pictures_folder() / utf8_path(who + ".svg");
@@ -1710,7 +1762,7 @@ bool PixelEditor::give_screen() {
         return foreign(who + ".svg");
     pixel::ScreenGift gift;
     std::string why;
-    const bool ok = pixel::build_screen(script_, rig_, doc_, who, rel_, svg_text_, drawn_ ? &drawing_ : nullptr, others_, gift, why);
+    const bool ok = pixel::build_screen(script(), rig(), doc_, who, rel_, svg_text_, drawn_ ? &drawing_ : nullptr, others_, gift, why);
     view_dirty_ = true; // the frames were the script's: the view shows its own again
     if (!ok) return refuse(why);
     std::vector<u8> svg_bytes = text_bytes(gift.svg), motion_bytes = text_bytes(vector::write_motion_file(gift.motion));
@@ -1761,16 +1813,17 @@ void PixelEditor::redraw() {
     view_dirty_ = false;
     pose_problem_.clear();
     fit_box(); // the zoom kept within the picture as it is now
-    if (!has_ || !rig_.loaded()) {
+    if (!has_ || !rig().loaded()) {
         vector_ = frame_px_ = vector_shown_ = {};
         show({}, {});
         sync_problem();
         return;
     }
+    if (scene_mode_) return redraw_scene();
     const std::vector<pixel::Rgba8> colors = doc_.game_palette && game_colors ? game_colors() : std::vector<pixel::Rgba8>{};
     const pixel::BakeOptions options = pixel::bake_options(doc_, colors);
     const pixel::ClipSpec* c = selected_clip();
-    const bool scripted = c && script_.loaded();
+    const bool scripted = c && script().loaded();
     std::string why;
 
     // The frames shown: the playhead's, and those either side of it for «Калька» (the whole clip's frames).
@@ -1791,7 +1844,7 @@ void PixelEditor::redraw() {
         for (usize i = 0; i < ks.size(); ++i)
             if (!pose_at(*c, ts[i], ks[i], poses[i], why)) {
                 pose_problem_ = "Скрипт «" + doc_.script + "»: " + why;
-                error_line_ = script_.error_line();
+                error_line_ = script().error_line();
                 if (!vector_.rgba8.empty()) { // the views stay on the last pose that worked
                     sync_problem();
                     return;
@@ -1810,18 +1863,18 @@ void PixelEditor::redraw() {
     shown_ok_ = scripted && pose_problem_.empty();
 
     // Pixel frames as they bake: the rig's moves in whole pixels.
-    const f64 scale = rig_.to_pixels(doc_.frame_w, doc_.frame_h).a;
+    const f64 scale = rig().to_pixels(doc_.frame_w, doc_.frame_h).a;
     std::vector<assets::CookedTexture> px(ks.size());
     for (usize i = 0; i < ks.size(); ++i) {
-        rig_.pose(poses[i], why, scale > 0 ? 1 / scale : 0);
-        px[i] = rig_.bake(doc_.frame_w, doc_.frame_h, options);
+        rig().pose(poses[i], why, scale > 0 ? 1 / scale : 0);
+        px[i] = rig().bake(doc_.frame_w, doc_.frame_h, options);
     }
     // The vector, smooth; the shown pose last, so the pivot is found in it.
     std::vector<assets::CookedTexture> vec(ks.size());
     const pixel::Affine texels = to_texels();
     for (usize i = ks.size(); i-- > 0;) {
-        if (!rig_.pose(poses[i], why) && i == 0 && pose_problem_.empty()) pose_problem_ = why;
-        vec[i] = rig_.draw(view_px(), view_px(), texels);
+        if (!rig().pose(poses[i], why) && i == 0 && pose_problem_.empty()) pose_problem_ = why;
+        vec[i] = rig().draw(view_px(), view_px(), texels);
     }
     for (usize i = 1; i < ks.size(); ++i) {
         over_faint(vec[0], vec[i], kOnion);
@@ -1832,7 +1885,7 @@ void PixelEditor::redraw() {
     // The grid over the picture, under the marks: its cell 8 points or more.
     if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
     // Marks on the drawing shown (part 4д); the tree is of it too, made again when the frame shows another.
-    pixel::Rig& shown = rig_.shown();
+    pixel::Rig& shown = rig().shown();
     if (const i32 pi = shown.part(part_); pi >= 0) {
         f64 box[4];
         shown.bounds(pi, texels, box);
@@ -1863,6 +1916,83 @@ void PixelEditor::redraw() {
     rebuild_part();
 }
 
+// A scene's frame (part 6а of docs/models/сцены-модель.md): the stage and its actors posed by the recording on the
+// timeline, smooth; no pixel frame.
+void PixelEditor::redraw_scene() {
+    const pixel::ClipSpec* c = selected_clip();
+    const bool scripted = c && script().loaded() && scene_;
+    std::string why;
+    // The frames shown: the playhead's, and those either side of it for «Калька».
+    std::vector<u32> ks{frame_};
+    std::vector<f64> ts{t_};
+    if (onion_ && c && whole_.frames > 1)
+        for (i64 d : {-1, 1}) {
+            const i64 k = static_cast<i64>(frame_) + d;
+            if (k < 0 || k >= static_cast<i64>(whole_.frames)) continue;
+            ks.push_back(static_cast<u32>(k));
+            ts.push_back(whole_.time(static_cast<u32>(k)));
+        }
+    std::vector<pixel::Pose> poses(ks.size());
+    if (scripted)
+        for (usize i = 0; i < ks.size(); ++i)
+            if (!pose_at(*c, ts[i], ks[i], poses[i], why)) {
+                pose_problem_ = "Сцена «" + doc_.script + "»: " + why;
+                error_line_ = script().error_line();
+                if (!vector_.rgba8.empty()) { // the view stays on the last frame that worked
+                    sync_problem();
+                    return;
+                }
+                poses.assign(ks.size(), {});
+                break;
+            }
+    if (pose_problem_.empty() && script_problem_.empty()) error_line_ = 0;
+    // The part being dragged, moved by the mouse so far (its code changes on release).
+    if (move_started_ && !part_.empty() && (move_dx_ != 0 || move_dy_ != 0)) {
+        pixel::PartPose& pp = poses[0].parts[part_];
+        pp.x += move_dx_;
+        pp.y += move_dy_;
+    }
+    shown_pose_ = poses[0];
+    shown_ok_ = scripted && pose_problem_.empty();
+    // The actors play their clips by the plays of the recording on the timeline.
+    const pixel::Recording* rec = rec_ok_ ? &rec_ : nullptr;
+    std::vector<assets::CookedTexture> vec(ks.size());
+    const pixel::Affine texels = to_texels();
+    for (usize i = ks.size(); i-- > 0;) {
+        if (scene_ && !scene_->pose(ts[i], rec, poses[i]) && i == 0 && pose_problem_.empty()) pose_problem_ = "Сцена: " + scene_->error();
+        vec[i] = rig().draw(view_px(), view_px(), texels);
+    }
+    for (usize i = 1; i < ks.size(); ++i) over_faint(vec[0], vec[i], kOnion);
+    vector_ = vec[0];
+    frame_px_ = {};
+    if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
+    const i64 k = std::max<i64>(1, std::lround(dp_));
+    if (const ShownPart s = shown_part(part_); s.rig) {
+        f64 box[4];
+        s.rig->bounds(s.index, texels * s.outer, box);
+        const vector::Point at = texels.apply(s.outer.apply(s.rig->carried(s.index).apply(s.rig->pivot(s.index))));
+        mark(vec[0], box, at.x, at.y, k);
+    }
+    if (const ShownPart s = shown_part(hovered_); s.rig) {
+        f64 box[4];
+        s.rig->bounds(s.index, texels * s.outer, box);
+        outline(vec[0], box, k);
+    }
+    vector_shown_ = vec[0];
+    show(vec[0], {});
+    sync_problem();
+    // The tree is of the drawings shown: made again when an actor shows another.
+    std::vector<const pixel::Rig*> shown{&rig().shown()};
+    if (scene_)
+        for (const pixel::StageItem& it : scene_->stage().items)
+            if (const pixel::Rig* a = rig().hosted(it.id)) shown.push_back(&a->shown());
+    if (shown != shown_rigs_) {
+        shown_rigs_ = std::move(shown);
+        rebuild();
+    }
+    rebuild_part();
+}
+
 void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTexture& px) {
     if (!ui_) return;
     // The pictures before the last ones are shown by nothing now: the views took the last ones at the UI's update.
@@ -1870,17 +2000,21 @@ void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTex
         if (!old.empty()) ui_->drop_image(old);
     for (usize i = 0; i < 3; ++i) images_[1][i] = images_[0][i], images_[0][i].clear();
     m_vector_ = m_pixel_ = m_one_ = "";
-    if (!vec.rgba8.empty() && !px.rgba8.empty()) {
+    // A scene has no pixel frame (part 6а): its vector alone.
+    if (!vec.rgba8.empty() && (!px.rgba8.empty() || scene_mode_)) {
         const std::string n = std::to_string(++image_serial_);
-        const u32 s = std::max(1u, view_px() / std::max(px.width, px.height));
-        const assets::CookedTexture big = bigger(px, s);
-        images_[0][0] = "px_v_" + n, images_[0][1] = "px_p_" + n, images_[0][2] = "px_1_" + n;
+        images_[0][0] = "px_v_" + n;
         ui_->set_image(images_[0][0], vec.rgba8.data(), vec.width, vec.height);
-        ui_->set_image(images_[0][1], big.rgba8.data(), big.width, big.height);
-        ui_->set_image(images_[0][2], px.rgba8.data(), px.width, px.height);
         m_vector_ = "/memory/" + images_[0][0];
-        m_pixel_ = "/memory/" + images_[0][1];
-        m_one_ = "/memory/" + images_[0][2];
+        if (!px.rgba8.empty()) {
+            const u32 s = std::max(1u, view_px() / std::max(px.width, px.height));
+            const assets::CookedTexture big = bigger(px, s);
+            images_[0][1] = "px_p_" + n, images_[0][2] = "px_1_" + n;
+            ui_->set_image(images_[0][1], big.rgba8.data(), big.width, big.height);
+            ui_->set_image(images_[0][2], px.rgba8.data(), px.width, px.height);
+            m_pixel_ = "/memory/" + images_[0][1];
+            m_one_ = "/memory/" + images_[0][2];
+        }
     }
     dirty("px_vector");
     dirty("px_pixel");
@@ -1898,7 +2032,7 @@ void PixelEditor::rebuild_list() {
             sub = std::to_string(d.frame_w) + " × " + std::to_string(d.frame_h) + " · " +
                   count_words(static_cast<u32>(d.clips.size()), "клип", "клипа", "клипов");
         else sub = "не читается";
-        rows.push_back({stem_of(path_to_utf8(utf8_path(r.path).filename())), sub, r.path == rel_});
+        rows.push_back({stem_of(path_to_utf8(utf8_path(r.path).filename())), sub, !scene_mode_ && r.path == rel_});
     }
     std::vector<std::string> svgs;
     std::vector<SvgRow> svg_rows;
@@ -1913,6 +2047,7 @@ void PixelEditor::rebuild_list() {
     m_svgs_ = std::move(svg_rows);
     dirty("px_list");
     dirty("px_svgs");
+    rebuild_scene_list(); // part 6а
 }
 
 void PixelEditor::rebuild_states() {
@@ -1958,22 +2093,28 @@ void PixelEditor::check_edited() {
 void PixelEditor::rebuild() {
     sync_problem();
     for (Row& r : m_list_) r.selected = false;
-    for (usize i = 0; i < listed_.size() && i < m_list_.size(); ++i) m_list_[i].selected = listed_[i] == rel_;
+    for (usize i = 0; i < listed_.size() && i < m_list_.size(); ++i) m_list_[i].selected = !scene_mode_ && listed_[i] == rel_;
+    for (usize i = 0; i < scenes_.size() && i < m_scenes_.size(); ++i) m_scenes_[i].selected = scene_mode_ && scenes_[i] == rel_;
     m_has_ = has_;
+    m_scene_ = scene_mode_;
     m_name_ = has_ ? name() : std::string();
     m_note_ = note_;
     m_parts_.clear();
-    // The parts of the drawing the frame shows (part 4д).
-    const pixel::Rig& shown = rig_.shown();
-    for (const pixel::Part& p : shown.parts()) {
-        int depth = 0;
-        for (i32 q = p.parent; q >= 0; q = shown.parts()[static_cast<usize>(q)].parent) ++depth;
-        const vector::Point pv = shown.pivot(shown.part(p.id));
-        m_parts_.push_back({p.id, number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10), depth, p.shape,
-                            p.id == part_});
+    if (scene_mode_) {
+        scene_rows(); // part 6а: the stage's, an actor's parts inside it
+    } else {
+        // The parts of the drawing the frame shows (part 4д).
+        const pixel::Rig& shown = rig().shown();
+        for (const pixel::Part& p : shown.parts()) {
+            int depth = 0;
+            for (i32 q = p.parent; q >= 0; q = shown.parts()[static_cast<usize>(q)].parent) ++depth;
+            const vector::Point pv = shown.pivot(shown.part(p.id));
+            m_parts_.push_back({p.id, number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10), depth, p.shape,
+                                p.id == part_});
+        }
     }
     m_params_.clear();
-    for (const pixel::ScriptParam& p : script_.params()) {
+    for (const pixel::ScriptParam& p : script().params()) {
         const auto it = doc_.params.find(p.name);
         m_params_.push_back({p.name, number_words(it != doc_.params.end() ? it->second : p.value)});
     }
@@ -1999,6 +2140,7 @@ void PixelEditor::rebuild() {
     m_clip_name_.clear();
     for (const StateChip& s : m_states_)
         if (s.selected) m_clip_name_ = s.name;
+    if (scene_mode_) m_clip_name_ = "сцена";
     m_clip_frames_ = c ? static_cast<int>(clip_frames(c->state)) : 0;
     m_clip_loop_ = c ? c->loop : true;
     for (usize i = 0; i < m_fps_.size(); ++i) m_fps_[i].selected = c && std::fabs(objects::kClipFps[i] - c->fps) < 1e-4f;
@@ -2019,6 +2161,7 @@ void PixelEditor::rebuild() {
     rebuild_gutter();
     rebuild_inspector();
     rebuild_shape();
+    rebuild_actor_clip();
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);
@@ -2062,7 +2205,7 @@ void PixelEditor::rebuild() {
     for (const char* var : {"px_list", "px_parts", "px_params", "px_states", "px_frames", "px_fps", "px_templates", "px_name", "px_note", "px_frame_label", "px_clip_name", "px_seed", "px_fw", "px_fh", "px_outline_color", "px_picture", "px_size",
                             "px_total", "px_limit", "px_clip_frames", "px_has", "px_has_clip", "px_playing", "px_onion", "px_game_palette", "px_outline",
                             "px_clip_loop", "px_giving", "px_can_give", "px_code_clip", "px_clip_cut", "px_has_rec", "px_stale", "px_has_range",
-                            "px_code_name", "px_code_unsaved", "px_code_conflict", "px_loop_view"})
+                            "px_code_name", "px_code_unsaved", "px_code_conflict", "px_loop_view", "px_scenes", "px_scene"})
         dirty(var);
 }
 

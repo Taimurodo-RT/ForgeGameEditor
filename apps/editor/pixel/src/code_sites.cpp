@@ -178,8 +178,25 @@ DrawingFunction drawing_function_of(const Builder& b, std::string_view name, con
     return f;
 }
 
-// return { clips = { name = function(p) … end } } at the top of the chunk; the lines of the module's keys and of the
-// items of its drawings (part 4д), its drawing functions (part 4е).
+// A clip function by its name and its function.
+ClipFunction clip_function_of(const Builder& b, std::string_view name, Luau::AstExprFunction* fn) {
+    ClipFunction f;
+    f.name = name;
+    Luau::Position after = fn->argLocation ? fn->argLocation->end : fn->location.begin;
+    if (fn->returnAnnotation) after = fn->returnAnnotation->location.end;
+    f.params_end = b.lines.at(after);
+    f.header_line = after.line + 1;
+    if (fn->body->body.size > 0) {
+        const Luau::Position first = fn->body->body.data[0]->location.begin;
+        f.first = static_cast<i32>(b.lines.at(first));
+        f.first_line = first.line + 1;
+    }
+    return f;
+}
+
+// return { clips = { name = function(p) … end } } at the top of the chunk, or a scene's return { stage = …, scene =
+// function(p) … end } (its one clip «scene», part 6а); the lines of the module's keys and of the items of its drawings
+// (part 4д), its drawing functions (part 4е).
 void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunction>& out,
                 std::vector<std::pair<std::string, u32>>& keys, std::vector<std::pair<std::string, u32>>& drawings,
                 std::vector<DrawingFunction>& functions) {
@@ -188,6 +205,8 @@ void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunc
         if (auto* r = root->body.data[i]->as<Luau::AstStatReturn>(); r && r->list.size == 1)
             module = r->list.data[0]->as<Luau::AstExprTable>();
     if (!module) return;
+    bool staged = false;
+    for (usize i = 0; i < module->items.size; ++i) staged = staged || key_text(module->items.data[i]) == "stage";
     for (usize i = 0; i < module->items.size; ++i) {
         const auto& item = module->items.data[i];
         if (const std::string_view k = key_text(item); !k.empty()) keys.emplace_back(std::string(k), item_line(item));
@@ -198,6 +217,7 @@ void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunc
                     drawings.emplace_back(std::string(k), item_line(d->items.data[j]));
                     functions.push_back(drawing_function_of(b, k, d->items.data[j]));
                 }
+        if (auto* fn = staged && key_text(item) == "scene" ? item.value->as<Luau::AstExprFunction>() : nullptr) out.push_back(clip_function_of(b, "scene", fn));
         auto* clips = key_text(item) == "clips" ? item.value->as<Luau::AstExprTable>() : nullptr;
         if (!clips) continue;
         for (usize j = 0; j < clips->items.size; ++j) {
@@ -205,18 +225,7 @@ void find_clips(const Builder& b, Luau::AstStatBlock* root, std::vector<ClipFunc
             auto* fn = c.value->as<Luau::AstExprFunction>();
             const std::string_view name = key_text(c);
             if (!fn || name.empty()) continue;
-            ClipFunction f;
-            f.name = name;
-            Luau::Position after = fn->argLocation ? fn->argLocation->end : fn->location.begin;
-            if (fn->returnAnnotation) after = fn->returnAnnotation->location.end;
-            f.params_end = b.lines.at(after);
-            f.header_line = after.line + 1;
-            if (fn->body->body.size > 0) {
-                const Luau::Position first = fn->body->body.data[0]->location.begin;
-                f.first = static_cast<i32>(b.lines.at(first));
-                f.first_line = first.line + 1;
-            }
-            out.push_back(std::move(f));
+            out.push_back(clip_function_of(b, name, fn));
         }
     }
 }

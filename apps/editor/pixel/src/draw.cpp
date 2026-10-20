@@ -2,6 +2,7 @@
 
 #include "script_impl.h"
 
+#include "forge/core/time.h"
 #include "forge/pixel/code_sites.h"
 #include "forge/pixel/rig.h"
 #include "forge/vector/svg_shape.h"
@@ -99,9 +100,10 @@ struct Reader {
     const std::string& id;
     int opts; // the fields' table on the stack; 0 when none
     std::string& err;
+    const char* call = nullptr; // the call, when it is not a shape's (picture, actor of a scene)
 
     bool fail(const std::string& text) {
-        if (err.empty()) err = named(kind, id) + ": " + text;
+        if (err.empty()) err = (call ? std::string(call) + " «" + id + "»" : named(kind, id)) + ": " + text;
         return false;
     }
     // Pushes the field (nil when there is none), raw: a metatable of the author's runs nothing here.
@@ -204,7 +206,7 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
     std::string& err = im.draw_error;
     err.clear();
     if (im.mode != Mode::Draw || !im.drawing) {
-        err = std::string(what) + " рисует только внутри draw = function(p, rng) … end";
+        err = std::string(what) + (im.scene ? " рисует только внутри stage = function(p, rng) … end" : " рисует только внутри draw = function(p, rng) … end");
         return false;
     }
     std::string id;
@@ -356,7 +358,8 @@ int api_group(lua_State* L) {
 
 int api_canvas(lua_State* L) {
     PoseScript::Impl& im = impl_of(L);
-    if (im.mode != Mode::Draw || !im.drawing) luaL_error(L, "canvas — только внутри draw = function(p, rng) … end");
+    if (im.mode != Mode::Draw || !im.drawing)
+        luaL_error(L, im.scene ? "canvas — только внутри stage = function(p, rng) … end" : "canvas — только внутри draw = function(p, rng) … end");
     Drawing& d = *im.drawing;
     if (d.canvas) luaL_error(L, "canvas — один раз");
     if (!d.shapes.empty()) luaL_error(L, "canvas — до первой фигуры");
@@ -367,6 +370,156 @@ int api_canvas(lua_State* L) {
     d.height = h;
     const SiteRef site = im.site_ref(im.site);
     if (const CallSite* c = im.call(site); c && site.file == 0) d.canvas_line = c->line;
+    return 0;
+}
+
+// ---- a scene's stage (part 6а of docs/models/сцены-модель.md) ----
+
+// picture("лес", "картинки/лес.png", { x, y, w, h }) and actor("ёжик", "персонажи/Ёжик", { x, y, scale, sx, sy, rot,
+// pivot, params }): an item of the stage and the group it is drawn in, on the scene itself. False with im.draw_error.
+bool add_item(lua_State* L, PoseScript::Impl& im, StageItem::Kind kind) {
+    const bool picture = kind == StageItem::Kind::Picture;
+    const char* what = picture ? "picture" : "actor";
+    std::string& err = im.draw_error;
+    err.clear();
+    if (im.mode != Mode::Draw || !im.drawing || !im.stage) {
+        err = std::string(what) + (picture ? "(id, файл, { x, y, w, h })" : "(id, персонаж, { x, y, scale, pivot })") +
+              " — только в stage = function(p, rng) … end сцены";
+        return false;
+    }
+    if (lua_type(L, 1) != LUA_TSTRING) {
+        err = std::string(what) + ": первым идёт id строкой: " + what + (picture ? "(\"лес\", \"картинки/лес.png\")" : "(\"ёжик\", \"персонажи/Ёжик\")");
+        return false;
+    }
+    const std::string id = lua_tostring(L, 1);
+    if (!good_id(id)) {
+        err = std::string(what) + ": id «" + id + "» — буквы, цифры, _ и -, не с цифры и не с -";
+        return false;
+    }
+    int opts = lua_istable(L, 3) ? 3 : 0;
+    Reader r{L, Kind::Group, id, opts, err, what};
+    if (lua_type(L, 2) != LUA_TSTRING || !*lua_tostring(L, 2))
+        return r.fail(picture ? "вторым — путь картинки в «Ресурсах»: \"картинки/лес.png\"" : "вторым — путь персонажа в «Ресурсах»: \"персонажи/Ёжик\"");
+    const std::string file = lua_tostring(L, 2);
+    if (!lua_isnoneornil(L, 3) && !opts) return r.fail("третьим — таблица полей");
+    if (lua_gettop(L) > 3) return r.fail("id, файл и таблица — не больше");
+    if (opts) {
+        lua_pushnil(L);
+        while (lua_next(L, opts)) {
+            lua_pop(L, 1);
+            const std::string f = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : std::string("?");
+            const bool known = picture ? f == "x" || f == "y" || f == "w" || f == "h"
+                                       : f == "x" || f == "y" || f == "scale" || f == "sx" || f == "sy" || f == "rot" ||
+                                             f == "pivot" || f == "params";
+            if (!known) {
+                lua_pop(L, 1);
+                return r.fail("поля «" + f + "» нет (есть " + (picture ? "x, y, w, h" : "x, y, scale, sx, sy, rot, pivot, params") + ")");
+            }
+        }
+    }
+    Drawing& d = *im.drawing;
+    Stage& st = *im.stage;
+    if (!im.groups.empty()) return r.fail("ставится на саму сцену, не в группу");
+    if (im.drawn_ids.count(id)) return r.fail("id «" + id + "» уже есть на сцене");
+    if (st.items.size() >= kMaxSceneItems) return r.fail("картинок и актёров на сцене больше " + std::to_string(kMaxSceneItems));
+    if (d.shapes.size() >= kMaxDrawShapes) return r.fail("фигур больше " + std::to_string(kMaxDrawShapes));
+    StageItem it;
+    it.kind = kind;
+    it.id = id;
+    it.file = file;
+    const SiteRef site = im.site_ref(im.site);
+    if (const CallSite* c = im.call(site); c && site.file == 0) it.line = c->line;
+    if (site.file == 0) it.site = site.site;
+    if (!r.number("x", false, 0, it.x) || !r.number("y", false, 0, it.y)) return false;
+    std::string why;
+    if (picture) {
+        f64 w = 0, h = 0;
+        if (!im.hooks || !im.hooks->picture) return r.fail("картинок здесь не читают");
+        const u64 since = time_now_ns();
+        const bool got = im.hooks->picture(file, w, h, why);
+        im.hook_done(since);
+        if (!got) return r.fail(why);
+        r.push("w");
+        const bool has_w = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        r.push("h");
+        const bool has_h = !lua_isnil(L, -1);
+        lua_pop(L, 1);
+        if (has_w != has_h) return r.fail("w и h — вместе: без них картинка своего размера");
+        if (has_w && (!r.number("w", true, w, it.w) || !r.number("h", true, h, it.h))) return false;
+        if (has_w && (!(it.w > 0) || !(it.h > 0))) return r.fail("w и h больше 0");
+        it.sized = has_w;
+        if (!has_w) it.w = w, it.h = h;
+    } else {
+        f64 area[4] = {0, 0, 0, 0};
+        if (!im.hooks || !im.hooks->character) return r.fail("персонажей здесь не читают");
+        const u64 since = time_now_ns();
+        const bool got = im.hooks->character(file, area, why);
+        im.hook_done(since);
+        if (!got) return r.fail(why);
+        it.origin = {area[0], area[1]};
+        it.w = area[2], it.h = area[3];
+        if (!r.number("scale", false, 1, it.scale) || !r.number("sx", false, 1, it.sx) || !r.number("sy", false, 1, it.sy) ||
+            !r.number("rot", false, 0, it.rot))
+            return false;
+        bool has_pivot = false;
+        if (!r.point("pivot", has_pivot, it.pivot)) return false;
+        r.push("params");
+        bool ok = lua_isnil(L, -1) || lua_istable(L, -1);
+        if (ok && lua_istable(L, -1)) {
+            const int t = lua_gettop(L);
+            lua_pushnil(L);
+            while (ok && lua_next(L, t)) {
+                ok = lua_type(L, -2) == LUA_TSTRING && lua_type(L, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(L, -1));
+                if (ok) it.params[lua_tostring(L, -2)] = lua_tonumber(L, -1);
+                lua_pop(L, 1);
+            }
+            if (!ok) lua_pop(L, 1); // the key lua_next left
+        }
+        lua_pop(L, 1);
+        if (!ok) return r.fail("params — таблица чисел по именам параметров персонажа: params = { speed = 2 }");
+    }
+    DrawShape g;
+    g.kind = Kind::Group;
+    g.id = id;
+    g.line = it.line;
+    g.site = it.site;
+    g.module = site.file > 0;
+    it.group = static_cast<i32>(d.shapes.size());
+    im.drawn_ids.insert(id);
+    d.shapes.push_back(std::move(g));
+    st.items.push_back(std::move(it));
+    return true;
+}
+
+int api_picture(lua_State* L) {
+    PoseScript::Impl& im = impl_of(L);
+    if (!add_item(L, im, StageItem::Kind::Picture)) raise(L, im);
+    return 0;
+}
+
+// actor(…) of the stage, and actor("ёжик") of scene(p): the actor's handle (motion_record.cpp).
+int api_actor(lua_State* L) {
+    PoseScript::Impl& im = impl_of(L);
+    if (im.mode != Mode::Draw) return scene_actor(L);
+    if (!add_item(L, im, StageItem::Kind::Actor)) raise(L, im);
+    return 0;
+}
+
+// background("#203040"): the scene's fill under all, once.
+int api_background(lua_State* L) {
+    PoseScript::Impl& im = impl_of(L);
+    if (im.mode != Mode::Draw || !im.stage) luaL_error(L, "background(цвет) — только в stage = function(p, rng) … end сцены");
+    if (!im.stage->background.empty()) luaL_error(L, "background — один раз");
+    u8 rgb[3];
+    const char* text = lua_type(L, 1) == LUA_TSTRING ? lua_tostring(L, 1) : nullptr;
+    if (!text || !vector::parse_svg_color(text, rgb) || lua_gettop(L) != 1)
+        luaL_error(L, "background(цвет): один цвет строкой, \"#203040\"");
+    char hex[8];
+    std::snprintf(hex, sizeof hex, "#%02x%02x%02x", rgb[0], rgb[1], rgb[2]);
+    im.stage->background = hex;
+    const SiteRef site = im.site_ref(im.site);
+    if (const CallSite* c = im.call(site); c && site.file == 0) im.stage->background_line = c->line;
     return 0;
 }
 
@@ -387,9 +540,10 @@ std::string escaped(std::string_view s) {
 } // namespace
 
 void register_draw_api(lua_State* L) {
-    const std::pair<const char*, lua_CFunction> fns[] = {{"canvas", &api_canvas}, {"rect", &api_rect},   {"circle", &api_circle},
-                                                         {"ellipse", &api_ellipse}, {"line", &api_line}, {"poly", &api_poly},
-                                                         {"path", &api_path},       {"group", &api_group}};
+    const std::pair<const char*, lua_CFunction> fns[] = {{"canvas", &api_canvas},   {"rect", &api_rect},       {"circle", &api_circle},
+                                                         {"ellipse", &api_ellipse}, {"line", &api_line},       {"poly", &api_poly},
+                                                         {"path", &api_path},       {"group", &api_group},     {"picture", &api_picture},
+                                                         {"actor", &api_actor},     {"background", &api_background}};
     for (const auto& [name, fn] : fns) {
         lua_pushcfunction(L, fn, name);
         lua_setglobal(L, name);
@@ -437,7 +591,11 @@ std::string drawing_svg(const Drawing& d, u32 w, u32 h) {
         }
         case Kind::Path: out += " d=\"" + escaped(s.d) + "\""; break;
         case Kind::Group: {
-            std::string t;
+            std::string t = s.transform;
+            if (!t.empty()) {
+                out += " transform=\"" + escaped(t) + "\"";
+                break;
+            }
             if (s.x != 0 || s.y != 0) t += "translate(" + format_number(s.x) + " " + format_number(s.y) + ")";
             if (s.rot != 0) t += (t.empty() ? "" : " ") + std::string("rotate(") + format_number(s.rot) + ")";
             if (s.scale != 1) t += (t.empty() ? "" : " ") + std::string("scale(") + format_number(s.scale) + ")";
@@ -491,11 +649,12 @@ std::string drawing_names(const PoseScript::Impl& im) {
 }
 
 // Runs the drawing function on top of T's stack (the module under it) into out: what draw and draw_named share.
-bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
+bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string, f64>& values, u64 seed, Drawing& out,
+                 const char* chance = "draw") {
     push_params(im, T, values);
     lua_getglobal(T, "rng");
     // The drawing's chance: from the seed alone, the same on every run.
-    im.rng = frame_seed(seed, 0, "draw");
+    im.rng = frame_seed(seed, 0, chance);
     Drawing d;
     im.drawing = &d;
     im.drawn_ids.clear();
@@ -514,7 +673,7 @@ bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string,
     if (!ok) {
         im.fail(lua_tostring(T, -1));
         lua_pop(T, 1);
-    } else if (d.shapes.empty()) {
+    } else if (d.shapes.empty() && !im.stage) { // an empty stage is a scene of its background alone
         im.error = "draw ничего не нарисовал: rect, circle, ellipse, line, poly, path, group";
         ok = false;
     }
@@ -524,6 +683,35 @@ bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string,
 }
 
 } // namespace
+
+bool PoseScript::stage(const std::map<std::string, f64>& values, u64 seed, const SceneHooks& hooks, Stage& out) {
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!im.scene) {
+        im.error = "это не сцена: в коде нет stage = function(p, rng) … end и scene = function(p) … end";
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    lua_getfield(T, -1, "stage");
+    Stage st;
+    im.stage = &st;
+    im.hooks = &hooks;
+    Drawing d;
+    const bool ok = run_drawing(im, T, values, seed, d, "stage");
+    im.stage = nullptr;
+    im.hooks = nullptr;
+    if (!ok) return false;
+    st.drawing = std::move(d);
+    out = std::move(st);
+    return true;
+}
 
 bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
     Impl& im = *impl_;

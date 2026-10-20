@@ -272,6 +272,30 @@ bool edit_start(const Recording& rec, const Block& b, f64 start, const CodeSites
     return rewrite_number(source, arg, old, value, out, why);
 }
 
+namespace {
+
+// A play's start as a block's: what start_call and edit_start read of it.
+Block play_block(const ActorPlay& play) {
+    Block b;
+    b.start = play.start;
+    b.length = play.length;
+    b.site = play.site;
+    b.start_site = play.start_site;
+    return b;
+}
+
+} // namespace
+
+bool can_edit_play_start(const Recording& rec, const ActorPlay& play, const CodeSites& code, std::string& why) {
+    why.clear();
+    return start_call(rec, play_block(play), code, why) != nullptr;
+}
+
+bool edit_play_start(const Recording& rec, const ActorPlay& play, f64 start, const CodeSites& code, std::string_view source,
+                     std::string& out, std::string& why) {
+    return edit_start(rec, play_block(play), start, code, source, out, why);
+}
+
 bool edit_pause(const Recording& rec, const Pause& pause, f64 length, const CodeSites& code, std::string_view source,
                 std::string& out, std::string& why) {
     out.clear();

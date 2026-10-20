@@ -467,6 +467,15 @@ struct Rig::Impl {
     bool swap = false;
     std::string swap_from;
 
+    // Part 6а of the scenes model: what is drawn in group parts of this picture (host), an actor or pixels; and whether
+    // this one is drawn only so, through another rig (no canvas of its own).
+    struct Host {
+        i32 part = -1;
+        Rig* actor = nullptr; // null for pixels
+    };
+    std::vector<Host> hosts;
+    bool hosted = false;
+
     ~Impl() {
         if (canvas) {
             canvas->remove(pic);
@@ -503,8 +512,27 @@ struct Rig::Impl {
         }
     }
 
+    // The actors hosted show the pictures their last poses did: the one shown, in a swap the old one too, under it.
+    void sync_hosts() {
+        for (const Host& h : hosts) {
+            if (!h.actor) continue;
+            Rig& a = *h.actor;
+            Rig& to = a.shown();
+            Rig* from = a.impl_->swap ? a.drawing(a.impl_->swap_from) : nullptr;
+            a.impl_->pic->visible(&a == &to || &a == from);
+            for (auto& [name, d] : a.impl_->drawings) d.impl_->pic->visible(&d == &to || &d == from);
+            if (!from || from == &to) continue;
+            auto* scene = static_cast<tvg::Scene*>(recs[static_cast<usize>(h.part)].paint);
+            const std::list<tvg::Paint*>& list = scene->paints();
+            const auto f = std::find(list.begin(), list.end(), from->impl_->pic), t = std::find(list.begin(), list.end(), to.impl_->pic);
+            if (f == list.end() || t == list.end() || std::distance(list.begin(), f) < std::distance(list.begin(), t)) continue;
+            reinsert(scene, to.impl_->pic, nullptr);
+        }
+    }
+
     // Draws the picture as it stands into the buffer (straight RGBA bytes).
     void render(const Affine& to_pixels) {
+        sync_hosts();
         pic->transform(to_tvg(to_pixels * inverse(doc_matrix)));
         canvas->update();
         canvas->draw(true);
@@ -804,6 +832,7 @@ i32 Rig::part(std::string_view id) const {
 
 f64 Rig::width() const { return impl_->vb[2]; }
 f64 Rig::height() const { return impl_->vb[3]; }
+vector::Point Rig::origin() const { return {impl_->vb[0], impl_->vb[1]}; }
 
 void Rig::set_pivot(std::string_view id, vector::Point at) {
     if (const i32 i = part(id); i >= 0) impl_->pivots[static_cast<usize>(i)] = at;
@@ -1502,7 +1531,88 @@ std::string Rig::holder_name(std::string_view id) const {
     return {};
 }
 
-const Rig& Rig::holder(std::string_view id) const { return *drawing(holder_name(id)); }
+const Rig& Rig::holder(std::string_view id) const {
+    const std::string name = holder_name(id);
+    // An actor's part (part 6а): «ёжик/head», when no picture of this one has that id.
+    if (name.empty() && !impl_->hosts.empty() && part(id) < 0 && impl_->outline.find(std::string(id)) < 0)
+        if (const usize slash = id.find('/'); slash != std::string_view::npos)
+            if (const Rig* a = hosted(id.substr(0, slash))) return a->holder(id);
+    return *drawing(name);
+}
+
+namespace {
+
+// The group part `id` of a rig's parts as a scene to host in, or why not.
+tvg::Scene* host_scene(std::string_view id, tvg::Paint* paint, std::string& why) {
+    if (!paint) return why = "в рисунке нет части «" + std::string(id) + "»", nullptr;
+    if (paint->type() != tvg::Type::Scene) return why = "«" + std::string(id) + "» — не группа: рисунок кладут только в группу", nullptr;
+    return static_cast<tvg::Scene*>(paint);
+}
+
+} // namespace
+
+bool Rig::host(std::string_view id, Rig& actor, std::string& why) {
+    Impl& m = *impl_;
+    const i32 pi = part(id);
+    tvg::Scene* scene = host_scene(id, pi >= 0 ? m.recs[static_cast<usize>(pi)].paint : nullptr, why);
+    if (!scene) return false;
+    for (const Impl::Host& h : m.hosts)
+        if (h.part == pi) return why = "в части «" + std::string(id) + "» уже нарисовано другое", false;
+    Impl& a = *actor.impl_;
+    if (&actor == this || !a.pic) return why = "актёр «" + std::string(id) + "»: рисунок не загружен", false;
+    auto alone = [](const Impl& r) { return r.canvas != nullptr || r.hosted; };
+    bool drawn = alone(a);
+    for (const auto& [name, d] : a.drawings) drawn = drawn || alone(*d.impl_);
+    if (drawn) return why = "рисунок актёра «" + std::string(id) + "» уже рисовался сам или в другой сцене", false;
+    // Each picture in the actor's units: ThorVG's viewport back to them.
+    auto put = [&](Rig& r) {
+        r.impl_->hosted = true;
+        r.impl_->pic->transform(to_tvg(inverse(r.impl_->doc_matrix)));
+        scene->add(r.impl_->pic);
+    };
+    put(actor);
+    for (auto& [name, d] : a.drawings) put(d);
+    m.hosts.push_back({pi, &actor});
+    return true;
+}
+
+bool Rig::host(std::string_view id, const assets::CookedTexture& pixels, f64 w, f64 h, std::string& why) {
+    Impl& m = *impl_;
+    const i32 pi = part(id);
+    tvg::Scene* scene = host_scene(id, pi >= 0 ? m.recs[static_cast<usize>(pi)].paint : nullptr, why);
+    if (!scene) return false;
+    for (const Impl::Host& hs : m.hosts)
+        if (hs.part == pi) return why = "в части «" + std::string(id) + "» уже нарисовано другое", false;
+    const usize n = static_cast<usize>(pixels.width) * pixels.height;
+    if (n == 0 || pixels.rgba8.size() != n * 4 || !(w > 0) || !(h > 0) || !std::isfinite(w) || !std::isfinite(h))
+        return why = "картинка «" + std::string(id) + "» пустая", false;
+    std::vector<u32> data(n);
+    std::memcpy(data.data(), pixels.rgba8.data(), n * 4);
+    tvg::Picture* p = tvg::Picture::gen();
+    if (p->load(data.data(), pixels.width, pixels.height, tvg::ColorSpace::ABGR8888S, true) != tvg::Result::Success) {
+        tvg::Paint::rel(p);
+        return why = "ThorVG не открыл картинку «" + std::string(id) + "»", false;
+    }
+    p->size(static_cast<f32>(w), static_cast<f32>(h));
+    scene->add(p);
+    m.hosts.push_back({pi, nullptr});
+    return true;
+}
+
+Rig* Rig::hosted(std::string_view id) {
+    const i32 pi = part(id);
+    for (const Impl::Host& h : impl_->hosts)
+        if (h.part == pi && pi >= 0) return h.actor;
+    return nullptr;
+}
+
+const Rig* Rig::hosted(std::string_view id) const { return const_cast<Rig*>(this)->hosted(id); }
+
+Affine Rig::global_matrix(i32 part) const {
+    const Impl& m = *impl_;
+    if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};
+    return m.global(m.recs[static_cast<usize>(part)].paint);
+}
 
 Rig& Rig::shown() {
     Rig* r = drawing(impl_->shown);
@@ -1537,7 +1647,7 @@ assets::CookedTexture Rig::draw(u32 w, u32 h, const Affine& px) {
 assets::CookedTexture Rig::draw_alone(u32 w, u32 h, const Affine& px) {
     assets::CookedTexture out;
     Impl& m = *impl_;
-    if (!m.pic || w == 0 || h == 0) return out;
+    if (!m.pic || m.hosted || w == 0 || h == 0) return out; // a hosted actor is drawn by its scene (part 6а)
     m.target(w, h);
     m.render(px);
     out.width = w, out.height = h;
@@ -1584,7 +1694,7 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
 void Rig::bake_alone(u32 w, u32 h, std::vector<u8>& out) {
     Impl& m = *impl_;
     out.assign(static_cast<usize>(w) * h * 4, 0);
-    if (!m.pic) return;
+    if (!m.pic || m.hosted) return;
     m.target(w, h);
     const Affine px = to_pixels(w, h);
 

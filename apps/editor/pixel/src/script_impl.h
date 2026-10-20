@@ -6,6 +6,7 @@
 #include "forge/pixel/code_sites.h"
 #include "forge/pixel/draw.h"
 #include "forge/pixel/motion.h"
+#include "forge/pixel/scene.h"
 #include "forge/pixel/script.h"
 
 #include <lua.h>
@@ -52,7 +53,7 @@ struct MoveStep {
 struct Task {
     enum class Kind : u8 {
         Move, Wait, All, Any, Chain, Sequence, Delay, At, Spawn, Join, Loop, LoopFor, LoopUntil, Run, WaitUntil, Mark,
-        Save, TweenFn, Copies,
+        Save, TweenFn, Copies, Play,
     };
     Kind kind = Kind::Move;
     u32 part = 0;        // Move, Save
@@ -65,6 +66,7 @@ struct Task {
     i32 fn = -1;               // a function's registry ref
     std::string name;          // wait_until, loop_until, emit, sound
     Mark::Kind mark = Mark::Kind::Emit;
+    ActorPlay play;            // Play: an actor's clip in a scene (part 6а), its start and order once laid out
     SiteRef site;
     i8 length_arg = -1;
     bool consumed = false, laid = false;
@@ -155,6 +157,16 @@ struct PoseScript::Impl : BindingEval {
     bool in_call = false, timed_out = false;
     lua_State* active = nullptr; // the thread bindings run on
 
+    // A scene (part 6а of docs/models/сцены-модель.md, scene.h): stage and scene functions; the stage under way
+    // (stage()), the stage a recording plays (record_scene), the hooks of either.
+    bool scene = false;
+    Stage* stage = nullptr;
+    const Stage* scene_stage = nullptr;
+    const SceneHooks* hooks = nullptr;
+    // set_scene: the stage and hooks clip "scene" is recorded with by record(), recording() and pose().
+    const Stage* bound_stage = nullptr;
+    const SceneHooks* bound_hooks = nullptr;
+
     // Drawing (draw.cpp): the drawing under way, its ids so far, the groups the call is inside.
     Drawing* drawing = nullptr;
     std::set<std::string> drawn_ids;
@@ -187,6 +199,8 @@ struct PoseScript::Impl : BindingEval {
 
     void fail(const char* raw);
     void begin_call();
+    // A scene's hook ran from `since` (time_now_ns): its time is not the call's budget's (part 6а).
+    void hook_done(u64 since);
     lua_State* module();
     // The file and the place in it of call `id`.
     SiteRef site_ref(i32 id) const;
@@ -210,6 +224,8 @@ void register_draw_api(lua_State* L);
 
 // motion_record.cpp: the clip functions of Luau (part, all, wait …) and the recording.
 void register_motion_api(lua_State* L);
+// actor("ёжик") in a scene's scene(p): the actor's handle (draw.cpp's actor calls it outside the stage).
+int scene_actor(lua_State* L);
 // One try of recording a clip: false with start->wanted set when its start_from needs a pose not given yet. With
 // `ends` its end pose is made (end_pose) and its bindings are not kept: it is recorded for a clip that starts from it.
 bool record_clip(PoseScript::Impl& im, lua_State* T, const Rig* rig, std::string_view clip,

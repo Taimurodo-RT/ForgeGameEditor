@@ -30,6 +30,7 @@ namespace {
 constexpr f32 kPenClose = 4;     // how near the pen's first point a click closes it (view pixels)
 constexpr int kEllipseSteps = 96; // the outline of an ellipse being dragged
 constexpr const char* kShapeMidSwap = "посреди смены рисунка фигура не рисуется: выберите кадр до или после";
+constexpr const char* kSceneShapes = "в сцене фигуры мышью не рисуются: их пишет stage в коде сцены";
 
 std::string thousandths(f64 v) { return number_words(std::round(v * 1000) / 1000); }
 
@@ -149,6 +150,10 @@ void PixelEditor::bind_shapes(Rml::DataModelConstructor& model) {
 // --- the tools ---------------------------------------------------------------------------------------
 
 void PixelEditor::set_tool(Tool t) {
+    if (scene_mode_ && t != Tool::Select) { // part 6а: the stage's shapes are typed in its code
+        refuse_edit(kSceneShapes);
+        t = Tool::Select;
+    }
     // Another tool finishes the pen as Enter does; too few points for a line are dropped.
     if (t != tool_ && !pen_.empty()) {
         if (pen_.size() >= 2) finish_pen();
@@ -199,9 +204,9 @@ void PixelEditor::set_snapping(bool on) {
 f64 PixelEditor::snap_step() const { return pixel::grid_step(to_view().a); }
 
 std::string PixelEditor::shown_drawing() const {
-    const pixel::Rig& shown = rig_.shown();
-    for (const std::string& n : rig_.drawings())
-        if (rig_.drawing(n) == &shown) return n;
+    const pixel::Rig& shown = rig().shown();
+    for (const std::string& n : rig().drawings())
+        if (rig().drawing(n) == &shown) return n;
     return "draw";
 }
 
@@ -213,19 +218,20 @@ void PixelEditor::code_error(std::string& why) const {
 
 bool PixelEditor::can_draw(const std::string& target, std::string& why) const {
     why.clear();
-    if (!has_ || !rig_.loaded()) return why = "Нет рисунка: фигуре некуда лечь", false;
+    if (!has_ || !rig().loaded()) return why = "Нет рисунка: фигуре некуда лечь", false;
+    if (scene_mode_) return why = kSceneShapes, false;
     if (target == "draw" && !drawn_) {
         std::string svg = "SVG-файла";
         if (const std::optional<Guid> id = Guid::parse(doc_.svg))
             if (const assets::AssetRecord* r = assets_.find_id(*id)) svg = "«" + path_to_utf8(utf8_path(r->path).filename()) + "»";
         return why = "рисунок из " + svg + ": фигуры мышью пишутся в draw кода — допишите draw", false;
     }
-    if (rig_.swapping()) return why = kShapeMidSwap, false;
+    if (rig().swapping()) return why = kShapeMidSwap, false;
     // The code's own refusals when it is the file's: unsaved text in the panel is saved first, and they wait for that.
     if (code_unsaved()) return true;
     if (!script_problem_.empty() || !draw_problem_.empty()) return code_error(why), false;
     std::string probe;
-    return pixel::insert_drawing_line(script_.code(), script_text_, target, "", probe, why);
+    return pixel::insert_drawing_line(script().code(), script_text_, target, "", probe, why);
 }
 
 bool PixelEditor::write_shape(const pixel::NewShape& s) {
@@ -242,9 +248,9 @@ bool PixelEditor::write_shape(const pixel::NewShape& s) {
     std::vector<const pixel::Drawing*> drawings;
     if (drawn_) drawings.push_back(&drawing_);
     for (const pixel::NamedDrawing& n : others_) drawings.push_back(&n.drawing);
-    const std::string id = pixel::new_shape_id(s.kind, pixel::taken_shape_ids(rig_, drawings));
+    const std::string id = pixel::new_shape_id(s.kind, pixel::taken_shape_ids(rig(), drawings));
     std::string out;
-    if (!pixel::shape_call(s, id, call, why) || !pixel::insert_drawing_line(script_.code(), script_text_, target, call, out, why))
+    if (!pixel::shape_call(s, id, call, why) || !pixel::insert_drawing_line(script().code(), script_text_, target, call, out, why))
         return refuse_edit(why);
     // The pen: the code read again drops its points.
     write_script(out, "«" + name() + "»: " + shape_word(s.kind) + " " + id);
@@ -339,7 +345,7 @@ void PixelEditor::draw_tool(assets::CookedTexture& t, const pixel::Affine& texel
 
 std::string PixelEditor::shape_drawing(const std::string& id) const {
     // The drawing shown when it has the part, else the one that has it (part 4д).
-    const std::string where = rig_.shown().part(id) >= 0 ? shown_drawing() : rig_.holder_name(id);
+    const std::string where = rig().shown().part(id) >= 0 ? shown_drawing() : rig().holder_name(id);
     return where.empty() ? "draw" : where;
 }
 
@@ -369,7 +375,7 @@ const pixel::DrawShape* PixelEditor::shape_of(const std::string& id, const std::
 void PixelEditor::rebuild_shape() {
     std::vector<ShapeField> fields;
     std::string why, count;
-    const bool has = has_ && !part_.empty() && rig_.holder(part_).part(part_) >= 0;
+    const bool has = !scene_mode_ && has_ && !part_.empty() && rig().holder(part_).part(part_) >= 0;
     if (has) {
         bool from_svg = false;
         usize n = 0;
@@ -386,7 +392,7 @@ void PixelEditor::rebuild_shape() {
             std::vector<std::string> whys;
             for (const std::string& f : pixel::shape_fields(s->kind)) {
                 std::string w;
-                if (!pixel::can_edit_shape(script_.code(), *s, f, w)) {
+                if (!pixel::can_edit_shape(script().code(), *s, f, w)) {
                     if (std::find(whys.begin(), whys.end(), w) == whys.end()) whys.push_back(w);
                     continue;
                 }
@@ -418,6 +424,7 @@ bool PixelEditor::set_shape_field(const std::string& field, const std::string& t
     note_.clear();
     dirty("px_shape_fields"); // whatever comes of it, the fields show the shape as drawn
     if (!has_ || part_.empty()) return refuse_edit("Выберите часть");
+    if (scene_mode_) return refuse_edit(kSceneShapes);
     const std::string id = part_, where = shape_drawing(id); // as the frame shows it now, before the panel is saved
     bool from_svg = false;
     usize n = 0;
@@ -430,7 +437,7 @@ bool PixelEditor::set_shape_field(const std::string& field, const std::string& t
     if (from_svg) return refuse_edit("рисунок из файла: фигура правится в SVG");
     if (!s) return refuse_edit("фигуры «" + id + "» нет в рисунке кода");
     std::string out;
-    if (!pixel::edit_shape_field(script_.code(), script_text_, *s, field, text, out, why)) return refuse_edit("Фигура «" + id + "»: " + why);
+    if (!pixel::edit_shape_field(script().code(), script_text_, *s, field, text, out, why)) return refuse_edit("Фигура «" + id + "»: " + why);
     if (out == script_text_) return rebuild(), false; // the same
     std::string shown = trimmed(text);
     if (!pixel::shape_field_is_color(field)) {

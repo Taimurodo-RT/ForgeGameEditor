@@ -52,6 +52,11 @@ usize bezier_users(const Recording& rec, const Block& b);
 // Its start, when it starts at an at(с, …) or a delay(с, …): their number.
 bool edit_start(const Recording& rec, const Block& b, f64 start, const CodeSites& code, std::string_view source,
                 std::string& out, std::string& why);
+// An actor's clip in a scene (part 6а of docs/models/сцены-модель.md): its start, as a block's (an at(с, …) or a
+// delay(с, …) it starts at); its length is its character's clip's and is not edited.
+bool can_edit_play_start(const Recording& rec, const ActorPlay& play, const CodeSites& code, std::string& why);
+bool edit_play_start(const Recording& rec, const ActorPlay& play, f64 start, const CodeSites& code, std::string_view source,
+                     std::string& out, std::string& why);
 // A pause's length: wait(с), t:wait(с).
 bool edit_pause(const Recording& rec, const Pause& pause, f64 length, const CodeSites& code, std::string_view source,
                 std::string& out, std::string& why);

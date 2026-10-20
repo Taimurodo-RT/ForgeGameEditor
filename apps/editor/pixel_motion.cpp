@@ -220,13 +220,13 @@ void PixelEditor::give_lengths() {
     // Every clip's, the dragged flag's clip as dragged: a start_from records another clip with its own (part 5б).
     std::map<std::string, pixel::MotionLengths> all = doc_.lengths;
     if (tl_drag_ == Drag::Flag) all[clip_] = drag_lengths_;
-    script_.set_lengths(all);
+    script().set_lengths(all);
 }
 
 bool PixelEditor::pose_at(const pixel::ClipSpec& c, f64 t, u32 k, pixel::Pose& out, std::string& why) {
     give_lengths();
-    if (script_.pose(rig_, t, c.state, doc_.params, doc_.seed, out)) return true;
-    why = "клип «" + c.state + "», кадр " + std::to_string(k + 1) + ": " + script_.error();
+    if (script().pose(rig(), t, c.state, doc_.params, doc_.seed, out)) return true;
+    why = (scene_mode_ ? std::string() : "клип «" + c.state + "», ") + "кадр " + std::to_string(k + 1) + ": " + script().error();
     return false;
 }
 
@@ -252,24 +252,33 @@ void PixelEditor::recount() {
     for (const pixel::ClipSpec& c : doc_.clips) {
         pixel::ClipCut cut;
         std::string why;
-        clip_frames_[c.state] = script_.loaded() && pixel::cut_clip(script_, rig_, doc_, c, cut, why) ? cut.frames : c.frames;
+        clip_frames_[c.state] = script().loaded() && pixel::cut_clip(script(), rig(), doc_, c, cut, why) ? cut.frames : c.frames;
     }
     const pixel::ClipSpec* c = selected_clip();
-    const bool code = c && script_.loaded() && std::binary_search(script_.clips().begin(), script_.clips().end(), c->state);
+    const bool code = c && script().loaded() && std::binary_search(script().clips().begin(), script().clips().end(), c->state);
     if (!c) {
         rec_ok_ = false;
         cut_ = whole_ = {};
     } else if (code) {
         give_lengths();
-        if (const pixel::Recording* rec = script_.recording(rig_, c->state, doc_.params, doc_.seed)) {
+        if (const pixel::Recording* rec = script().recording(rig(), c->state, doc_.params, doc_.seed)) {
             if (rec_clip_ != c->state) block_ = -1;
             rec_ = *rec;
+            // A scene's actors' marks are the scene's (part 6а): on its row of marks, sounded by the preview. Their calls are
+            // their characters', no line of the panel.
+            std::vector<pixel::Mark> theirs;
+            if (scene_mode_ && scene_ && scene_->actor_marks(rec_, theirs)) {
+                for (pixel::Mark& m : theirs) m.site = {}, rec_.marks.push_back(std::move(m));
+                std::stable_sort(rec_.marks.begin(), rec_.marks.end(), [](const pixel::Mark& a, const pixel::Mark& b) { return a.time < b.time; });
+            } else if (scene_mode_ && scene_) {
+                warnings_.push_back("Метки клипов актёров: " + scene_->error());
+            }
             rec_ok_ = true;
             rec_clip_ = c->state;
             rec_stale_ = !script_problem_.empty();
         } else {
-            rec_error = script_.error();
-            rec_line = script_.error_line();
+            rec_error = script().error();
+            rec_line = script().error_line();
             // The last recording that worked stays on the timeline, faint.
             if (rec_clip_ != c->state) rec_ok_ = false;
             rec_stale_ = true;
@@ -302,8 +311,9 @@ void PixelEditor::recount() {
                     warnings_.push_back("Длина «" + name + "» " + seconds_words(s) + " с из файла: в клипе " + clip + " нет duration(\"" + name +
                                         "\") или loop_until(\"" + name + "\")");
         }
-        // Marks no frame of the range shows do not go into the picture (part 5а).
+        // Marks no frame of the range shows do not go into the picture (part 5а); a scene is not baked.
         std::vector<usize> left;
+        if (!scene_mode_)
         pixel::strip_events(rec_, cut_, &left);
         std::string names;
         for (usize i : left) names += (names.empty() ? "" : ", ") + rec_.marks[i].name + " " + seconds_words(rec_.marks[i].time) + " с";
@@ -559,8 +569,8 @@ void PixelEditor::lay_timeline() {
             if (!r.start.clip.empty()) {
                 // start_from (part 5б): a flag at 0, the clip it starts from.
                 const pixel::SiteRef s = r.start.site;
-                const u32 line = s.file == 0 && s.site >= 0 && s.site < static_cast<i32>(script_.code().sites().size())
-                                     ? script_.code().sites()[static_cast<usize>(s.site)].line
+                const u32 line = s.file == 0 && s.site >= 0 && s.site < static_cast<i32>(script().code().sites().size())
+                                     ? script().code().sites()[static_cast<usize>(s.site)].line
                                      : 0;
                 const f64 x0 = tv_.x(0);
                 m_start_ = "из " + r.start.clip;
@@ -572,8 +582,8 @@ void PixelEditor::lay_timeline() {
                 const pixel::TimeEvent& e = r.events[i];
                 const f64 end = e.start + e.length, xe = tv_.x(end);
                 if (xe < -2 || tv_.x(e.start) > w + 2) continue;
-                const u32 line = e.site.file == 0 && e.site.site >= 0 && e.site.site < static_cast<i32>(script_.code().sites().size())
-                                     ? script_.code().sites()[static_cast<usize>(e.site.site)].line
+                const u32 line = e.site.file == 0 && e.site.site >= 0 && e.site.site < static_cast<i32>(script().code().sites().size())
+                                     ? script().code().sites()[static_cast<usize>(e.site.site)].line
                                      : 0;
                 const std::string call = e.wait ? "wait_until" : "duration";
                 m_flags_.push_back({static_cast<int>(i), xe >= 0 && xe <= w ? at_x(xe - 2 * dp) : std::string("display: none;"), span(e.start, end),
@@ -591,7 +601,8 @@ void PixelEditor::lay_timeline() {
                 const auto file = sound_files_.find(m.name);
                 const bool missing = sound && (file == sound_files_.end() || !file->second.file.clip);
                 m_marks_.push_back({static_cast<int>(i), long_one ? span(m.time, m.time + m.length) : place(x - 4 * dp, 8 * dp),
-                                    std::string(sound ? "sound" : "emit") + "(\"" + m.name + "\") в " + seconds_words(m.time) + " с" +
+                                    (m.actor.empty() ? std::string() : m.actor + ": ") + (sound ? "sound" : "emit") + "(\"" + m.name + "\") в " +
+                                        seconds_words(m.time) + " с" +
                                         (long_one ? ", " + seconds_words(m.length) + " с" : std::string()) +
                                         (missing && file != sound_files_.end() ? ": " + file->second.file.why : std::string()),
                                     sound, long_one, missing});
@@ -611,10 +622,10 @@ void PixelEditor::lay_timeline() {
             std::vector<usize> order(r.tracks.size());
             for (usize i = 0; i < order.size(); ++i) order[i] = i;
             auto index = [&](const std::string& id) {
-                if (const i32 i = rig_.part(id); i >= 0) return i;
-                const pixel::Rig& h = rig_.holder(id);
-                const i32 j = &h == &rig_ ? -1 : h.part(id);
-                return j < 0 ? std::numeric_limits<i32>::max() : static_cast<i32>(rig_.parts().size()) + j;
+                if (const i32 i = rig().part(id); i >= 0) return i;
+                const pixel::Rig& h = rig().holder(id);
+                const i32 j = &h == &rig() ? -1 : h.part(id);
+                return j < 0 ? std::numeric_limits<i32>::max() : static_cast<i32>(rig().parts().size()) + j;
             };
             auto rank = [&](usize i) {
                 const pixel::Recording::Track& t = r.tracks[i];
@@ -678,13 +689,66 @@ void PixelEditor::lay_timeline() {
     char height[48];
     std::snprintf(height, sizeof height, "height: %.0fpx;", static_cast<f64>(std::max<usize>(m_tracks_.size(), 1)) * kRowPx);
     m_tracks_height_ = height;
-    lay_sounds(); // part 3в
+    lay_sounds();      // part 3в
+    lay_actor_clips(); // part 6а
     tl_laid_w_ = tl_w_;
     place_head();
     for (const char* var : {"px_start", "px_start_style", "px_start_title"}) dirty(var);
     for (const char* var : {"px_ticks", "px_frames", "px_flags", "px_marks", "px_pauses", "px_tracks", "px_blocks", "px_more_blocks", "px_range",
                             "px_range_from", "px_range_to", "px_tracks_height", "px_head"})
         dirty(var);
+}
+
+// Part 6а: the actors' clips of a scene, a row an actor in the stage's order. A play is a block as long as its clip / speed
+// (its pose held after it), a loop a bar to the actor's next clip or the scene's end, a stop a mark.
+void PixelEditor::lay_actor_clips() {
+    m_actor_rows_.clear();
+    m_plays_.clear();
+    const f64 dp = std::max(1e-3f, dp_), w = tl_w_;
+    if (scene_mode_ && scene_ && rec_ok_ && tl_w_ > 0 && !rec_.plays.empty()) {
+        using Kind = pixel::ActorPlay::Kind;
+        usize row = 0;
+        for (const pixel::StageItem& it : scene_->stage().items) {
+            std::vector<usize> mine;
+            for (usize i = 0; i < rec_.plays.size(); ++i)
+                if (rec_.plays[i].actor == it.id) mine.push_back(i);
+            if (mine.empty()) continue;
+            std::stable_sort(mine.begin(), mine.end(), [&](usize a, usize b) {
+                const pixel::ActorPlay &x = rec_.plays[a], &y = rec_.plays[b];
+                return x.start != y.start ? x.start < y.start : x.order < y.order;
+            });
+            char top[48];
+            std::snprintf(top, sizeof top, "top: %.0fpx;", static_cast<f64>(row) * kRowPx);
+            m_actor_rows_.push_back({it.id + " · клипы", top});
+            for (usize j = 0; j < mine.size(); ++j) {
+                const usize i = mine[j];
+                const pixel::ActorPlay& p = rec_.plays[i];
+                f64 start = p.start;
+                if (tl_drag_ == Drag::PlayStart && static_cast<i32>(i) == drag_block_) start = drag_edge_;
+                const f64 next = j + 1 < mine.size() ? rec_.plays[mine[j + 1]].start : rec_.length;
+                const f64 end = p.kind == Kind::Loop ? std::max(start, next + (start - p.start)) : start + p.length;
+                f64 x0 = tv_.x(start), x1 = tv_.x(end);
+                if (p.kind == Kind::Stop) x0 -= 3 * dp, x1 = x0 + 6 * dp;
+                if (x1 < 0 || x0 > w) continue;
+                x0 = std::max(0.0, x0);
+                x1 = std::min(w, std::max(x1, x0 + 2 * dp));
+                const std::string label = p.kind == Kind::Stop ? std::string() : p.clip + (p.kind == Kind::Loop ? " ↻" : "");
+                const std::string what = p.kind == Kind::Stop ? "stop()" : std::string(p.kind == Kind::Loop ? "loop" : "play") + "(\"" + p.clip + "\")";
+                std::string title = it.id + ": " + what + " с " + seconds_words(p.start) + " с";
+                if (p.kind == Kind::Play) title += ", " + seconds_words(p.length) + " с";
+                if (p.kind == Kind::Loop) title += " по кругу до " + seconds_words(next) + " с";
+                if (p.speed != 1) title += ", speed " + number_words(p.speed);
+                title += ": левый край тянет начало по кадрам, двойной щелчок — к коду";
+                m_plays_.push_back({static_cast<int>(i), place(x0, x1 - x0) + " " + top, label, title, static_cast<i32>(i) == play_, p.kind == Kind::Loop,
+                                    p.kind == Kind::Stop});
+            }
+            ++row;
+        }
+    }
+    char height[48];
+    std::snprintf(height, sizeof height, "height: %.0fpx;", static_cast<f64>(std::max<usize>(m_actor_rows_.size(), 1)) * kRowPx);
+    m_actor_rows_height_ = height;
+    for (const char* var : {"px_actor_rows", "px_plays", "px_actor_rows_height"}) dirty(var);
 }
 
 // The mouse on the timeline: the ruler takes the playhead to the frame under it, a range's edge and a flag are dragged by
@@ -750,7 +814,7 @@ void PixelEditor::timeline_drag(f32 x) {
         // A new recording at once: the code is the same, the lengths are new.
         drag_lengths_ = pixel::drag_flag(drag_rec_, drag_base_lengths_, drag_event_, t, drag_only_ || shift_);
         give_lengths();
-        if (const pixel::Recording* rec = script_.recording(rig_, c->state, doc_.params, doc_.seed)) {
+        if (const pixel::Recording* rec = script().recording(rig(), c->state, doc_.params, doc_.seed)) {
             rec_ = *rec;
             cut_ = pixel::cut_clip(*c, true, rec_.length);
             whole_ = pixel::whole_clip(*c, true, rec_.length);
@@ -761,7 +825,8 @@ void PixelEditor::timeline_drag(f32 x) {
     }
     case Drag::BlockEnd:
     case Drag::BlockStart:
-    case Drag::PauseEnd: {
+    case Drag::PauseEnd:
+    case Drag::PlayStart: {
         // By frames of the clip; an end not before its start.
         f64 to = edge_snap(tv_.t(x - tl_x_));
         if (tl_drag_ == Drag::BlockEnd && drag_block_ >= 0 && drag_block_ < static_cast<i32>(rec_.blocks.size()))
@@ -822,6 +887,11 @@ void PixelEditor::timeline_release() {
             set_pause_end(drag_pause_, drag_edge_);
         else lay_timeline();
         break;
+    case Drag::PlayStart:
+        if (drag_block_ >= 0 && drag_block_ < static_cast<i32>(rec_.plays.size()) && drag_edge_ != rec_.plays[static_cast<usize>(drag_block_)].start)
+            set_actor_clip_start(drag_block_, drag_edge_);
+        else lay_timeline();
+        break;
     case Drag::Ruler:
     case Drag::None: break;
     }
@@ -846,23 +916,23 @@ void PixelEditor::playhead_to_flag(usize event) {
 bool PixelEditor::flag_to_code(usize event) {
     if (!rec_ok_ || event >= rec_.events.size()) return false;
     const pixel::SiteRef s = rec_.events[event].site;
-    if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script_.code().sites().size())) {
+    if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script().code().sites().size())) {
         note_ = "Событие «" + rec_.events[event].name + "» из модуля: его код не в панели";
         rebuild();
         return false;
     }
-    return goto_line(script_.code().sites()[static_cast<usize>(s.site)].line);
+    return goto_line(script().code().sites()[static_cast<usize>(s.site)].line);
 }
 
 bool PixelEditor::start_to_code() {
     if (!rec_ok_ || rec_.start.clip.empty()) return false;
     const pixel::SiteRef s = rec_.start.site;
-    if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script_.code().sites().size())) {
+    if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script().code().sites().size())) {
         note_ = "start_from клипа — в модуле: его код не в панели";
         rebuild();
         return false;
     }
-    return goto_line(script_.code().sites()[static_cast<usize>(s.site)].line);
+    return goto_line(script().code().sites()[static_cast<usize>(s.site)].line);
 }
 
 bool PixelEditor::select_block(i32 index) {
@@ -870,6 +940,11 @@ bool PixelEditor::select_block(i32 index) {
     block_ = index;
     view_dirty_ = true; // a copy's block outlines the copy
     lit_first_ = lit_last_ = 0;
+    if (index >= 0 && play_ >= 0) { // one thing of the timeline in the inspector (part 6а)
+        play_ = -1;
+        rebuild_actor_clip();
+        lay_actor_clips();
+    }
     m_inspector_.clear();
     m_inspector_call_.clear();
     if (index >= 0) {
@@ -896,11 +971,11 @@ bool PixelEditor::select_block(i32 index) {
         if (repeats > 1) text += "\nиз цикла: " + count_words(repeats, "повтор", "повтора", "повторов");
         if (b.site.file > 0 && b.site.file < rec_.files.size()) {
             text += "\nиз модуля «" + rec_.files[b.site.file] + "» (animations/" + rec_.files[b.site.file] + ".luau)";
-            if (const pixel::CodeSites* m = script_.module_code(rec_.files[b.site.file]);
+            if (const pixel::CodeSites* m = script().module_code(rec_.files[b.site.file]);
                 m && b.site.site >= 0 && b.site.site < static_cast<i32>(m->sites().size()))
                 m_inspector_call_ = rec_.files[b.site.file] + ".luau, строка " + std::to_string(m->sites()[static_cast<usize>(b.site.site)].line);
-        } else if (b.site.site >= 0 && b.site.site < static_cast<i32>(script_.code().sites().size())) {
-            const pixel::CallSite& site = script_.code().sites()[static_cast<usize>(b.site.site)];
+        } else if (b.site.site >= 0 && b.site.site < static_cast<i32>(script().code().sites().size())) {
+            const pixel::CallSite& site = script().code().sites()[static_cast<usize>(b.site.site)];
             pixel::span_lines(script_text_, site.span, lit_first_, lit_last_);
             const usize from = std::min<usize>(site.span.begin, script_text_.size()), to = std::min<usize>(site.span.end, script_text_.size());
             m_inspector_call_ = "строка " + std::to_string(site.line) + ": " + call_words(std::string_view(script_text_).substr(from, to - from));
@@ -924,15 +999,15 @@ bool PixelEditor::block_to_code(i32 index) {
         return false;
     };
     if (b.site.file > 0) return refuse("Блок из модуля «" + rec_.files[b.site.file] + "»: его код — animations/" + rec_.files[b.site.file] + ".luau, не в панели");
-    if (b.site.site < 0 || b.site.site >= static_cast<i32>(script_.code().sites().size())) return false;
+    if (b.site.site < 0 || b.site.site >= static_cast<i32>(script().code().sites().size())) return false;
     if (code_ != script_panel_) return refuse("Код в панели не тот, что записан: сохраните его (Ctrl+S), и блок покажет свой вызов");
     select_call(b);
     return true;
 }
 
 void PixelEditor::select_call(const pixel::Block& b) {
-    if (b.site.file != 0 || b.site.site < 0 || b.site.site >= static_cast<i32>(script_.code().sites().size())) return;
-    const pixel::CodeSpan span = script_.code().sites()[static_cast<usize>(b.site.site)].span;
+    if (b.site.file != 0 || b.site.site < 0 || b.site.site >= static_cast<i32>(script().code().sites().size())) return;
+    const pixel::CodeSpan span = script().code().sites()[static_cast<usize>(b.site.site)].span;
     auto* text = rmlui_dynamic_cast<Rml::ElementFormControlTextArea*>(element("px-code-text"));
     if (!text) return;
     text->Focus();
@@ -1023,7 +1098,7 @@ bool PixelEditor::write_script(const std::string& text, std::string label) {
     probe.set_module_reader(pixel::animations_reader(game_dir));
     pixel::PixelDoc after = doc_;
     std::string why;
-    if (probe.load(text) && pixel::count_frames(probe, rig_, after, why) && after != doc_)
+    if (!scene_mode_ && probe.load(text) && pixel::count_frames(probe, rig(), after, why) && after != doc_)
         files.push_back({file_, bytes_of(file_), text_bytes(pixel::write_pixel_doc(after))});
     note_.clear();
     typing_.clear();
@@ -1143,7 +1218,7 @@ void PixelEditor::update_caret() {
     caret_ = caret;
     std::vector<i32> lit;
     if (rec_ok_ && code_ == script_panel_) {
-        const i32 site = pixel::site_at(script_.code(), pixel::file_byte(script_text_, caret));
+        const i32 site = pixel::site_at(script().code(), pixel::file_byte(script_text_, caret));
         if (site >= 0)
             for (usize i = 0; i < rec_.blocks.size(); ++i)
                 if (rec_.blocks[i].site == pixel::SiteRef{0, site}) lit.push_back(static_cast<i32>(i));
@@ -1174,7 +1249,7 @@ void PixelEditor::rebuild_console() {
     if (!draw_problem_.empty()) lines.push_back({draw_problem_, draw_line_, true, false});
     if (!picture_note_.empty()) lines.push_back({picture_note_, 0, false, true});
     if (!rec_error_.empty()) lines.push_back({"Запись клипа «" + state_name(clip_) + "»: " + rec_error_, rec_error_line_, true, false});
-    if (!pose_problem_.empty()) lines.push_back({pose_problem_, script_.error_line(), true, false});
+    if (!pose_problem_.empty()) lines.push_back({pose_problem_, script().error_line(), true, false});
     for (const std::string& w : warnings_) lines.push_back({w, 0, false, true});
     // A sound without its file, once a name, at its first call (part 3в).
     if (rec_ok_) {
@@ -1186,8 +1261,8 @@ void PixelEditor::rebuild_console() {
             if (f == sound_files_.end() || f->second.file.clip) continue;
             u32 line = 0;
             std::string where;
-            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script_.code().sites().size()))
-                line = script_.code().sites()[static_cast<usize>(m.site.site)].line;
+            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script().code().sites().size()))
+                line = script().code().sites()[static_cast<usize>(m.site.site)].line;
             else if (m.site.file > 0 && m.site.file < rec_.files.size())
                 where = rec_.files[m.site.file] + ".luau: ";
             lines.push_back({where + (line ? "строка " + std::to_string(line) + ": " : std::string()) + f->second.file.why, line, false, true});
@@ -1246,21 +1321,22 @@ bool PixelEditor::other_seed() {
 
 std::string PixelEditor::snapshot() {
     note_.clear();
+    if (scene_mode_) return scene_snapshot(); // part 6а: the frame at the scene's size, smooth
     auto refuse = [&](std::string why) {
         note_ = std::move(why);
         rebuild();
         return std::string();
     };
     const pixel::ClipSpec* c = selected_clip();
-    if (!has_ || !rig_.loaded() || !c) return refuse("Снимка нет: нет клипа на таймлайне");
+    if (!has_ || !rig().loaded() || !c) return refuse("Снимка нет: нет клипа на таймлайне");
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: снимите через миг");
     pixel::Pose pose;
     std::string why;
     if (!pose_at(*c, t_, frame_, pose, why)) return refuse("Снимка нет: " + why);
-    const f64 scale = rig_.to_pixels(doc_.frame_w, doc_.frame_h).a;
-    if (!rig_.pose(pose, why, scale > 0 ? 1 / scale : 0)) return refuse("Снимка нет: " + why);
+    const f64 scale = rig().to_pixels(doc_.frame_w, doc_.frame_h).a;
+    if (!rig().pose(pose, why, scale > 0 ? 1 / scale : 0)) return refuse("Снимка нет: " + why);
     const std::vector<pixel::Rgba8> colors = doc_.game_palette && game_colors ? game_colors() : std::vector<pixel::Rgba8>{};
-    const assets::CookedTexture frame = rig_.bake(doc_.frame_w, doc_.frame_h, pixel::bake_options(doc_, colors));
+    const assets::CookedTexture frame = rig().bake(doc_.frame_w, doc_.frame_h, pixel::bake_options(doc_, colors));
     view_dirty_ = true; // the rig is in the frame's pose: the views pose it again
     std::vector<u8> png;
     if (!assets::encode_image(frame, ".png", png)) return refuse("Кадр не кодируется в PNG");

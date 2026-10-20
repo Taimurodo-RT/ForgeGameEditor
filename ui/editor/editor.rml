@@ -1268,11 +1268,23 @@
                     <div class="column grow"><span class="name">{{ r.name }}</span><span class="sub">{{ r.sub }}</span></div>
                 </div>
                 <div class="an-empty" data-if="px_svgs.size == 0">В «Ресурсах» нет рисунков SVG. Перетащите .svg на окно редактора.</div>
-                <div class="lg-nav-title" data-if="px_has">Части рисунка</div>
+                <!-- Part 6а of docs/models/сцены-модель.md: scenes of characters and pictures in «сцены». -->
+                <div class="lg-nav-title">Сцены</div>
+                <div data-for="r : px_scenes" class="an-row row" data-attr-id="'px-scene-' + it_index" data-class-selected="r.selected" data-event-click="px_scene_open(it_index)">
+                    <icon name="movie"/>
+                    <div class="column grow"><span class="name">{{ r.name }}</span><span class="sub">{{ r.sub }}</span></div>
+                </div>
+                <div id="px-new-scene" class="an-row row" title="Новая сцена: персонажи и картинки на сцене, их клипы во времени; .luau и .scene.json в «сцены»" data-event-click="px_new_scene">
+                    <icon name="add"/>
+                    <div class="column grow"><span class="name">Новая сцена</span><span class="sub">актёры кодом</span></div>
+                </div>
+                <div class="lg-nav-title" data-if="px_has && !px_scene">Части рисунка</div>
+                <div class="lg-nav-title" data-if="px_has && px_scene">Что на сцене</div>
                 <div data-for="p : px_parts" class="px-part row" data-attr-id="'px-part-' + p.id" data-class-selected="p.selected" data-style-padding-left="(8 + p.depth * 14) + 'px'" data-event-click="px_part(p.id)">
                     <icon class="s" data-attr-name="p.shape ? 'category' : 'folder'"/><span class="grow">{{ p.id }}</span><span class="sub">{{ p.label }}</span>
                 </div>
-                <div class="an-empty" data-if="px_has && px_parts.size == 0">В рисунке нет частей: дайте фигурам и группам id в draw кода или в редакторе SVG.</div>
+                <div class="an-empty" data-if="px_has && !px_scene && px_parts.size == 0">В рисунке нет частей: дайте фигурам и группам id в draw кода или в редакторе SVG.</div>
+                <div class="an-empty" data-if="px_has && px_scene && px_parts.size == 0">На сцене пока ничего нет: поставьте актёров, картинки и фигуры в stage кода.</div>
             </div>
 
             <div class="an-stage column grow" data-if="!px_has">
@@ -1305,7 +1317,7 @@
             </div>
 
             <div id="px-stage" class="an-stage px-stage column" data-if="px_has">
-                <div id="px-tools" class="px-tools row">
+                <div id="px-tools" class="px-tools row" data-if="!px_scene">
                     <div id="px-tool-select" class="an-chip" data-class-selected="px_tool == 'select'" title="Выбор (V): щелчок выбирает часть, протяжка двигает её" data-event-click="px_tool('select')"><icon class="s" name="arrow_selector_tool"/></div>
                     <div id="px-tool-rect" class="an-chip" data-class-selected="px_tool == 'rect'" title="Прямоугольник (R): протяните от угла до угла" data-event-click="px_tool('rect')"><icon class="s" name="crop_square"/></div>
                     <div id="px-tool-ellipse" class="an-chip" data-class-selected="px_tool == 'ellipse'" title="Эллипс (O): протяните по описанному прямоугольнику" data-event-click="px_tool('ellipse')"><icon class="s" name="radio_button_unchecked"/></div>
@@ -1321,7 +1333,7 @@
                         <span class="an-label">Вектор: щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью</span>
                         <div id="px-vector" class="px-canvas" title="Колесо, = и − — масштаб, 0 — вписать, средняя кнопка — сдвиг"><img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector"/></div>
                     </div>
-                    <div class="px-view column">
+                    <div class="px-view column" data-if="!px_scene">
                         <span class="an-label">Пиксели {{ px_size }}, как запечётся</span>
                         <div id="px-pixel" class="px-canvas"><img id="px-pixel-img" data-if="px_pixel != ''" data-attr-src="px_pixel"/></div>
                         <div class="row px-one"><img id="px-one" data-if="px_one != ''" data-attr-src="px_one"/><span class="an-label">в настоящем размере</span></div>
@@ -1341,6 +1353,18 @@
             </div>
 
             <div id="px-side" class="an-side column" data-if="px_has">
+                <div class="lg-nav-title" data-if="px_has_play">Клип актёра</div>
+                <div id="px-inspect-play" class="px-inspector column" data-if="px_has_play">
+                    <span id="px-play-info" class="px-inspector-text">{{ px_play_info }}</span>
+                    <div class="row px-value" data-if="px_play_call != ''">
+                        <span id="px-play-call" class="px-call grow">{{ px_play_call }}</span>
+                        <div id="px-play-code" class="button outlined small" data-if="px_play_can_code" title="Выделить в панели вызов play, loop или stop" data-event-click="px_actor_clip_to_code"><span>К коду</span></div>
+                    </div>
+                    <span id="px-play-why" class="an-hint px-why" data-if="px_play_why != ''">{{ px_play_why }}</span>
+                    <div class="row an-actions">
+                        <div id="px-play-character" class="button outlined small" title="Клип правится у персонажа: сцена его только ставит во времени" data-event-click="px_actor_character"><icon class="s" name="open_in_new"/><span>Открыть персонажа</span></div>
+                    </div>
+                </div>
                 <div class="lg-nav-title">Блок</div>
                 <div id="px-inspector" class="px-inspector column" data-if="px_has_block">
                     <span id="px-inspector-text" class="px-inspector-text">{{ px_inspector }}</span>
@@ -1406,8 +1430,8 @@
                     <div id="px-seed-other" class="icon-button small" title="Другое зерно" data-event-click="px_other_seed"><icon class="s" name="casino"/></div>
                 </div>
 
-                <div class="lg-nav-title">Клип «{{ px_clip_name }}»</div>
-                <div class="px-clip column" data-if="px_has_clip">
+                <div class="lg-nav-title" data-if="!px_scene">Клип «{{ px_clip_name }}»</div>
+                <div class="px-clip column" data-if="px_has_clip && !px_scene">
                     <div class="row px-field" data-if="!px_code_clip">
                         <span class="grow">Кадров в «{{ px_clip_name }}»</span>
                         <div id="px-clip-less" class="icon-button small" data-event-click="px_clip_less"><icon class="s" name="remove"/></div>
@@ -1426,6 +1450,10 @@
                 </div>
                 <div id="px-total" class="an-hint">{{ px_total }}</div>
 
+                <div class="row an-actions" data-if="px_scene">
+                    <div id="px-scene-snapshot" class="button outlined small" title="Кадр сцены под бегунком в её размере — PNG в «Ресурсы»" data-event-click="px_snapshot"><icon class="s" name="photo_camera"/><span>Снимок кадра</span></div>
+                </div>
+                <div class="px-bake-all column" data-if="!px_scene">
                 <div class="lg-nav-title">Запекание</div>
                 <div class="px-field row">
                     <span class="grow">Кадр, пикселей</span>
@@ -1457,7 +1485,8 @@
                     <div id="px-bake-over" class="button outlined small" data-event-click="px_bake_over"><icon class="s" name="warning"/><span>Запечь всё равно</span></div>
                 </div>
                 <div id="px-picture" class="an-hint" data-if="px_picture != ''">Картинка: {{ px_picture }}</div>
-                <div class="px-give column" data-if="px_giving">
+                </div>
+                <div class="px-give column" data-if="px_giving && !px_scene">
                     <div class="lg-nav-title">Какому шаблону</div>
                     <div data-for="t : px_templates" class="an-row row" data-attr-id="'px-tpl-' + it_index" data-class-selected="t.draws" data-event-click="px_give(it_index)">
                         <img data-attr-src="t.icon"/>
@@ -1483,7 +1512,7 @@
                 <div id="px-onion" class="an-check row" title="Соседние кадры бледно под текущим" data-event-click="px_onion"><icon class="s" data-attr-name="px_onion ? 'check_box' : 'check_box_outline_blank'"/><span>Калька</span></div>
                 <div id="px-sound" class="an-check row" title="Звуки отметок sound(…) при просмотре (M)" data-event-click="px_sound_toggle"><icon class="s" data-attr-name="px_sound_on ? 'volume_up' : 'volume_off'"/><span>Звук</span></div>
             </div>
-            <div class="px-clips row">
+            <div class="px-clips row" data-if="!px_scene">
                 <span class="px-tl-name">Клипы</span>
                 <div data-for="c : px_states" class="an-chip" data-attr-id="'px-state-' + c.id" data-class-selected="c.selected" data-class-off="!c.on" data-attr-title="c.sub" data-event-click="px_state(c.id)" data-event-mousedown="px_state_button(c.id, ev.button)">{{ c.name }}</div>
             </div>
@@ -1532,6 +1561,14 @@
                         <div data-for="tr : px_tracks" class="px-track-name" data-attr-id="'px-track-' + it_index" data-attr-style="tr.style">{{ tr.label }}</div>
                         <div class="px-blocks">
                             <div data-for="b : px_blocks" class="px-block" data-attr-id="'px-block-' + b.index" data-class-selected="b.selected" data-class-lit="b.lit" data-class-module="b.module" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_block(b.index)" data-event-dblclick="px_block_code(b.index)">{{ b.label }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div id="px-plays" class="px-tracks px-plays" data-if="px_scene && px_actor_rows.size > 0">
+                    <div class="px-tracks-in" data-attr-style="px_actor_rows_height">
+                        <div data-for="r : px_actor_rows" class="px-track-name" data-attr-id="'px-actor-row-' + it_index" data-attr-style="r.style">{{ r.label }}</div>
+                        <div class="px-blocks">
+                            <div data-for="b : px_plays" class="px-block px-play" data-attr-id="'px-play-' + b.index" data-class-selected="b.selected" data-class-loop="b.loop" data-class-stop="b.stop" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_actor_clip(b.index)" data-event-dblclick="px_actor_clip_code(b.index)">{{ b.label }}</div>
                         </div>
                     </div>
                 </div>

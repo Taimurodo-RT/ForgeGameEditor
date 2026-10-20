@@ -15,7 +15,8 @@ add_library(forge_editor_pixel STATIC
   src/motion_record.cpp
   src/view.cpp
   src/sound.cpp
-  src/screen.cpp)
+  src/screen.cpp
+  src/scene.cpp)
 target_include_directories(forge_editor_pixel PUBLIC include)
 target_link_libraries(forge_editor_pixel PUBLIC forge::core forge::vector forge::assets forge::audio forge_editor_pixel_code PRIVATE thorvg Luau.VM Luau.Compiler yyjson)
 forge_target_defaults(forge_editor_pixel)
