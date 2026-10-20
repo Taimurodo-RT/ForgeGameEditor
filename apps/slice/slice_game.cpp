@@ -412,6 +412,7 @@ public:
         c.x = how.loop;
         c.y = how.speed;
         c.blend = how.blend;
+        c.params = how.params;
         return s_.screens().svg(c, why);
     }
     bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }

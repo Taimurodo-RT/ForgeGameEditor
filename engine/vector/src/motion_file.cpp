@@ -146,6 +146,43 @@ void put_parts(std::string& out, const std::vector<MotionPart>& parts, const std
     out += parts.empty() ? "}" : "\n" + indent + "}";
 }
 
+// A change per unit of a parameter (part 5ж): a number (of a number, a share), [share, width] of a stroke width, the six
+// numbers of a link's matrix.
+void put_delta(std::string& out, MotionProp p, const MotionDelta& d) {
+    if (p == MotionProp::StrokeWidth) {
+        out += '[';
+        put_number(out, d.v);
+        out += ", ";
+        put_number(out, d.n);
+        out += ']';
+        return;
+    }
+    if (p == MotionProp::Link) {
+        out += '[';
+        for (usize i = 0; i < 6; ++i) {
+            if (i) out += ", ";
+            put_number(out, d.m[i]);
+        }
+        out += ']';
+        return;
+    }
+    put_number(out, d.v);
+}
+
+// `, "key": {"height": …}` of the parameters that change `field` of a piece; nothing when none does.
+void put_by(std::string& out, const char* key, MotionProp p, const std::vector<MotionBy>& by, MotionDelta MotionBy::*field) {
+    bool any = false;
+    for (const MotionBy& b : by) {
+        if ((b.*field).zero()) continue;
+        out += any ? ", " : std::string(", \"") + key + "\": {";
+        any = true;
+        put_string(out, b.param);
+        out += ": ";
+        put_delta(out, p, b.*field);
+    }
+    if (any) out += '}';
+}
+
 void put_piece(std::string& out, const MotionFile& f, MotionProp p, const MotionPiece& pc) {
     out += "{\"at\": ";
     put_number(out, pc.at);
@@ -188,6 +225,28 @@ void put_piece(std::string& out, const MotionFile& f, MotionProp p, const Motion
         }
         out += ']';
         break;
+    }
+    // How its numbers change with the parameters (part 5ж): those that change, each in the piece's own shape.
+    if (pc.kind == MotionPiece::Kind::Hold) put_by(out, "by", p, pc.by, &MotionBy::value);
+    if (pc.kind == MotionPiece::Kind::Ease) {
+        put_by(out, "by_from", p, pc.by, &MotionBy::from);
+        put_by(out, "by_to", p, pc.by, &MotionBy::to);
+    }
+    if (pc.kind == MotionPiece::Kind::Frames) {
+        bool any = false;
+        for (const MotionBy& b : pc.by) {
+            if (std::all_of(b.frames.begin(), b.frames.end(), [](const MotionDelta& d) { return d.zero(); })) continue;
+            out += any ? ", " : ", \"by\": {";
+            any = true;
+            put_string(out, b.param);
+            out += ": [";
+            for (usize i = 0; i < b.frames.size(); ++i) {
+                if (i) out += ", ";
+                put_delta(out, p, b.frames[i]);
+            }
+            out += ']';
+        }
+        if (any) out += '}';
     }
     out += '}';
 }
@@ -313,7 +372,88 @@ struct Reader {
         return true;
     }
 
-    bool piece(yyjson_val* v, const std::string& where, MotionProp p, MotionPiece& out) {
+    bool piece(yyjson_val* v, const std::string& where, MotionProp p, const MotionClip& c, MotionPiece& out) {
+        return piece_values(v, where, p, out) && piece_by(v, where, p, c, out);
+    }
+
+    std::string param_names() const {
+        if (f.params.empty()) return "в params ни одного";
+        std::string out = "есть";
+        for (usize i = 0; i < f.params.size(); ++i) out += (i ? ", «" : " «") + f.params[i].name + "»";
+        return out;
+    }
+
+    // A change per unit of a parameter in property p's shape (part 5ж).
+    static bool delta(yyjson_val* v, MotionProp p, MotionDelta& out) {
+        out = {};
+        if (p == MotionProp::StrokeWidth)
+            return yyjson_is_arr(v) && yyjson_arr_size(v) == 2 && number(yyjson_arr_get(v, 0), out.v) && number(yyjson_arr_get(v, 1), out.n);
+        if (p == MotionProp::Link) {
+            if (!yyjson_is_arr(v) || yyjson_arr_size(v) != 6) return false;
+            for (usize i = 0; i < 6; ++i)
+                if (!number(yyjson_arr_get(v, i), out.m[i])) return false;
+            return true;
+        }
+        return number(v, out.v);
+    }
+    static const char* delta_shape(MotionProp p) {
+        if (p == MotionProp::StrokeWidth) return "[доля, толщина]";
+        if (p == MotionProp::Link) return "шесть чисел a, b, c, d, e, f";
+        return "число";
+    }
+
+    // How the piece's numbers change with the parameters (part 5ж): "by" of a hold and of frames, "by_from" and "by_to" of
+    // a transition, each {"параметр": change per unit}; merged a parameter an entry, in the order of params.
+    bool piece_by(yyjson_val* v, const std::string& where, MotionProp p, const MotionClip& c, MotionPiece& out) {
+        const bool ease = out.kind == MotionPiece::Kind::Ease;
+        for (const char* key : {"by", "by_from", "by_to"}) {
+            yyjson_val* obj = yyjson_obj_get(v, key);
+            if (!obj) continue;
+            const std::string at = where + "." + key;
+            const bool plain = std::string_view(key) == "by";
+            if (ease == plain) return fail(at, ease ? "у перехода by_from и by_to" : "by_from и by_to только у перехода, у этого куска by");
+            if (!motion_prop_has_numbers(p)) return fail(at, std::string("у ") + motion_prop_word(p) + " нет чисел, которые менял бы параметр");
+            if (!yyjson_is_obj(obj)) return fail(at, "нужен объект {\"параметр\": изменение на единицу}");
+            std::vector<std::string> seen;
+            usize i, n;
+            yyjson_val *k, *d;
+            yyjson_obj_foreach(obj, i, n, k, d) {
+                const std::string name(yyjson_get_str(k), yyjson_get_len(k));
+                const std::string here = at + "." + name;
+                if (std::find(seen.begin(), seen.end(), name) != seen.end()) return fail(here, "параметр дважды");
+                seen.push_back(name);
+                if (!f.param(name)) return fail(here, "нет параметра «" + name + "»: " + param_names());
+                if (c.fixed.count(name)) return fail(here, "параметр в fixed клипа: клип от него не меняется");
+                auto b = std::find_if(out.by.begin(), out.by.end(), [&](const MotionBy& x) { return x.param == name; });
+                if (b == out.by.end()) {
+                    out.by.push_back({});
+                    b = out.by.end() - 1;
+                    b->param = name;
+                }
+                if (out.kind == MotionPiece::Kind::Frames) {
+                    if (!yyjson_is_arr(d) || yyjson_arr_size(d) != out.frames.size())
+                        return fail(here, "нужен список изменений, по одному на кадр (их " + std::to_string(out.frames.size()) + "), каждое " +
+                                              delta_shape(p));
+                    b->frames.resize(out.frames.size());
+                    for (usize j = 0; j < out.frames.size(); ++j)
+                        if (!delta(yyjson_arr_get(d, j), p, b->frames[j]))
+                            return fail(here + "[" + std::to_string(j) + "]", std::string("нужно ") + delta_shape(p));
+                } else {
+                    MotionDelta& dd = plain ? b->value : std::string_view(key) == "by_from" ? b->from : b->to;
+                    if (!delta(d, p, dd)) return fail(here, std::string("нужно ") + delta_shape(p));
+                }
+            }
+        }
+        // A parameter that changes nothing is as none, as the writer leaves it out.
+        std::erase_if(out.by, [](const MotionBy& b) {
+            return b.value.zero() && b.from.zero() && b.to.zero() && std::all_of(b.frames.begin(), b.frames.end(), [](const MotionDelta& d) { return d.zero(); });
+        });
+        const auto index = [&](const MotionBy& b) { return f.param(b.param) - f.params.data(); };
+        std::sort(out.by.begin(), out.by.end(), [&](const MotionBy& a, const MotionBy& b) { return index(a) < index(b); });
+        return true;
+    }
+
+    bool piece_values(yyjson_val* v, const std::string& where, MotionProp p, MotionPiece& out) {
         if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"at\": …}");
         out = {};
         if (!number(yyjson_obj_get(v, "at"), out.at)) return fail(where, "at: нужно число — где кусок начинается, в секундах");
@@ -399,7 +539,7 @@ struct Reader {
         yyjson_arr_foreach(pieces, i, n, item) {
             MotionPiece pc;
             const std::string at = where + ".pieces[" + std::to_string(i) + "]";
-            if (!piece(item, at, out.prop, pc)) return false;
+            if (!piece(item, at, out.prop, c, pc)) return false;
             if (motion_prop_held(out.prop) && pc.kind != MotionPiece::Kind::Hold)
                 return fail(at, std::string("у ") + w + " только hold: она меняется вызовом в миг, а не переходом");
             if (out.prop == MotionProp::Drawing) {
@@ -428,6 +568,20 @@ struct Reader {
         if (yyjson_val* l = yyjson_obj_get(v, "loop")) {
             if (!yyjson_is_bool(l)) return fail(where, "loop: нужно true или false");
             out.loop = yyjson_get_bool(l);
+        }
+        // The parameters the clip does not change with (part 5ж), before the tracks: a piece does not change with them.
+        if (yyjson_val* fx = yyjson_obj_get(v, "fixed")) {
+            if (!yyjson_is_obj(fx)) return fail(where, "fixed: нужен объект {\"параметр\": почему}");
+            usize i, n;
+            yyjson_val *k, *w;
+            yyjson_obj_foreach(fx, i, n, k, w) {
+                const std::string name(yyjson_get_str(k), yyjson_get_len(k));
+                const std::string at = where + ".fixed." + name;
+                if (!f.param(name)) return fail(at, "нет параметра «" + name + "»: " + param_names());
+                std::string reason;
+                if (!text(w, reason) || reason.empty()) return fail(at, "нужно, почему, строкой");
+                if (!out.fixed.emplace(name, std::move(reason)).second) return fail(at, "параметр дважды");
+            }
         }
         yyjson_val* tracks = yyjson_obj_get(v, "tracks");
         if (!yyjson_is_arr(tracks)) return fail(where, "tracks: нужен список дорожек");
@@ -539,6 +693,20 @@ struct Reader {
         if (yyjson_val* v = yyjson_obj_get(r, "character"); v && !text(v, f.character)) return why = "character: нужно имя строкой", false;
         if (yyjson_val* v = yyjson_obj_get(r, "from"); v && !text(v, f.from)) return why = "from: нужен файл персонажа строкой", false;
         if (!text(yyjson_obj_get(r, "picture"), f.picture) || f.picture.empty()) return why = "picture: нужно имя SVG-картинки строкой", false;
+        if (yyjson_val* ps = yyjson_obj_get(r, "params")) {
+            if (!yyjson_is_arr(ps)) return why = "params: нужен список параметров [{\"name\": …, \"value\": …}]", false;
+            usize i, n;
+            yyjson_val* item;
+            yyjson_arr_foreach(ps, i, n, item) {
+                const std::string at = "params[" + std::to_string(i) + "]";
+                MotionParam prm;
+                if (!yyjson_is_obj(item)) return fail(at, "нужен объект {\"name\": …, \"value\": …}");
+                if (!text(yyjson_obj_get(item, "name"), prm.name) || prm.name.empty()) return fail(at, "name: нужно имя параметра строкой");
+                if (!number(yyjson_obj_get(item, "value"), prm.value)) return fail(at, "value: нужно число — с ним вкладка отдала клипы");
+                if (f.param(prm.name)) return fail(at, "параметр «" + prm.name + "» дважды");
+                f.params.push_back(std::move(prm));
+            }
+        }
         if (yyjson_val* ps = yyjson_obj_get(r, "parts"))
             if (!parts(ps, "parts", f.parts)) return false;
         if (yyjson_val* ds = yyjson_obj_get(r, "drawings")) {
@@ -623,6 +791,8 @@ bool motion_prop_moves(MotionProp p) { return static_cast<usize>(p) <= static_ca
 bool motion_prop_held(MotionProp p) { return p == MotionProp::Mask || p == MotionProp::Link; }
 
 bool motion_prop_new(MotionProp p) { return static_cast<usize>(p) >= static_cast<usize>(MotionProp::Dash); }
+
+bool motion_prop_has_numbers(MotionProp p) { return p != MotionProp::Visible && p != MotionProp::Mask && p != MotionProp::Drawing; }
 
 const char* motion_order_word(MotionOrder k) {
     const auto i = static_cast<usize>(k);
@@ -723,6 +893,16 @@ bool motion_same(MotionProp p, const MotionValue& a, const MotionValue& b) {
     return close(x.v, y.v) && x.color == y.color && x.target == y.target && close(x.n, y.n) && close(x.m, y.m);
 }
 
+bool MotionDelta::zero() const { return v == 0 && n == 0 && std::all_of(std::begin(m), std::end(m), [](f64 x) { return x == 0; }); }
+
+MotionValue motion_moved(MotionValue v, const MotionDelta& d, f64 units) {
+    v.v += d.v * units;
+    v.n += d.n * units;
+    v.m = {v.m.a + d.m[0] * units, v.m.b + d.m[1] * units, v.m.c + d.m[2] * units,
+           v.m.d + d.m[3] * units, v.m.e + d.m[4] * units, v.m.f + d.m[5] * units};
+    return v;
+}
+
 usize motion_frame_count(f64 at, f64 end) {
     if (!(end > at)) return 1;
     // The moments before `end` (one within a few nanoseconds of it is `end`), then `end` itself.
@@ -775,6 +955,12 @@ const MotionDrawing* MotionFile::drawing(std::string_view name) const {
     return nullptr;
 }
 
+const MotionParam* MotionFile::param(std::string_view name) const {
+    for (const MotionParam& p : params)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
 bool read_motion_file(std::string_view json, MotionFile& out, std::string& why) {
     out = {};
     why.clear();
@@ -792,6 +978,7 @@ bool read_motion_file(std::string_view json, MotionFile& out, std::string& why) 
 }
 
 u32 motion_file_version(const MotionFile& f) {
+    if (!f.params.empty()) return 4;
     if (!f.drawings.empty()) return 3;
     for (const MotionClip& c : f.clips)
         for (const MotionTrack& t : c.tracks)
@@ -811,6 +998,17 @@ std::string write_motion_file(const MotionFile& f) {
     put_string(out, f.from);
     out += ",\n  \"picture\": ";
     put_string(out, f.picture);
+    if (!f.params.empty()) {
+        out += ",\n  \"params\": [";
+        for (usize i = 0; i < f.params.size(); ++i) {
+            out += i ? ", {\"name\": " : "{\"name\": ";
+            put_string(out, f.params[i].name);
+            out += ", \"value\": ";
+            put_number(out, f.params[i].value);
+            out += '}';
+        }
+        out += ']';
+    }
     out += ",\n  \"parts\": ";
     put_parts(out, f.parts, "  ");
     out += ",\n";
@@ -911,6 +1109,18 @@ std::string write_motion_file(const MotionFile& f) {
                 out += '}';
             }
             out += "\n      ]";
+        }
+        if (!c.fixed.empty()) {
+            out += ",\n      \"fixed\": {";
+            bool first = true;
+            for (const auto& [name, why] : c.fixed) {
+                if (!first) out += ", ";
+                first = false;
+                put_string(out, name);
+                out += ": ";
+                put_string(out, why);
+            }
+            out += '}';
         }
         out += "\n    }";
     }
@@ -1093,6 +1303,27 @@ std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t) {
         if (!(snap_ns(st.at) <= snap_ns(t))) continue;
         const auto copy = std::find_if(clip.copies.begin(), clip.copies.end(), [&](const MotionCopy& c) { return c.id == st.part; });
         if (copy == clip.copies.end() || motion_copy_drawn(*copy, t)) out.push_back(st);
+    }
+    return out;
+}
+
+MotionClip motion_clip_with(const MotionFile& file, const MotionClip& clip, const std::vector<MotionParam>& values) {
+    MotionClip out = clip;
+    for (const MotionParam& given : values) {
+        const MotionParam* own = file.param(given.name);
+        if (!own || clip.fixed.count(given.name)) continue;
+        const f64 units = given.value - own->value;
+        for (MotionTrack& t : out.tracks)
+            for (MotionPiece& pc : t.pieces)
+                for (const MotionBy& b : pc.by) {
+                    if (b.param != given.name) continue;
+                    if (pc.kind == MotionPiece::Kind::Hold) pc.value = motion_moved(pc.value, b.value, units);
+                    if (pc.kind == MotionPiece::Kind::Ease) {
+                        pc.from = motion_moved(pc.from, b.from, units);
+                        pc.to = motion_moved(pc.to, b.to, units);
+                    }
+                    for (usize i = 0; i < pc.frames.size() && i < b.frames.size(); ++i) pc.frames[i] = motion_moved(pc.frames[i], b.frames[i], units);
+                }
     }
     return out;
 }

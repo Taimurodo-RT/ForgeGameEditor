@@ -5,7 +5,9 @@
 // is the rig's after the pose; the screen's picture (lunasvg with the attributes and the stage the game gives it) is the
 // tab's (ThorVG) inside the shapes and in what it covers: dashes, drawn shares, tints, flashes, masks, links, copies and
 // the order too. Part 5е («Смена клипов»): a blend of two poses, prop by prop, and the game blending a clip in from what
-// the layer shows, on the test's clock.
+// the layer shows, on the test's clock. Part 5ж («Параметры из игры»): the file keeps the code's parameters and how each
+// number of each piece changes per unit of each, a clip a parameter does not change straight keeps it fixed with why,
+// and the game at other values of them is the tab's frame at those values.
 
 #include "forge/core/path.h"
 #include "forge/game/screens.h"
@@ -174,18 +176,14 @@ std::string said(MotionProp p, const MotionValue& v) {
 
 const MotionTrack* track_of(const MotionClip& c, std::string_view part, MotionProp p);
 
-// A clip as the screen plays it, checked against the tab's frame: every piece at its moments, its holds and transitions
-// between them too, every property no track has at rest; written and read back the same.
-MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std::string& clip, MotionFile* file_out = nullptr) {
-    MotionFile file;
-    MotionClip c;
-    std::string why;
-    const bool ok = screen_clip(s, rig, doc, clip, file, c, why);
-    INFO(why);
-    REQUIRE(ok);
+// A clip as the screen plays it against the tab's frame at these values of the parameters: every piece at its moments,
+// its holds and transitions between them too, the drawing shown, every property no track has at rest, the copies drawn
+// and the order.
+void same_as_frame(PoseScript& s, const Rig& rig, const std::map<std::string, f64>& values, u64 seed, const std::string& clip, const MotionFile& file,
+                   const MotionClip& c) {
     auto tab = [&](f64 t) {
         Pose p;
-        const bool posed = s.pose(rig, t, clip, doc.params, doc.seed, p);
+        const bool posed = s.pose(rig, t, clip, values, seed, p);
         INFO(s.error());
         REQUIRE(posed);
         return p;
@@ -257,6 +255,17 @@ MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std
             order.push_back({st.part, static_cast<OrderStep::Kind>(st.kind), st.other});
         CHECK(order == p.order);
     }
+}
+
+// A clip as the screen plays it, checked against the tab's frame (same_as_frame); written and read back the same.
+MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std::string& clip, MotionFile* file_out = nullptr) {
+    MotionFile file;
+    MotionClip c;
+    std::string why;
+    const bool ok = screen_clip(s, rig, doc, clip, file, c, why);
+    INFO(why);
+    REQUIRE(ok);
+    same_as_frame(s, rig, doc.params, doc.seed, clip, file, c);
     file.character = "Ёжик";
     file.from = "Ёжик.pixel.json";
     file.picture = "Ёжик.svg";
@@ -405,6 +414,13 @@ void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc
     }
 }
 
+// A change per unit of a parameter of a number or a share (part 5ж).
+vector::MotionDelta delta_v(f64 v) {
+    vector::MotionDelta d;
+    d.v = v;
+    return d;
+}
+
 } // namespace
 
 TEST_CASE("Screen clips file: every field there and back, numbers in their shortest form") {
@@ -514,7 +530,7 @@ TEST_CASE("Screen clips file: what it cannot read names the field") {
     CHECK(read_error("не JSON").find("JSON") != std::string::npos);
     CHECK(read_error(R"({"forge": "motion"})").find("version") != std::string::npos);
     CHECK(read_error(R"({"forge": "picture", "version": 1})").find("forge") != std::string::npos);
-    CHECK(read_error(R"({"forge": "motion", "version": 4, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
+    CHECK(read_error(R"({"forge": "motion", "version": 5, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
               .find("version") != std::string::npos);
     // A field not of its kind.
     std::string looped = one_track(hold);
@@ -3211,6 +3227,643 @@ TEST_CASE("Screen clips, part 5е: the game blends a clip in from what the layer
     }
     Rml::Shutdown();
     Rml::SetRenderInterface(nullptr);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Screen clips file, part 5ж: the parameters, the pieces' changes and the fixed ones there and back, version 4 only with them") {
+    const std::string kPartA = R"({"a": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}, "b": {"pivot": [1, 2], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}})";
+    auto file = [&](std::string_view params, std::string_view tracks, std::string_view clip_rest = "") {
+        return R"({"forge": "motion", "version": 4, "character": "Ёжик", "from": "Ёжик.pixel.json", "picture": "Ёжик.svg", )" + std::string(params) +
+               R"( "parts": )" + kPartA + R"(, "curves": [], "clips": {"c": {"length": 1, "loop": false, "tracks": [)" + std::string(tracks) +
+               R"(], "marks": [], "not_drawn": [])" + std::string(clip_rest) + "}}}";
+    };
+    const std::string params = R"("params": [{"name": "height", "value": 6}, {"name": "count", "value": 3}],)";
+    std::string frames = R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"count": [0, 0, 1, 0], "height": [0.5, 0.25, 0, -1]}}, {"at": 0.025, "hold": 4}]})";
+    REQUIRE(vector::motion_frame_count(0, 0.025) == 4);
+    const std::string tracks =
+        R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"height": -1}}, {"at": 0.5, "length": 0.25, "from": -6, "to": 0, "ease": "linear", "by_from": {"height": -1}, "by_to": {"count": 2}}]}, )"
+        R"({"part": "b", "prop": "stroke_width", "pieces": [{"at": 0, "hold": [1, 4], "by": {"height": [0, 0.5]}}]}, )"
+        R"({"part": "b", "prop": "fill", "pieces": [{"at": 0, "hold": [0.5, "#ff0000ff"], "by": {"count": 0.125}}]}, )"
+        R"({"part": "b", "prop": "link", "pieces": [{"at": 0, "hold": ["a", 1, 0, 0, 1, 3, 4], "by": {"height": [0, 0, 0, 0, 1, 0.5]}}]}, )"
+        R"({"part": "b", "prop": "visible", "pieces": [{"at": 0, "hold": true}]}, )" + frames;
+    const std::string fixed = R"(, "fixed": {"count": "число переходов"})";
+    MotionFile f;
+    std::string why;
+    const bool read = vector::read_motion_file(file(params, tracks), f, why);
+    INFO(why);
+    REQUIRE(read);
+    REQUIRE(f.params.size() == 2);
+    CHECK(f.params[0] == vector::MotionParam{"height", 6});
+    CHECK(f.params[1] == vector::MotionParam{"count", 3});
+    CHECK(f.param("count") == &f.params[1]);
+    CHECK(f.param("heigth") == nullptr);
+    const MotionClip& c = f.clips[0];
+    // A hold's change, a transition's from and to merged a parameter an entry, in the order of params whatever the file's.
+    const MotionPiece& hold = c.tracks[0].pieces[0];
+    REQUIRE(hold.by.size() == 1);
+    CHECK(hold.by[0].param == "height");
+    CHECK(hold.by[0].value == delta_v(-1));
+    const MotionPiece& ease = c.tracks[0].pieces[1];
+    REQUIRE(ease.by.size() == 2);
+    CHECK(ease.by[0].param == "height");
+    CHECK(ease.by[0].from == delta_v(-1));
+    CHECK(ease.by[0].to.zero());
+    CHECK(ease.by[1].param == "count");
+    CHECK(ease.by[1].from.zero());
+    CHECK(ease.by[1].to == delta_v(2));
+    vector::MotionDelta width;
+    width.n = 0.5;
+    CHECK(c.tracks[1].pieces[0].by[0].value == width);
+    CHECK(c.tracks[2].pieces[0].by[0].value == delta_v(0.125));
+    vector::MotionDelta link;
+    link.m[4] = 1;
+    link.m[5] = 0.5;
+    CHECK(c.tracks[3].pieces[0].by[0].value == link);
+    CHECK(c.tracks[4].pieces[0].by.empty());
+    const MotionPiece& fr = c.tracks[5].pieces[0];
+    REQUIRE(fr.by.size() == 2);
+    CHECK(fr.by[0].param == "height");
+    CHECK(fr.by[0].frames == std::vector<vector::MotionDelta>{delta_v(0.5), delta_v(0.25), delta_v(0), delta_v(-1)});
+    CHECK(fr.by[1].param == "count");
+    CHECK(fr.by[1].frames == std::vector<vector::MotionDelta>{delta_v(0), delta_v(0), delta_v(1), delta_v(0)});
+    CHECK(c.fixed.empty());
+
+    // There and back, version 4; the fixed ones too.
+    const std::string text = vector::write_motion_file(f);
+    CHECK(text.find("\"version\": 4") != std::string::npos);
+    CHECK(text.find(R"("params": [{"name": "height", "value": 6}, {"name": "count", "value": 3}])") != std::string::npos);
+    CHECK(text.find(R"("by_from": {"height": -1}, "by_to": {"count": 2})") != std::string::npos);
+    CHECK(text.find(R"("by": {"height": [0, 0.5]})") != std::string::npos);
+    CHECK(text.find(R"("by": {"height": [0, 0, 0, 0, 1, 0.5]})") != std::string::npos);
+    CHECK(text.find(R"("by": {"height": [0.5, 0.25, 0, -1], "count": [0, 0, 1, 0]})") != std::string::npos);
+    MotionFile back;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_motion_file(back) == text);
+    MotionFile g;
+    REQUIRE(vector::read_motion_file(file(params, R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"height": -1}}]})", fixed), g, why));
+    CHECK(g.clips[0].fixed == std::map<std::string, std::string>{{"count", "число переходов"}});
+    const std::string gtext = vector::write_motion_file(g);
+    CHECK(gtext.find(R"("fixed": {"count": "число переходов"})") != std::string::npos);
+    MotionFile gback;
+    REQUIRE(vector::read_motion_file(gtext, gback, why));
+    CHECK(gback == g);
+    // A parameter that changes nothing is as none: the writer leaves it out, and the reader reads it so.
+    MotionFile zero;
+    REQUIRE(vector::read_motion_file(file(params, R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"height": 0, "count": -0.0}}]})"), zero, why));
+    CHECK(zero.clips[0].tracks[0].pieces[0].by.empty());
+    MotionFile zero_written = f;
+    zero_written.clips[0].tracks[0].pieces[0].by[0].value = {};
+    CHECK(vector::write_motion_file(zero_written).find(R"("hold": -6})") != std::string::npos);
+    // Without parameters as before: version 3 at most, no "params".
+    MotionFile plain = f;
+    plain.params.clear();
+    for (MotionTrack& t : plain.clips[0].tracks)
+        for (MotionPiece& p : t.pieces) p.by.clear();
+    CHECK(vector::motion_file_version(plain) == 2);
+    CHECK(vector::write_motion_file(plain).find("params") == std::string::npos);
+    MotionFile only_params = plain;
+    only_params.params = f.params;
+    CHECK(vector::motion_file_version(only_params) == 4);
+
+    // What it cannot read.
+    const std::string y = R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6}]})";
+    CHECK(read_error(file(R"("params": {},)", y)) == "params: нужен список параметров [{\"name\": …, \"value\": …}]");
+    CHECK(read_error(file(R"("params": [6],)", y)) == "params[0]: нужен объект {\"name\": …, \"value\": …}");
+    CHECK(read_error(file(R"("params": [{"name": "", "value": 6}],)", y)) == "params[0]: name: нужно имя параметра строкой");
+    CHECK(read_error(file(R"("params": [{"name": "h", "value": "6"}],)", y)) == "params[0]: value: нужно число — с ним вкладка отдала клипы");
+    CHECK(read_error(file(R"("params": [{"name": "h", "value": 6}, {"name": "h", "value": 1}],)", y)) == "params[1]: параметр «h» дважды");
+    auto with = [&](std::string_view piece_rest, std::string_view prop = "y", std::string_view value = "-6") {
+        return file(params, R"({"part": "a", "prop": ")" + std::string(prop) + R"(", "pieces": [{"at": 0, "hold": )" + std::string(value) +
+                                std::string(piece_rest) + "}]}");
+    };
+    CHECK(read_error(with(R"(, "by": {"heigth": 1})")) == "clips.c.tracks[0].pieces[0].by.heigth: нет параметра «heigth»: есть «height», «count»");
+    CHECK(read_error(file("", R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"height": 1}}]})")) ==
+          "clips.c.tracks[0].pieces[0].by.height: нет параметра «height»: в params ни одного");
+    CHECK(read_error(with(R"(, "by": {"height": "1"})")) == "clips.c.tracks[0].pieces[0].by.height: нужно число");
+    CHECK(read_error(with(R"(, "by": {"height": 1, "height": 2})")) == "clips.c.tracks[0].pieces[0].by.height: параметр дважды");
+    CHECK(read_error(with(R"(, "by": [1])")) == "clips.c.tracks[0].pieces[0].by: нужен объект {\"параметр\": изменение на единицу}");
+    CHECK(read_error(with(R"(, "by_from": {"height": 1})")) == "clips.c.tracks[0].pieces[0].by_from: by_from и by_to только у перехода, у этого куска by");
+    CHECK(read_error(with(R"(, "by": {"height": 1})", "visible", "true")) == "clips.c.tracks[0].pieces[0].by: у visible нет чисел, которые менял бы параметр");
+    CHECK(read_error(with(R"(, "by": {"height": 1})", "mask", R"([1, "b"])")) == "clips.c.tracks[0].pieces[0].by: у mask нет чисел, которые менял бы параметр");
+    CHECK(read_error(with(R"(, "by": {"height": 1})", "stroke_width", "[1, 4]")) == "clips.c.tracks[0].pieces[0].by.height: нужно [доля, толщина]");
+    CHECK(read_error(with(R"(, "by": {"height": [1, 2]})", "link", R"(["a", 1, 0, 0, 1, 3, 4])")) ==
+          "clips.c.tracks[0].pieces[0].by.height: нужно шесть чисел a, b, c, d, e, f");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "length": 0.25, "from": -6, "to": 0, "ease": "linear", "by": {"height": 1}}]})")) ==
+          "clips.c.tracks[0].pieces[0].by: у перехода by_from и by_to");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, 3]}}, {"at": 0.025, "hold": 4}]})")) ==
+          "clips.c.tracks[0].pieces[0].by.height: нужен список изменений, по одному на кадр (их 4), каждое число");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, 3, 4, 5]}}, {"at": 0.025, "hold": 4}]})")) ==
+          "clips.c.tracks[0].pieces[0].by.height: нужен список изменений, по одному на кадр (их 4), каждое число");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "x", "pieces": [{"at": 0, "end": 0.025, "frames": [1, 2, 3, 4], "by": {"height": [1, 2, "3", 4]}}, {"at": 0.025, "hold": 4}]})")) ==
+          "clips.c.tracks[0].pieces[0].by.height[2]: нужно число");
+    CHECK(read_error(file(params, R"({"part": "a", "prop": "y", "pieces": [{"at": 0, "hold": -6, "by": {"count": 1}}]})", fixed)) ==
+          "clips.c.tracks[0].pieces[0].by.count: параметр в fixed клипа: клип от него не меняется");
+    CHECK(read_error(file(params, y, R"(, "fixed": {"cnt": "число переходов"})")) == "clips.c.fixed.cnt: нет параметра «cnt»: есть «height», «count»");
+    CHECK(read_error(file(params, y, R"(, "fixed": {"count": ""})")) == "clips.c.fixed.count: нужно, почему, строкой");
+    CHECK(read_error(file(params, y, R"(, "fixed": {"count": "цвет", "count": "метки"})")) == "clips.c.fixed.count: параметр дважды");
+    CHECK(read_error(file(params, y, R"(, "fixed": ["count"])")) == "clips.c: fixed: нужен объект {\"параметр\": почему}");
+}
+
+TEST_CASE("Screen clips, part 5ж: a clip at other values of the parameters, each number by its change, the fixed ones and unknown ones left") {
+    MotionFile f;
+    f.params = {{"height", 6}, {"count", 3}};
+    MotionClip c;
+    c.name = "c";
+    c.length = 1;
+    MotionTrack y;
+    y.part = "a";
+    y.prop = MotionProp::Y;
+    MotionPiece hold;
+    hold.value.v = -6;
+    hold.by = {{"height", delta_v(-1), {}, {}, {}}, {"count", delta_v(0.5), {}, {}, {}}};
+    MotionPiece ease;
+    ease.kind = MotionPiece::Kind::Ease;
+    ease.at = 0.5;
+    ease.length = 0.25;
+    ease.from.v = -6;
+    ease.to.v = 0;
+    ease.by = {{"height", {}, delta_v(-1), delta_v(0.25), {}}};
+    y.pieces = {hold, ease};
+    MotionTrack w;
+    w.part = "b";
+    w.prop = MotionProp::StrokeWidth;
+    MotionPiece wp;
+    wp.value.v = 1;
+    wp.value.n = 4;
+    vector::MotionDelta wd;
+    wd.v = -0.125;
+    wd.n = 0.5;
+    wp.by = {{"height", wd, {}, {}, {}}};
+    w.pieces = {wp};
+    MotionTrack l;
+    l.part = "b";
+    l.prop = MotionProp::Link;
+    MotionPiece lp;
+    lp.value.target = "a";
+    lp.value.m = {1, 0, 0, 1, 3, 4};
+    vector::MotionDelta ld;
+    for (usize i = 0; i < 6; ++i) ld.m[i] = 0.1 * static_cast<f64>(i + 1);
+    lp.by = {{"height", ld, {}, {}, {}}};
+    l.pieces = {lp};
+    MotionTrack x;
+    x.part = "a";
+    x.prop = MotionProp::X;
+    MotionPiece fp;
+    fp.kind = MotionPiece::Kind::Frames;
+    fp.end = 0.025;
+    for (f64 v : {1.0, 2.0, 3.0, 4.0}) {
+        MotionValue mv;
+        mv.v = v;
+        fp.frames.push_back(mv);
+    }
+    fp.by = {{"height", {}, {}, {}, {delta_v(1), delta_v(0), delta_v(-1), delta_v(2)}}};
+    x.pieces = {fp};
+    c.tracks = {y, w, l, x};
+    f.clips = {c};
+
+    const MotionClip at8 = vector::motion_clip_with(f, c, {{"height", 8}});
+    CHECK(at8.tracks[0].pieces[0].value.v == -8);
+    CHECK(at8.tracks[0].pieces[1].from.v == -8);
+    CHECK(at8.tracks[0].pieces[1].to.v == 0.5);
+    CHECK(at8.tracks[1].pieces[0].value.v == 0.75);
+    CHECK(at8.tracks[1].pieces[0].value.n == 5);
+    const vector::MotionMatrix m = at8.tracks[2].pieces[0].value.m;
+    CHECK(m.a == doctest::Approx(1.2));
+    CHECK(m.b == doctest::Approx(0.4));
+    CHECK(m.c == doctest::Approx(0.6));
+    CHECK(m.d == doctest::Approx(1.8));
+    CHECK(m.e == doctest::Approx(4));
+    CHECK(m.f == doctest::Approx(5.2));
+    CHECK(at8.tracks[2].pieces[0].value.target == "a");
+    std::vector<f64> xs;
+    for (const MotionValue& v : at8.tracks[3].pieces[0].frames) xs.push_back(v.v);
+    CHECK(xs == std::vector<f64>{3, 2, 1, 8});
+    // Both parameters, one below the file's; one the file has not is left; a fixed one is left.
+    const MotionClip both = vector::motion_clip_with(f, c, {{"height", 3}, {"count", 5}, {"speed", 9}});
+    CHECK(both.tracks[0].pieces[0].value.v == -6 + 3 + 1);
+    CHECK(both.tracks[0].pieces[1].to.v == -0.75);
+    MotionFile fx = f;
+    fx.clips[0].fixed["count"] = "число переходов";
+    CHECK(vector::motion_clip_with(fx, fx.clips[0], {{"height", 3}, {"count", 5}}).tracks[0].pieces[0].value.v == -3);
+    // At the file's values, and with none given, the clip as it is.
+    CHECK(vector::motion_clip_with(f, c, {{"height", 6}, {"count", 3}}) == c);
+    CHECK(vector::motion_clip_with(f, c, {}) == c);
+    // Visible, a mask, a drawing have no numbers; the rest have.
+    CHECK_FALSE(vector::motion_prop_has_numbers(MotionProp::Visible));
+    CHECK_FALSE(vector::motion_prop_has_numbers(MotionProp::Mask));
+    CHECK_FALSE(vector::motion_prop_has_numbers(MotionProp::Drawing));
+    for (MotionProp p : {MotionProp::X, MotionProp::Opacity, MotionProp::Fill, MotionProp::StrokeWidth, MotionProp::Morph, MotionProp::Link, MotionProp::FlashColor})
+        CHECK(vector::motion_prop_has_numbers(p));
+}
+
+// --- part 5ж: parameters from the game ------------------------------------------------------------------------------
+
+namespace {
+
+// The hedgehog's clips with the code's parameters: «jump» and «land» (after it) straight in height — a part set at
+// once, transitions, a stroke width, an opacity, copies, frames of a tween, a part of another drawing after a swap;
+// each other clip with a parameter it does not change straight with.
+const char* kParamClips = R"(    jump = function(p, rng)
+      part("nose").x(p.height / 2, 0)
+      all(part("face").y(-p.height, 0.2, "out_quad"), part("head").stroke_width(1 + p.height / 4, 0.2),
+          part("nose").opacity(0.3 + p.height / 40, 0.2), copies("nose", 2, function(i, c) c.x(i * p.height, 0.1) end))
+      tween(0.2, function(k) part("face").rot(k * k * p.height) end)
+      swap("angry", 0.2, "linear")
+      part("brow").rot(p.height * 2, 0.2)
+    end,
+    land = function(p, rng)
+      start_from("jump")
+      part("face").y(0, 0.3, "in_quad")
+    end,
+    waiting = function(p, rng)
+      part("nose").x(3, 0.2)
+      wait(p.pause / 10)
+    end,
+    bounces = function(p, rng)
+      for i = 1, p.count do part("nose").y(i * 2, 0.1) end
+      wait(1 - p.count / 10)
+    end,
+    tinted = function(p, rng) part("head").fill(p.tone >= 0.6 and "#ff0000" or "#0000ff", 0.2) end,
+    wobbly = function(p, rng) part("nose").y(math.sin(p.wobble) * 4 + 5, 0.2) end,
+    fragile = function(p, rng)
+      if p.broken < 1 then error("слишком мало") end
+      part("nose").x(2, 0.2)
+    end,)";
+
+std::string param_code(std::string_view params, std::string_view clips, std::string_view draw = kHedge, std::string_view angry = kHedgeAngry) {
+    std::string s = hedgehog_code(clips, draw, angry);
+    REQUIRE(s.rfind("return {\n", 0) == 0);
+    return "return {\n  params = { " + std::string(params) + " },\n" + s.substr(9);
+}
+
+// The clip of the gift at these values of the parameters, as a game plays it.
+MotionClip clip_at(const ScreenGift& g, std::string_view clip, const std::map<std::string, f64>& values) {
+    std::vector<vector::MotionParam> given;
+    for (const auto& [name, v] : values) given.push_back({name, v});
+    const MotionClip* c = g.motion.clip(clip);
+    REQUIRE(c);
+    return vector::motion_clip_with(g.motion, *c, given);
+}
+
+const vector::MotionBy* by_of(const MotionPiece& pc, std::string_view param) {
+    for (const vector::MotionBy& b : pc.by)
+        if (b.param == param) return &b;
+    return nullptr;
+}
+
+} // namespace
+
+TEST_CASE("Screen clips, part 5ж: a parameter the code uses straight: the game at other values is the tab's frame at them, and its picture") {
+    Hedgehog h(param_code("height = 6, count = 3, tone = 0.5, wobble = 1, broken = 1, pause = 2", kParamClips));
+    const MotionFile& f = h.gift.motion;
+    // The parameters as the code declares them (by name), at the values the tab gave the clips.
+    REQUIRE(f.params.size() == 6);
+    CHECK(f.params[0] == vector::MotionParam{"broken", 1});
+    CHECK(f.params[2] == vector::MotionParam{"height", 6});
+    CHECK(vector::motion_file_version(f) == 4);
+    // «jump» and «land» change with height, and nothing with the others; each piece's change is the code's.
+    for (const char* name : {"jump", "land"}) {
+        const MotionClip* c = f.clip(name);
+        REQUIRE(c);
+        INFO(name);
+        CHECK(c->fixed.empty());
+        for (const MotionTrack& t : c->tracks)
+            for (const MotionPiece& pc : t.pieces)
+                for (const vector::MotionBy& b : pc.by) CHECK(b.param == "height");
+    }
+    const MotionClip& jump = *f.clip("jump");
+    const MotionTrack* nose_x = track_of(jump, "nose", MotionProp::X);
+    REQUIRE(nose_x);
+    REQUIRE(nose_x->pieces.front().kind == MotionPiece::Kind::Hold);
+    REQUIRE(by_of(nose_x->pieces.front(), "height"));
+    CHECK(by_of(nose_x->pieces.front(), "height")->value.v == doctest::Approx(0.5));
+    const MotionTrack* face_y = track_of(jump, "face", MotionProp::Y);
+    REQUIRE(face_y);
+    REQUIRE(face_y->pieces.front().kind == MotionPiece::Kind::Ease);
+    REQUIRE(by_of(face_y->pieces.front(), "height"));
+    CHECK(by_of(face_y->pieces.front(), "height")->from.zero());
+    CHECK(by_of(face_y->pieces.front(), "height")->to.v == doctest::Approx(-1));
+    const MotionTrack* rot = track_of(jump, "face", MotionProp::Rot);
+    REQUIRE(rot);
+    CHECK(std::any_of(rot->pieces.begin(), rot->pieces.end(), [](const MotionPiece& pc) {
+        return pc.kind == MotionPiece::Kind::Frames && by_of(pc, "height") && by_of(pc, "height")->frames.size() == pc.frames.size();
+    }));
+    const MotionTrack* width = track_of(jump, "head", MotionProp::StrokeWidth);
+    REQUIRE(width);
+    CHECK(std::any_of(width->pieces.begin(), width->pieces.end(), [](const MotionPiece& pc) {
+        const vector::MotionBy* b = by_of(pc, "height");
+        return b && pc.kind == MotionPiece::Kind::Ease && std::abs(b->to.n - 0.25) < 1e-9;
+    }));
+    CHECK(by_of(track_of(jump, "nose[2]", MotionProp::X)->pieces.back(), "height"));
+    CHECK(by_of(track_of(jump, "brow", MotionProp::Rot)->pieces.back(), "height"));
+    const MotionTrack* land_y = track_of(*f.clip("land"), "face", MotionProp::Y);
+    REQUIRE(land_y);
+    REQUIRE(land_y->pieces.front().kind == MotionPiece::Kind::Ease);
+    CHECK(by_of(land_y->pieces.front(), "height")->from.v == doctest::Approx(-1)); // start_from: jump's end at height
+    CHECK(by_of(land_y->pieces.front(), "height")->to.zero());
+
+    // The game at height 8 and at −3 is the tab's frame at them, at each 120th of a second and between, and its picture.
+    for (const f64 height : {8.0, -3.0}) {
+        std::map<std::string, f64> at = h.doc.params;
+        at["height"] = height;
+        PixelDoc doc_at = h.doc;
+        doc_at.params = at;
+        ScreenGift gift_at = h.gift;
+        for (const char* name : {"jump", "land"}) {
+            INFO(name, " at height ", height);
+            const MotionClip c = clip_at(h.gift, name, {{"height", height}});
+            same_as_frame(h.script, h.rig, at, h.doc.seed, name, f, c);
+            *std::find_if(gift_at.motion.clips.begin(), gift_at.motion.clips.end(), [&](const MotionClip& k) { return k.name == name; }) = c;
+        }
+        same_as_tab(gift_at, h.script, h.rig, doc_at, "jump", {0.05, 0.15, 0.3, 0.45, 0.6, 0.7, 0.8});
+        same_as_tab(gift_at, h.script, h.rig, doc_at, "land", {0, 0.1, 0.2, 0.3});
+    }
+    // At the file's values the clip is the file's.
+    CHECK(clip_at(h.gift, "jump", {{"height", 6}}) == jump);
+}
+
+TEST_CASE("Screen clips, part 5ж: what a parameter does that a game cannot make of the clip, each with why; the tab's line") {
+    Hedgehog h(param_code("height = 6, count = 3, tone = 0.5, wobble = 1, broken = 1, pause = 2", kParamClips));
+    const MotionFile& f = h.gift.motion;
+    auto fixed = [&](const char* clip) {
+        const MotionClip* c = f.clip(clip);
+        REQUIRE(c);
+        return c->fixed;
+    };
+    CHECK(fixed("waiting") == std::map<std::string, std::string>{{"pause", "длина клипа"}});
+    CHECK(fixed("bounces") == std::map<std::string, std::string>{{"count", "число переходов"}});
+    CHECK(fixed("tinted") == std::map<std::string, std::string>{{"tone", "цвет"}});
+    CHECK(fixed("wobbly") == std::map<std::string, std::string>{{"wobble", "не прямо"}});
+    const std::map<std::string, std::string> fragile = fixed("fragile");
+    REQUIRE(fragile.size() == 1);
+    REQUIRE(fragile.count("broken"));
+    CHECK(fragile.at("broken").rfind("клип не записывается при broken = 0: клип «fragile», строка ", 0) == 0);
+    CHECK(fragile.at("broken").find("слишком мало") != std::string::npos);
+    // The clips with the others' numbers unchanged: no change of them written.
+    for (const MotionClip& c : f.clips)
+        for (const MotionTrack& t : c.tracks)
+            for (const MotionPiece& pc : t.pieces)
+                for (const vector::MotionBy& b : pc.by) CHECK(b.param == "height");
+    // A fixed parameter given is the file's numbers.
+    CHECK(clip_at(h.gift, "bounces", {{"count", 5}}) == *f.clip("bounces"));
+    // The tab's line.
+    REQUIRE(!h.gift.notes.empty());
+    const std::string& line = h.gift.notes.back();
+    INFO(line);
+    CHECK(line.rfind("Из игры меняются: height. Не меняются: ", 0) == 0);
+    for (const char* part : {"count в «bounces» (число переходов)", "pause в «waiting» (длина клипа)", "tone в «tinted» (цвет)",
+                             "wobble в «wobbly» (не прямо)", "broken в «fragile» (клип не записывается при broken = 0: "})
+        CHECK(line.find(part) != std::string::npos);
+
+    // A picture the code draws from a parameter, or another drawing of it: no clip changes with it.
+    Hedgehog drawn(param_code("size = 14, brow = 2", R"(    grow = function(p, rng) part("nose").x(p.size, 0.2) end,)",
+                              R"(    canvas(64, 64)
+    group("face", { y = 2 }, function()
+      circle("head", { x = 32, y = 28, r = p.size, fill = "#c09060" })
+      path("mouth", { d = "M 26 34 Q 32 38 38 34", fill = "none", stroke = "#402010", stroke_width = 1.5 })
+    end)
+    rect("nose", { x = 30, y = 26, w = 4, h = 3, fill = "#a06040" }))",
+                              R"(      canvas(64, 64)
+      group("face", { x = 1 }, function()
+        circle("head", { x = 32, y = 28, r = 12, fill = "#e06040" })
+      end)
+      path("brow", { d = "M 22 18 L 30 22", fill = "none", stroke = "#401010", stroke_width = p.brow }))"));
+    const MotionClip* grow = drawn.gift.motion.clip("grow");
+    REQUIRE(grow);
+    CHECK(grow->fixed == std::map<std::string, std::string>{{"brow", "рисунок «angry»"}, {"size", "картинка"}});
+    CHECK(drawn.gift.notes.back() == "Не меняются: brow в «grow» (рисунок «angry»), size в «grow» (картинка)");
+    // A picture the code cannot draw at a value next to the tab's: no clip changes with it, and the error is said.
+    Hedgehog fails(param_code("size = 14", R"(    grow = function(p, rng) part("nose").x(p.size, 0.2) end,)",
+                              R"(    canvas(64, 64)
+    if p.size > 14 then error("слишком большая") end
+    group("face", { y = 2 }, function()
+      circle("head", { x = 32, y = 28, r = 12, fill = "#c09060" })
+      path("mouth", { d = "M 26 34 Q 32 38 38 34", fill = "none", stroke = "#402010", stroke_width = 1.5 })
+    end)
+    rect("nose", { x = 30, y = 26, w = 4, h = 3, fill = "#a06040" }))"));
+    const MotionClip* big = fails.gift.motion.clip("grow");
+    REQUIRE(big);
+    REQUIRE(big->fixed.count("size"));
+    CHECK(big->fixed.size() == 1);
+    INFO(big->fixed.at("size"));
+    CHECK(big->fixed.at("size").rfind("картинка не рисуется при size = 15: ", 0) == 0);
+    CHECK(big->fixed.at("size").find("слишком большая") != std::string::npos);
+    // Without parameters: version 3 at most, no line.
+    Hedgehog plain(hedgehog_code(R"(    a = function(p, rng) part("nose").x(3, 0.2) end,)"));
+    CHECK(plain.gift.motion.params.empty());
+    CHECK(vector::motion_file_version(plain.gift.motion) == 3);
+    CHECK(std::none_of(plain.gift.notes.begin(), plain.gift.notes.end(), [](const std::string& n) { return n.find("меняются") != std::string::npos; }));
+}
+
+// Part 5ж: the other ways a clip recorded at another value is another clip, a parameter a clip; and a number a parameter
+// moves only by rounding.
+const char* kOtherClips = R"(    timed = function(p, rng)
+      part("nose").x(3, p.dur / 10)
+      wait(1 - p.dur / 10)
+    end,
+    kinded = function(p, rng)
+      if p.kind > 0.5 then
+        part("nose").x(3)
+        wait(0.2)
+      else
+        part("nose").x(3, 0.2)
+      end
+    end,
+    eased = function(p, rng) part("nose").x(3, 0.2, p.soft > 0.5 and "in_quad" or "linear") end,
+    marked = function(p, rng)
+      part("nose").x(3, 0.2)
+      emit(p.loud > 0.5 and "bang" or "tap")
+    end,
+    copied = function(p, rng)
+      copies(p.which > 0.5 and "nose" or "head", 1, function() end)
+      part("nose").x(3, 0.2)
+    end,
+    ordered = function(p, rng)
+      if p.up > 0.5 then part("nose"):above("face") else part("nose"):below("face") end
+      part("nose").x(3, 0.2)
+    end,
+    fuzzy = function(p, rng)
+      if p.fuzz > 0.5 then all(part("nose").x(3, 0.2), part("nose").blur(1, 0.2)) else part("nose").x(3, 0.2) end
+    end,
+    morphed = function(p, rng) part("mouth"):morph(p.shape > 0.5 and "mouth_o" or "head", 0.2) end,
+    linked = function(p, rng)
+      part("nose"):attach(p.holder > 0.5 and "face" or "head")
+      part("nose").x(3, 0.2)
+    end,
+    swapped = function(p, rng) swap(p.mood > 0.5 and "angry" or "sleepy", 0.2, "linear") end,
+    shown = function(p, rng)
+      local on = p.on > 0.5
+      part("nose").visible(on)
+      part("nose").visible(not on, 0.1)
+      part("nose").visible(on, 0.1)
+    end,
+    tweened = function(p, rng)
+      tween(0.2, function(k) part("head").fill(k > 0.5 and (p.warm > 0.5 and "#ff0000" or "#00ff00") or "#0000ff") end)
+    end,
+    noisy = function(p, rng) part("nose").x(3 + p.near * 0.1 + p.near * 0.2 - p.near * 0.3, 0.2) end,)";
+
+TEST_CASE("Screen clips, part 5ж: the other ways a parameter makes another clip, each its word; a number moved by rounding only") {
+    Hedgehog h(param_code("dur = 2, kind = 0.5, soft = 0.5, loud = 0.5, which = 0.5, up = 0.5, fuzz = 0.5, shape = 0.5, holder = 0.5, "
+                          "mood = 0.5, on = 0.5, warm = 0.5, near = 6",
+                          kOtherClips));
+    const MotionFile& f = h.gift.motion;
+    const std::pair<const char*, std::pair<const char*, const char*>> want[] = {
+        {"timed", {"dur", "время переходов"}},    {"kinded", {"kind", "число переходов"}},  {"eased", {"soft", "сглаживание"}},
+        {"marked", {"loud", "метки"}},             {"copied", {"which", "копии"}},           {"ordered", {"up", "порядок частей"}},
+        {"fuzzy", {"fuzz", "что не рисуется"}},    {"morphed", {"shape", "фигура морфинга"}}, {"linked", {"holder", "крепление"}},
+        {"swapped", {"mood", "рисунок"}},          {"shown", {"on", "видимость"}},           {"tweened", {"warm", "цвет"}},
+    };
+    for (const auto& [clip, fixed] : want) {
+        INFO(clip);
+        const MotionClip* c = f.clip(clip);
+        REQUIRE(c);
+        CHECK(c->fixed == std::map<std::string, std::string>{{fixed.first, fixed.second}});
+    }
+    // A number the parameter moves by rounding only (3 + 0.1·near + 0.2·near − 0.3·near): no change of it, and no other.
+    const MotionClip* noisy = f.clip("noisy");
+    REQUIRE(noisy);
+    CHECK(noisy->fixed.empty());
+    for (const MotionClip& c : f.clips)
+        for (const MotionTrack& t : c.tracks)
+            for (const MotionPiece& pc : t.pieces) {
+                INFO(c.name, " ", t.part);
+                CHECK(pc.by.empty());
+            }
+}
+
+TEST_CASE("Screen clips, part 5ж: the game plays a clip at the parameters given, the same clip with others goes on, what it cannot") {
+    namespace fs = std::filesystem;
+    Hedgehog h(param_code("height = 6, count = 3, tone = 0.5, wobble = 1, broken = 1, pause = 2", kParamClips));
+    MotionFile motion = h.gift.motion;
+    motion.picture = "Hog.svg";
+    const fs::path dir = fs::temp_directory_path() / ("forge_params_" + std::to_string(std::random_device{}()));
+    fs::create_directories(dir / "ui");
+    fs::create_directories(dir / "pictures");
+    auto put = [](const fs::path& p, const std::string& text) {
+        std::ofstream o(p, std::ios::binary | std::ios::trunc);
+        o << text;
+        return static_cast<bool>(o);
+    };
+    REQUIRE(put(dir / "pictures" / "Hog.svg", h.gift.svg));
+    std::vector<ui::SvgDrawing> drawings;
+    for (vector::MotionDrawing& d : motion.drawings) {
+        const auto file = std::find_if(h.gift.drawings.begin(), h.gift.drawings.end(), [&](const ScreenGift::File& x) { return x.name == d.picture; });
+        REQUIRE(file != h.gift.drawings.end());
+        d.picture = "Hog." + d.name + ".svg";
+        REQUIRE(put(dir / "pictures" / d.picture, file->text));
+        drawings.push_back({d.name, d.picture, std::make_shared<const std::string>(file->text)});
+    }
+    REQUIRE(put(dir / "pictures" / "Hog.motion.json", vector::write_motion_file(motion)));
+
+    NoRender render;
+    DiskFiles files;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&files);
+    REQUIRE(Rml::Initialise());
+    Rml::Context* context = Rml::CreateContext("params", {400, 300});
+    REQUIRE(context);
+    {
+        game::GameScreens screens;
+        u32 frames = 0; // the clock: on by a 60th of a second a frame, to the nanosecond
+        screens.set_clock([&] { return 1'000'000'000ULL + (static_cast<u64>(frames) * 1'000'000'000ULL + 30) / 60; });
+        const std::string html = R"(<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>)"
+                                 R"(<div forge-screen="playing" forge-size="400 300" style="position: absolute; left: 0; top: 0; width: 400px; height: 300px;">)"
+                                 R"(<img title="Hog" src="../pictures/Hog.svg" style="position: absolute; left: 10px; top: 10px; width: 64px; height: 64px;"/>)"
+                                 R"(</div></body></html>)";
+        REQUIRE(screens.load_page(context, "hud", html, path_to_utf8(dir / "ui" / "hud.html")));
+        game::Vars vars;
+        auto step = [&](u32 n) {
+            for (u32 i = 0; i < n; ++i) {
+                ++frames;
+                screens.update(vars, true, false, 400, 300);
+            }
+        };
+        step(1);
+        const std::vector<Rml::Element*> layer = screens.layers("hud", "Hog");
+        REQUIRE(layer.size() == 1);
+        Rml::Element* el = layer[0];
+        auto play = [&](const char* clip, std::map<std::string, f64> params, std::string* why = nullptr) {
+            game::ScreenSvg c;
+            c.what = "play";
+            c.screen = "hud";
+            c.layer = "Hog";
+            c.part = clip;
+            c.x = -1;
+            c.y = 1;
+            c.params = std::move(params);
+            std::string w;
+            const bool ok = screens.svg(c, &w);
+            if (why) *why = w;
+            return ok;
+        };
+        auto now = [&] {
+            game::ScreenClip c;
+            REQUIRE(screens.svg_clip("hud", "Hog", c));
+            return c;
+        };
+        auto is = [&](const MotionClip& c, f64 t, const std::string& when) {
+            const ui::SvgPose* p = ui::svg_posed(el);
+            REQUIRE(p);
+            std::string why;
+            const bool same = same_pose(*p, ui::clip_pose("Hog.svg", motion, c, t, drawings), why);
+            INFO(when, ": ", why);
+            CHECK(same);
+        };
+
+        // What it cannot: a name the file has not, not a number; nothing starts.
+        std::string why;
+        CHECK_FALSE(play("jump", {{"heigth", 8}}, &why));
+        CHECK(why == "в «Hog.motion.json» нет параметра «heigth»: есть «broken», «count», «height», «pause», «tone», «wobble»");
+        CHECK_FALSE(play("jump", {{"height", std::numeric_limits<f64>::quiet_NaN()}}, &why));
+        CHECK(why == "params.height: нужно число");
+        CHECK_FALSE(play("jump", {{"height", std::numeric_limits<f64>::infinity()}}, &why));
+        CHECK(why == "params.height: нужно число");
+        game::ScreenClip c;
+        CHECK_FALSE(screens.svg_clip("hud", "Hog", c));
+
+        // «jump» at height 8: the clip's numbers at it, at each frame; a parameter not given is the file's.
+        REQUIRE(play("jump", {{"height", 8}, {"count", 3}}));
+        const MotionClip at8 = clip_at(h.gift, "jump", {{"height", 8}});
+        REQUIRE(!(at8 == *motion.clip("jump")));
+        is(at8, 0, "the first frame at once");
+        step(12);
+        c = now();
+        CHECK(c.clip == "jump");
+        CHECK(c.params == std::map<std::string, f64>{{"count", 3}, {"height", 8}});
+        CHECK(c.time == doctest::Approx(11.0 / 60));
+        is(at8, c.time, "at height 8");
+        // The same clip with another height goes on from where it is, with its numbers.
+        REQUIRE(play("jump", {{"height", -3}}));
+        CHECK(now().time == doctest::Approx(c.time));
+        const MotionClip at_3 = clip_at(h.gift, "jump", {{"height", -3}});
+        is(at_3, c.time, "at height −3, from where it was");
+        step(6);
+        c = now();
+        CHECK(c.params == std::map<std::string, f64>{{"height", -3}});
+        CHECK(c.time == doctest::Approx(17.0 / 60));
+        is(at_3, c.time, "at height −3");
+        // Without parameters: the file's numbers, going on.
+        REQUIRE(play("jump", {}));
+        CHECK(now().params.empty());
+        is(*motion.clip("jump"), c.time, "at the file's height");
+        CHECK(screens.svg_problems().empty());
+
+        // A parameter the clip does not change with: at the file's value nothing is said; at another the log says why,
+        // once, and the clip plays the file's numbers.
+        REQUIRE(play("bounces", {{"count", 3}}));
+        CHECK(screens.svg_problems().empty());
+        REQUIRE(play("bounces", {{"count", 5}, {"height", 2}}));
+        is(*motion.clip("bounces"), now().time, "count does not change «bounces»; height is in no piece of it");
+        step(3);
+        REQUIRE(play("bounces", {{"count", 6}}));
+        CHECK(screens.svg_problems() == std::vector<std::string>{"«Hog.svg», клип «bounces»: параметр count из игры не меняется: число переходов"});
+        is(*motion.clip("bounces"), now().time, "still the file's numbers");
+    }
+    Rml::Shutdown();
+    Rml::SetRenderInterface(nullptr);
+    Rml::SetFileInterface(nullptr);
     std::error_code ec;
     fs::remove_all(dir, ec);
 }

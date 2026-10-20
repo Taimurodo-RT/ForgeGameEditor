@@ -342,14 +342,16 @@ TEST_CASE("scripts change the parts of a screen's live SVG picture and ease a sh
     CHECK(morph->params[3].title_ru == std::string("В фигуру (id)"));
 }
 
-TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the speed and the blend, and what they cannot be") {
+TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the speed, the blend and the parameters, and what they cannot be") {
     PoolScope pool;
     Room room;
     struct Bridge final : GameBridge {
         std::vector<std::string> said;
         std::vector<f64> blends; // part 5е: the blend of each play, the rest as svg says it
+        std::vector<std::map<std::string, f64>> params; // part 5ж: the parameters of each play
         bool svg_play(std::string_view screen, std::string_view layer, std::string_view clip, const SvgPlay& how, std::string* why) override {
             blends.push_back(how.blend);
+            params.push_back(how.params);
             return GameBridge::svg_play(screen, layer, clip, how, why);
         }
         f64 var(std::string_view, std::string*) override { return 0; }
@@ -386,6 +388,9 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the 
             forge.ui.svg_play("hud", "Скакун", "run", { loop = false, speed = 2, blend = 0 })
             forge.ui.svg_play("hud", "Скакун", "run", nil, 0.5)
             forge.ui.svg_play("hud", "Скакун", "run", false, nil)
+            forge.ui.svg_play("hud", "Скакун", "jump", { params = { height = 8 } })
+            forge.ui.svg_play("hud", "Скакун", "jump", { blend = 0.1, params = { height = -3, count = 2.5 } })
+            forge.ui.svg_play("hud", "Скакун", "jump", { params = {} })
             forge.ui.svg_stop("hud", "Скакун")
         end
         return S
@@ -397,8 +402,14 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the 
                                                   "play hud/Скакун/jump -1 1", "play hud/Скакун/idle -1 2", "play hud/Скакун/idle 1 0.5",
                                                   "play hud/Скакун/idle 0 1", "play hud/Скакун/idle -1 1", "play hud/Скакун/run -1 1",
                                                   "play hud/Скакун/run 1 1", "play hud/Скакун/run 0 2", "play hud/Скакун/run -1 1",
-                                                  "play hud/Скакун/run 0 1", "stop hud/Скакун/ 0 0"});
-    CHECK(bridge.blends == std::vector<f64>{0, 0, 0, 0, 0, 0, 0, 0, 0.2, 0.25, 0, 0.5, 0});
+                                                  "play hud/Скакун/run 0 1", "play hud/Скакун/jump -1 1", "play hud/Скакун/jump -1 1",
+                                                  "play hud/Скакун/jump -1 1", "stop hud/Скакун/ 0 0"});
+    CHECK(bridge.blends == std::vector<f64>{0, 0, 0, 0, 0, 0, 0, 0, 0.2, 0.25, 0, 0.5, 0, 0, 0.1, 0});
+    REQUIRE(bridge.params.size() == 16);
+    for (usize i = 0; i < 13; ++i) CHECK(bridge.params[i].empty());
+    CHECK(bridge.params[13] == std::map<std::string, f64>{{"height", 8}});
+    CHECK(bridge.params[14] == std::map<std::string, f64>{{"count", 2.5}, {"height", -3}});
+    CHECK(bridge.params[15].empty());
     // Each wrong call is the script's error at its line, and the game is not asked: one script each, as a script stops
     // at its first error.
     const char* wrong[][2] = {
@@ -409,8 +420,13 @@ TEST_CASE("scripts play a character's clip on a screen's picture: the loop, the 
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = -1 }))", "ui.svg_play: speed: нужно число больше 0"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 0/0 }))", "ui.svg_play: speed: нужно число больше 0"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 1/0 }))", "ui.svg_play: speed: нужно число больше 0"},
-        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { fast = true }))", "ui.svg_play: в таблице только loop, speed и blend, а не «fast»"},
-        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { true }))", "ui.svg_play: в таблице только loop, speed и blend, а не «number»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { fast = true }))", "ui.svg_play: в таблице только loop, speed, blend и params, а не «fast»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { true }))", "ui.svg_play: в таблице только loop, speed, blend и params, а не «number»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { params = 8 }))", "ui.svg_play: params: нужна таблица { имя = число }"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { params = { height = "высоко" } }))", "ui.svg_play: params.height: нужно число"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { params = { height = 0/0 } }))", "ui.svg_play: params.height: нужно число"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { params = { height = -1/0 } }))", "ui.svg_play: params.height: нужно число"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { params = { 8 } }))", "ui.svg_play: params: имена параметров — строки, а не number"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = -0.1 }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = "долго" }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},
         {R"(forge.ui.svg_play("hud", "Скакун", "jump", { blend = 0/0 }))", "ui.svg_play: blend: нужно число секунд, 0 или больше"},

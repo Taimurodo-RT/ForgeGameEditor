@@ -225,7 +225,8 @@ struct GameScreens::Impl : Rml::EventListener {
         bool live = false; // the old clip goes on: its file, drawings, clip, time; else `still`
         std::shared_ptr<const vector::MotionFile> file;
         std::shared_ptr<const Drawings> drawings;
-        const vector::MotionClip* clip = nullptr;
+        std::shared_ptr<const vector::MotionClip> clip;
+        std::map<std::string, f64> params; // the old clip's, as given (part 5ж)
         f64 played = 0, speed = 1;
         bool loop = false;
         ui::SvgPose still;
@@ -238,7 +239,9 @@ struct GameScreens::Impl : Rml::EventListener {
         std::string page, picture; // picture: its file name, "Ёжик.svg"
         std::shared_ptr<const vector::MotionFile> file;
         std::shared_ptr<const Drawings> drawings;
-        const vector::MotionClip* clip = nullptr;
+        const vector::MotionClip* base = nullptr;     // the file's clip
+        std::shared_ptr<const vector::MotionClip> clip; // what plays: it with the parameters given (part 5ж)
+        std::map<std::string, f64> params;            // as given
         f64 played = 0;   // seconds of play
         f64 counted = -1; // the marks passed up to here (below 0: none yet, those at 0 too)
         f64 speed = 1;
@@ -1338,6 +1341,8 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
     if (c.part.empty()) return fail("не сказано, какой клип играть");
     if (!(c.y > 0) || !std::isfinite(c.y)) return fail("speed: нужно число больше 0");
     if (!(c.blend >= 0) || !std::isfinite(c.blend)) return fail("blend: нужно число секунд, 0 или больше");
+    for (const auto& [name, v] : c.params)
+        if (!std::isfinite(v)) return fail("params." + name + ": нужно число");
     const Page* page = impl_->find(c.screen);
     // Each layer's picture and its clips first: nothing starts when one of them cannot.
     struct Start {
@@ -1345,8 +1350,16 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         std::string picture;
         std::shared_ptr<const vector::MotionFile> file;
         std::shared_ptr<const Impl::Drawings> drawings;
-        const vector::MotionClip* clip;
+        const vector::MotionClip* base;
         std::shared_ptr<const vector::SvgOutline> outline;
+        std::vector<vector::MotionParam> values; // the parameters given
+        bool moved = false;                      // one of them changes the clip's numbers
+        std::vector<std::string> fixed;          // what the log says of those it does not change with
+        // The clip at the parameters given: the file's own when none changes it.
+        std::shared_ptr<const vector::MotionClip> clip() const {
+            return moved ? std::make_shared<const vector::MotionClip>(vector::motion_clip_with(*file, *base, values))
+                         : std::shared_ptr<const vector::MotionClip>(file, base);
+        }
     };
     std::vector<Start> starts;
     for (Rml::Element* e : found) {
@@ -1372,28 +1385,54 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
                 return fail("в «" + path_to_utf8(utf8_path(picture).filename()) + "»" + (all.size() > 1 ? " и его рисунках" : "") + " нет части «" + part +
                             "»: " + role + " в клипе «" + clip->name + "»");
         }
-        starts.push_back({e, path_to_utf8(utf8_path(picture).filename()), std::move(file), std::move(drawings), clip, outline});
+        // The parameters given (part 5ж): names the file has; the clip's numbers at them, but for those it does not
+        // change with, which the log names.
+        std::vector<vector::MotionParam> values;
+        std::vector<std::string> fixed;
+        bool moved = false;
+        for (const auto& [name, v] : c.params) {
+            const vector::MotionParam* own = file->param(name);
+            if (!own) {
+                std::string names;
+                for (const vector::MotionParam& prm : file->params) names += (names.empty() ? "«" : ", «") + prm.name + "»";
+                return fail("в «" + path_to_utf8(utf8_path(picture).stem()) + ".motion.json» нет параметра «" + name + "»: " +
+                            (names.empty() ? std::string("параметров у него нет") : "есть " + names));
+            }
+            values.push_back({name, v});
+            if (v == own->value) continue;
+            if (const auto it = clip->fixed.find(name); it != clip->fixed.end())
+                fixed.push_back("клип «" + clip->name + "»: параметр " + name + " из игры не меняется: " + it->second);
+            else moved = true;
+        }
+        starts.push_back({e, path_to_utf8(utf8_path(picture).filename()), std::move(file), std::move(drawings), clip, outline, std::move(values), moved,
+                          std::move(fixed)});
     }
     for (Start& s : starts) {
-        const bool loop = c.x < 0 ? s.clip->loop : c.x > 0;
+        for (const std::string& line : s.fixed) impl_->say_once("«" + s.picture + "», " + line);
+        const bool loop = c.x < 0 ? s.base->loop : c.x > 0;
         Impl::Playing* p = impl_->playing_of(s.e);
         // The same clip while it goes keeps going: a call every step does not hold it at its first frame. One that
         // came to its end without a loop starts again. The file read again (it or a drawing of it written again) is
-        // another: its clip starts with what it reads now.
-        if (p && p->file == s.file && p->clip == s.clip && p->going && (p->loop || p->played < s.clip->length)) {
+        // another: its clip starts with what it reads now. With other parameters it goes on with their numbers.
+        if (p && p->file == s.file && p->base == s.base && p->going && (p->loop || p->played < s.base->length)) {
             if (p->loop && !loop) { // on from where it is in this lap, not from the laps behind it
-                const f64 at = vector::motion_clip_time(*s.clip, p->played, true);
+                const f64 at = vector::motion_clip_time(*s.base, p->played, true);
                 if (p->counted >= 0) p->counted -= p->played - at;
                 p->played = at;
             }
             p->loop = loop;
             p->speed = c.y;
+            if (p->params != c.params) { // its numbers at the new ones, shown at once
+                p->params = c.params;
+                p->clip = s.clip();
+                ui::svg_pose(s.e, Impl::shown(*p));
+            }
             continue;
         }
         // A blend (part 5е): from the clip the layer plays, which goes on, or from what it shows standing still (a stopped
         // clip, one at its end, a blend going on), or from the picture at rest; none from another picture.
         Impl::Blend blend;
-        blend.length = !(s.clip->length > 0) ? 0 : loop ? c.blend : std::min(c.blend, s.clip->length);
+        blend.length = !(s.base->length > 0) ? 0 : loop ? c.blend : std::min(c.blend, s.base->length);
         if (blend.length > 0) {
             const ui::SvgPose* still = ui::svg_posed(s.e);
             if (p && p->picture == s.picture && p->going && !(p->blend.length > 0) && (p->loop || p->played < p->clip->length)) {
@@ -1401,6 +1440,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
                 blend.file = p->file;
                 blend.drawings = p->drawings;
                 blend.clip = p->clip;
+                blend.params = p->params;
                 blend.played = p->played;
                 blend.speed = p->speed;
                 blend.loop = p->loop;
@@ -1427,9 +1467,9 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             impl_->playing.emplace_back();
             p = &impl_->playing.back();
         }
-        for (const std::string& w : s.clip->not_drawn) {
+        for (const std::string& w : s.base->not_drawn) {
             const char* said = vector::motion_not_drawn_words(w);
-            impl_->say_once("«" + s.picture + "», клип «" + s.clip->name + "»: на экране пока не рисуется: " +
+            impl_->say_once("«" + s.picture + "», клип «" + s.base->name + "»: на экране пока не рисуется: " +
                             (w == "blur" || w == "shadow" ? std::string("размытие и тень (на экране игры не рисуются, в запекании есть)")
                                                           : std::string(said ? said : w.c_str())));
         }
@@ -1437,9 +1477,11 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         p->element = s.e->GetObserverPtr();
         p->page = c.screen;
         p->picture = s.picture;
+        p->clip = s.clip();
         p->file = std::move(s.file);
         p->drawings = std::move(s.drawings);
-        p->clip = s.clip;
+        p->base = s.base;
+        p->params = c.params;
         p->loop = loop;
         p->speed = c.y;
         p->blend = std::move(blend);
@@ -1454,11 +1496,13 @@ bool GameScreens::svg_clip(std::string_view screen, std::string_view layer, Scre
         for (const Impl::Playing& p : impl_->playing)
             if (p.element.get() == e) {
                 out.clip = p.clip->name;
+                out.params = p.params;
                 out.time = vector::motion_clip_time(*p.clip, p.played, p.loop);
                 out.going = p.going;
                 out.blend = Impl::blend_share(p);
                 if (out.blend < 1 && p.blend.live) {
                     out.from_clip = p.blend.clip->name;
+                    out.from_params = p.blend.params;
                     out.from_time = vector::motion_clip_time(*p.blend.clip, p.blend.played, p.blend.loop);
                 }
                 return true;

@@ -41,6 +41,7 @@
 
 #include <flecs.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -235,10 +236,12 @@ public:
         (void)what, (void)screen, (void)layer, (void)part, (void)x, (void)y, (void)text, (void)why;
         return true;
     }
-    // forge.ui.svg_play: "play" a clip as svg does, with how: its loop (1, 0, or below 0 for the clip's own), speed and
-    // the seconds of a blend into it from what the layer shows (part 5е). A bridge that knows no blend plays at once.
+    // forge.ui.svg_play: "play" a clip as svg does, with how: its loop (1, 0, or below 0 for the clip's own), speed,
+    // the seconds of a blend into it from what the layer shows (part 5е) and the code's parameters by name (part 5ж). A
+    // bridge that knows no blend plays at once, one that knows no parameters at the file's values.
     struct SvgPlay {
         f64 loop = -1, speed = 1, blend = 0;
+        std::map<std::string, f64> params;
     };
     virtual bool svg_play(std::string_view screen, std::string_view layer, std::string_view clip, const SvgPlay& how, std::string* why) {
         return svg("play", screen, layer, clip, how.loop, how.speed, {}, why);

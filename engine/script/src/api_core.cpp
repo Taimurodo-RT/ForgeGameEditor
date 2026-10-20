@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
+#include <map>
 #include <string>
 
 namespace forge::script {
@@ -357,8 +359,9 @@ int api_ui_svg_color(lua_State* L) { return svg_call(L, "color"); }
 int api_ui_svg_fade(lua_State* L) { return svg_call(L, "fade"); }
 int api_ui_svg_morph(lua_State* L) { return svg_call(L, "morph"); }
 int api_ui_svg_reset(lua_State* L) { return svg_call(L, "reset"); }
-// forge.ui.svg_play(screen, layer, clip[, loop or {loop = …, speed = …, blend = …}[, blend]]): the loop (1, 0, or
-// below 0 for the clip's own), the speed, the seconds of a blend into it (part 5е; the scheme's node gives it fifth).
+// forge.ui.svg_play(screen, layer, clip[, loop or {loop = …, speed = …, blend = …, params = {…}}[, blend]]): the loop
+// (1, 0, or below 0 for the clip's own), the speed, the seconds of a blend into it (part 5е; the scheme's node gives it
+// fifth), the code's parameters by name (part 5ж; only in the table).
 int api_ui_svg_play(lua_State* L) {
     auto text_at = [&](int i) {
         size_t len = 0;
@@ -367,6 +370,7 @@ int api_ui_svg_play(lua_State* L) {
     };
     const std::string_view screen = text_at(1), layer = text_at(2), clip = text_at(3);
     f64 loop = -1, speed = 1, blend = 0;
+    std::map<std::string, f64> params;
     auto blend_of = [&](int i, const char* where) {
         if (lua_isnil(L, i)) return;
         blend = lua_type(L, i) == LUA_TNUMBER ? lua_tonumber(L, i) : -1;
@@ -390,18 +394,34 @@ int api_ui_svg_play(lua_State* L) {
         lua_getfield(L, 4, "blend");
         blend_of(-1, "blend");
         lua_pop(L, 1);
+        lua_getfield(L, 4, "params");
+        if (!lua_isnil(L, -1)) {
+            if (!lua_istable(L, -1)) luaL_error(L, "ui.svg_play: params: нужна таблица { имя = число }");
+            const int t = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, t)) {
+                if (lua_type(L, -2) != LUA_TSTRING) luaL_error(L, "ui.svg_play: params: имена параметров — строки, а не %s", luaL_typename(L, -2));
+                const char* name = lua_tostring(L, -2);
+                const f64 v = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : std::numeric_limits<f64>::quiet_NaN();
+                if (!std::isfinite(v)) luaL_error(L, "ui.svg_play: params.%s: нужно число", name);
+                params[name] = v;
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
         lua_pushnil(L);
         while (lua_next(L, 4)) {
             lua_pop(L, 1);
             const char* key = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
-            if (!key || (std::string_view(key) != "loop" && std::string_view(key) != "speed" && std::string_view(key) != "blend"))
-                luaL_error(L, "ui.svg_play: в таблице только loop, speed и blend, а не «%s»", key ? key : luaL_typename(L, -1));
+            const std::string_view k = key ? key : "";
+            if (!key || (k != "loop" && k != "speed" && k != "blend" && k != "params"))
+                luaL_error(L, "ui.svg_play: в таблице только loop, speed, blend и params, а не «%s»", key ? key : luaL_typename(L, -1));
         }
     } else if (!lua_isnone(L, 4)) loop_of(4, "4-е значение (повторять)");
     if (!lua_isnone(L, 5)) blend_of(5, "5-е значение (плавно за, с)");
     GameBridge* b = bridge_of(L);
     std::string why;
-    if (b && !b->svg_play(screen, layer, clip, {loop, speed, blend}, &why)) luaL_error(L, "ui.svg_play: %s", why.c_str());
+    if (b && !b->svg_play(screen, layer, clip, {loop, speed, blend, std::move(params)}, &why)) luaL_error(L, "ui.svg_play: %s", why.c_str());
     return 0;
 }
 int api_ui_svg_stop(lua_State* L) {
