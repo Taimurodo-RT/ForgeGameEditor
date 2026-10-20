@@ -28714,7 +28714,8 @@ return {
             check(sv_now(px().music_now(), 1) && px().mixer().voices(audio::Bus::Music) == 1, "one voice of music, at 1:" + sv_now_words(px().music_now()));
             f32 loud = 0;
             f64 at = 0;
-            check(sv_heard(loud, at) && loud == 1 && !played.empty() && std::fmod(at - played[0].from + 2, 1.0) < 0.4,
+            const bool heard = sv_heard(loud, at); // before the words that say what it heard
+            check(heard && loud == 1 && !played.empty() && std::fmod(at - played[0].from + 2, 1.0) < 0.4,
                   "the mixer plays it from there: " + std::to_string(at) + " s into the file, at " + std::to_string(loud));
             key(SDLK_M, SDL_KMOD_NONE);
             break;
@@ -28769,7 +28770,8 @@ return {
             check(sv_now(px().music_now(), 0.4f) && px().music_played().size() == 1, "the same «мелодия» at 0,4 after 0,2 s of the talk:" + sv_now_words(px().music_now()));
             f32 loud = 0;
             f64 at = 0;
-            check(sv_heard(loud, at) && std::fabs(loud - 0.4f) < 1e-4f, "the mixer has it at 0,4: " + std::to_string(loud));
+            const bool heard = sv_heard(loud, at);
+            check(heard && std::fabs(loud - 0.4f) < 1e-4f, "the mixer has it at 0,4: " + std::to_string(loud));
             waited(1, "at the talk");
             check(px_click("px-play"), "▶");
             break;
