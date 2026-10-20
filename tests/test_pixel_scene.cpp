@@ -2491,6 +2491,119 @@ TEST_CASE("Сцена в игре: актёр без клипов — без ф�
     }
 }
 
+namespace {
+
+// A ball whose clip grows it twice as big, turning round its middle.
+const char* kBall = R"(return {
+  clips = {
+    grow = function(p)
+      part("ball").scale(2, 0.5)
+    end,
+  },
+  draw = function(p, rng)
+    canvas(32, 32)
+    circle("ball", { x = 16, y = 16, r = 8, fill = "#ff8000" })
+  end,
+}
+)";
+
+} // namespace
+
+TEST_CASE("Сцена в игре: копии сцены, кусок по кадрам и масштаб поверх клипа — по файлам как во вкладке") {
+    Files files;
+    project(files);
+    PixelDoc ball;
+    ball.script = "Шар.luau";
+    ball.frame_w = ball.frame_h = 32;
+    ball.pivots["ball"] = {16, 16};
+    files.put("персонажи/Шар.pixel.json", write_pixel_doc(ball));
+    files.put("персонажи/Шар.luau", kBall);
+    // The floor goes along an arc; the beetle's play at 0.31 s falls between two of the arc's frames, the copies are
+    // born then.
+    Scene s;
+    load(s, files, R"(    spawn(actor("шар"):play("grow"))
+    spawn(part("шар/ball").scale(1.5, 0.5))
+    spawn(part("пол"):along("дуга", 1))
+    wait(0.31)
+    copies("пол", 2, function(i, c) c.y(i * -10, 0.2) end)
+    actor("жук"):play("hop"))",
+         R"(    canvas(160, 120)
+    actor("шар", "персонажи/Шар", { x = 80, y = 40 })
+    path("дуга", { d = "M 0 100 Q 80 0 160 100", fill = "none", stroke = "#ffffff", hidden = true })
+    rect("пол", { x = 0, y = 110, w = 20, h = 10, fill = "#405060" })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90 }))");
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    const vector::SceneMotion& m = gift.motion;
+    // The floor's way is kept frame by frame: between two frames the game mixes them, so the check (at 0.31 s) took its
+    // values only at the frames.
+    bool frames = false;
+    for (const vector::MotionTrack& t : m.stage.clip("scene")->tracks)
+        if (t.part == "пол")
+            for (const vector::MotionPiece& pc : t.pieces) frames = frames || pc.kind == vector::MotionPiece::Kind::Frames;
+    CHECK(frames);
+    // The copies are drawn from their birth, not before.
+    CHECK(vector::scene_pose(m, 0.3).copies.empty());
+    CHECK(vector::scene_pose(m, 0.32).copies.size() == 2);
+    // The scene's scale of the ball multiplies its clip's.
+    REQUIRE(m.file.actors[0].id == "шар");
+    CHECK(game_value_of(vector::scene_pose(m, 0.5).actors[0].parts, "шар/ball", vector::MotionProp::Scale).v == doctest::Approx(3));
+}
+
+TEST_CASE("Сцена в игре: сверка ловит миг клипа без дорожек и то, что видно, только пока сцена ждёт") {
+    Files files;
+    project(files);
+    {
+        // stretch moves nothing: only its moment tells a game it went twice as fast.
+        Scene s;
+        load(s, files, R"(    actor("ёжик"):play("stretch"))", std::string(kGiftStage));
+        SceneGift gift;
+        std::string why;
+        REQUIRE(build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why));
+        vector::SceneMotion m = gift.motion;
+        REQUIRE(m.file.plays.size() == 1);
+        m.file.plays[0].speed = 2;
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, m, w));
+        CHECK(w == "в игре сцена разошлась бы со вкладкой: 0,033 с, «ёжик», клип и его миг");
+    }
+    {
+        // While the scene stands at the wait, wave goes on; walk, called after the wait, begins when it ends. The nose's
+        // turn from 0.2 s of wave is seen only while standing there.
+        Scene s;
+        load(s, files, R"(    spawn(actor("ёжик"):play("wave"))
+    wait(0.1)
+    wait_action("Поговорить")
+    actor("ёжик"):play("walk"))",
+             std::string(kGiftStage));
+        SceneGift gift;
+        std::string why;
+        const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+        INFO(why);
+        REQUIRE(ok);
+        vector::SceneMotion m = gift.motion;
+        vector::MotionClip* wave = nullptr;
+        for (vector::MotionClip& c : m.actors[0].clips)
+            if (c.name == "wave") wave = &c;
+        REQUIRE(wave);
+        vector::MotionTrack* rot = nullptr;
+        for (vector::MotionTrack& t : wave->tracks)
+            if (t.part == "ёжик/nose" && t.prop == vector::MotionProp::Rot) rot = &t;
+        REQUIRE(rot);
+        vector::MotionPiece hold;
+        hold.kind = vector::MotionPiece::Kind::Hold;
+        hold.at = 0.2;
+        hold.value.v = 99;
+        rot->pieces.push_back(hold);
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, m, w));
+        CHECK(w == "в игре сцена разошлась бы со вкладкой: 0,1 с у ожидания 1 через 0,25 с, «ёжик/nose», поворот");
+    }
+}
+
 TEST_CASE("Сцена в игре: что игра не нарисует") {
     Files files;
     project(files);
