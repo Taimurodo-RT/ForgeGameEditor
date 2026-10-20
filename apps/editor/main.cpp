@@ -30413,8 +30413,9 @@ return {
             for (const pixel::ActorPlay* p : {&j, &s}) {
                 const i32 k = p == &j ? jump : stand;
                 f32 width = 0, x0 = 0, x1 = 0;
-                check(wedge(k, width) && px().timeline_x(p->start, x0) && px().timeline_x(p->start + p->blend, x1) && std::fabs(width - (x1 - x0)) < 1.5f && width > 3,
-                      "the wedge of «" + p->clip + "» from its start for its blend: " + std::to_string(width) + " for " + std::to_string(x1 - x0));
+                const bool ok = wedge(k, width) && px().timeline_x(p->start, x0) && px().timeline_x(p->start + p->blend, x1) &&
+                                std::fabs(width - (x1 - x0)) < 1.5f && width > 3;
+                check(ok, "the wedge of «" + p->clip + "» from its start for its blend: " + std::to_string(width) + " for " + std::to_string(x1 - x0));
             }
             f32 none = 0;
             check(!wedge(loop, none), "no wedge on «idle»");

@@ -4663,6 +4663,30 @@ TEST_CASE("Смешивание (6г5а): тот же клип ещё раз —
     CHECK(after.blend.empty());
 }
 
+TEST_CASE("Смешивание (6г5а): loop клипа длины 0 приходит сразу, как play") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    wait(0.3)
+    actor("ёжик"):loop("stretch", { blend = 0.5, params = { len = 0 } })
+    wait(0.3))");
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& stretch = play_of(rec, "ёжик", ActorPlay::Kind::Loop, 1);
+    CHECK(stretch.clip_length == 0);
+    CHECK(stretch.blend == 0.5);
+    for (const f64 t : {0.3, 0.4, 0.55}) {
+        CAPTURE(t);
+        const ActorMoment m = actor_moment(rec, "ёжик", t);
+        CHECK(m.play == &stretch);
+        CHECK(m.blend.empty());
+        const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, "ёжик", t);
+        CHECK(game.play == static_cast<i32>(&stretch - rec.plays.data()));
+        CHECK(game.blend.empty());
+    }
+}
+
 TEST_CASE("Смешивание (6г5а): поза в смене — свойства, рисунки и метки по правилам 5е, во вкладке и в игре") {
     Files files;
     project(files);
