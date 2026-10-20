@@ -4,6 +4,8 @@
 // poses the stage and its actors (pixel::Scene::pose). The rest of the mode is pixel_editor.cpp.
 // Part 6б «Камера и переходы»: the camera's frame over the vector and its edge dragged, its row of the tree, the player's
 // frame through it for the small view and the snapshot, the row of the transitions on the timeline.
+// Part 6в «Звук, ожидание и разговор»: the rows of the music and of the stops, the music in the player, «Ждать, как в
+// игре».
 
 #include "pixel_editor.h"
 #include "pixel_files.h"
@@ -130,6 +132,42 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
     on("px_transition", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { select_transition(arg_int(a, 0)); });
     on("px_transition_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { transition_to_code(arg_int(a, 0)); });
     on("px_transition_to_code", [this](Rml::Event&, const Rml::VariantList&) { transition_to_code(transition_); });
+    // Part 6в: the music's and the stops' rows, «Ждать, как в игре» and the line under the player while it stands.
+    if (auto s = model.RegisterStruct<MusicView>()) {
+        s.RegisterMember("index", &MusicView::index);
+        s.RegisterMember("style", &MusicView::style);
+        s.RegisterMember("fade", &MusicView::fade);
+        s.RegisterMember("label", &MusicView::label);
+        s.RegisterMember("title", &MusicView::title);
+        s.RegisterMember("missing", &MusicView::missing);
+    }
+    model.RegisterArray<std::vector<MusicView>>();
+    if (auto s = model.RegisterStruct<MusicMark>()) {
+        s.RegisterMember("index", &MusicMark::index);
+        s.RegisterMember("style", &MusicMark::style);
+        s.RegisterMember("title", &MusicMark::title);
+    }
+    model.RegisterArray<std::vector<MusicMark>>();
+    if (auto s = model.RegisterStruct<StopRow>()) {
+        s.RegisterMember("index", &StopRow::index);
+        s.RegisterMember("style", &StopRow::style);
+        s.RegisterMember("label", &StopRow::label);
+        s.RegisterMember("title", &StopRow::title);
+        s.RegisterMember("missing", &StopRow::missing);
+        s.RegisterMember("held", &StopRow::held);
+    }
+    model.RegisterArray<std::vector<StopRow>>();
+    model.Bind("px_music", &m_music_);
+    model.Bind("px_music_marks", &m_music_marks_);
+    model.Bind("px_music_wave", &m_music_wave_);
+    model.Bind("px_music_wave_style", &m_music_wave_style_);
+    model.Bind("px_stops", &m_stops_);
+    model.Bind("px_stops_height", &m_stops_height_);
+    model.Bind("px_hold", &m_hold_);
+    model.Bind("px_held_words", &m_held_words_);
+    on("px_music_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { music_to_code(arg_int(a, 0)); });
+    on("px_stop_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { stop_to_code(arg_int(a, 0)); });
+    on("px_hold_toggle", [this](Rml::Event&, const Rml::VariantList&) { set_hold(!hold_on_); });
 }
 
 // --- what a scene reads ------------------------------------------------------------------------------------
@@ -439,7 +477,7 @@ std::string PixelEditor::scene_snapshot() {
     pixel::Pose pose;
     std::string why;
     if (!pose_at(*c, t_, frame_, pose, why)) return refuse("Снимка нет: " + why);
-    if (!scene_->pose(t_, rec_ok_ ? &rec_ : nullptr, pose)) return refuse("Снимка нет: " + scene_->error());
+    if (!scene_->pose(t_, rec_ok_ ? &rec_ : nullptr, pose, held_, held_at_)) return refuse("Снимка нет: " + scene_->error());
     // The player's frame at the scene's size, as «Через камеру» draws it (part 6б).
     const pixel::Stage& st = scene_->stage();
     const f64 sw = std::max<f64>(1, std::lround(st.width())), sh = std::max<f64>(1, std::lround(st.height()));
@@ -705,6 +743,356 @@ void PixelEditor::rebuild_transition() {
     m_transition_call_ = call;
     m_transition_can_code_ = can_code;
     for (const char* var : {"px_has_transition", "px_transition_info", "px_transition_call", "px_transition_can_code"}) dirty(var);
+}
+
+} // namespace forge::editor_app
+
+namespace forge::editor_app {
+
+// --- music, waiting and talks (part 6в) ----------------------------------------------------------------------------
+
+namespace {
+
+constexpr f64 kMusicPx = 22;       // the music's row (logical px)
+constexpr f64 kFlagPx = 140;       // a stop's flag, as wide as .px-flag.px-stop (logical px)
+constexpr usize kLanePx = 22;      // a lane of the stops' row (logical px)
+constexpr int kMostRounds = 4096;  // of a music's wave drawn round and round in sight
+
+// The keys of an action in the player's words, «E» or «E, F»; "" when it has none (its mouse's and gamepad's buttons
+// are not the tab's).
+std::string key_words(const input::Action& a) {
+    std::string out;
+    for (const input::Bind& b : a.binds)
+        if (b.device == input::Device::Key) out += (out.empty() ? "" : ", ") + input::words(b);
+    return out;
+}
+
+// What the stops' row was laid with: the game's talks and its actions' words and keys.
+std::string stops_key(const std::vector<std::string>& talks, const std::vector<input::Action>& actions) {
+    std::string key;
+    for (const std::string& t : talks) key += t + "|";
+    key += "#";
+    for (const input::Action& a : actions) key += a.words + ":" + key_words(a) + "|";
+    return key;
+}
+
+} // namespace
+
+const std::vector<pixel::CallSite>& PixelEditor::panel_sites() const {
+    static const std::vector<pixel::CallSite> none;
+    return script().loaded() ? script().code().sites() : none;
+}
+
+std::string PixelEditor::stop_words(const pixel::SceneStop& st) const {
+    if (st.kind == pixel::SceneStop::Kind::Talk) return "разговор «" + st.name + "»";
+    return st.name.empty() ? std::string("ждёт клавишу") : "ждёт «" + st.name + "»";
+}
+
+const input::Action* PixelEditor::stop_action(const pixel::SceneStop& st, const std::vector<input::Action>& actions) const {
+    if (st.kind != pixel::SceneStop::Kind::Action || st.name.empty()) return nullptr;
+    for (const input::Action& a : actions)
+        if (a.words == st.name) return &a;
+    return nullptr;
+}
+
+std::string PixelEditor::stop_missing(const pixel::SceneStop& st, const std::vector<input::Action>& actions) const {
+    if (st.kind == pixel::SceneStop::Kind::Talk)
+        return std::find(talks_.begin(), talks_.end(), st.name) == talks_.end() ? "разговора «" + st.name + "» в игре нет (её папка dialogues)"
+                                                                               : std::string();
+    if (st.name.empty() || stop_action(st, actions)) return {};
+    return "действия «" + st.name + "» во «Вводе» игры нет";
+}
+
+void PixelEditor::lay_stops() {
+    m_stops_.clear();
+    const std::vector<input::Action> actions = game_actions ? game_actions() : std::vector<input::Action>{};
+    stops_key_ = stops_key(talks_, actions);
+    const f64 dp = std::max(1e-3f, dp_), w = tl_w_;
+    const auto& sites = panel_sites();
+    // Flags that would cover one another (the same moment, or near) go each a lane lower: the right edge of each lane's last.
+    std::vector<f64> lanes;
+    if (scene_mode_ && scene_ && rec_ok_ && tl_w_ > 0)
+        for (usize i = 0; i < rec_.stops.size(); ++i) {
+            const pixel::SceneStop& st = rec_.stops[i];
+            const f64 x = tv_.x(st.time);
+            if (x < -2 * dp || x > w + 2 * dp) continue;
+            usize lane = 0;
+            while (lane < lanes.size() && lanes[lane] > x - 2 * dp) ++lane;
+            if (lane == lanes.size()) lanes.push_back(0);
+            lanes[lane] = x - 2 * dp + kFlagPx * dp;
+            const bool talk = st.kind == pixel::SceneStop::Kind::Talk;
+            const std::string missing = stop_missing(st, actions);
+            std::string about = missing;
+            if (about.empty()) {
+                if (talk) about = "разговор игры поверх сцены";
+                else if (st.name.empty()) about = "любая клавиша";
+                else if (const std::string keys = key_words(*stop_action(st, actions)); keys.empty()) about = "у действия нет клавиш";
+                else about = "клавиши: " + keys;
+            }
+            const u32 line = st.site.file == 0 && st.site.site >= 0 && st.site.site < static_cast<i32>(sites.size()) ? sites[static_cast<usize>(st.site.site)].line : 0;
+            const std::string call = talk ? "talk(\"" + st.name + "\")" : st.name.empty() ? std::string("wait_action()") : "wait_action(\"" + st.name + "\")";
+            char style[80];
+            std::snprintf(style, sizeof style, "left: %.1fdevpx; top: %dpx;", x - 2 * dp, static_cast<int>(lane * kLanePx));
+            m_stops_.push_back({static_cast<int>(i), style, stop_words(st),
+                                call + " в " + seconds_words(st.time) + " с" + (line ? ", строка " + std::to_string(line) : std::string()) + ": " + about +
+                                    "; время сцены стоит, клипы актёров идут, длины нет; двойной щелчок — к коду",
+                                !missing.empty(), static_cast<i32>(i) == held_at_});
+        }
+    const std::string height = "height: " + std::to_string(std::max<usize>(1, lanes.size()) * kLanePx) + "px;";
+    if (height != m_stops_height_) {
+        m_stops_height_ = height;
+        dirty("px_stops_height");
+    }
+    dirty("px_stops");
+}
+
+void PixelEditor::check_stops() {
+    if (!scene_mode_ || !rec_ok_ || rec_.stops.empty()) return;
+    talks_ = game_dir.empty() ? std::vector<std::string>{} : talk_ids(game_dir);
+    if (stops_key(talks_, game_actions ? game_actions() : std::vector<input::Action>{}) != stops_key_) lay_stops();
+}
+
+bool PixelEditor::stop_to_code(i32 index) {
+    if (!rec_ok_ || index < 0 || index >= static_cast<i32>(rec_.stops.size())) return false;
+    const pixel::SceneStop& st = rec_.stops[static_cast<usize>(index)];
+    if (st.site.file != 0 || st.site.site < 0 || st.site.site >= static_cast<i32>(script().code().sites().size()))
+        return refuse_edit("Флажок «" + stop_words(st) + "» — из модуля: его код не в панели");
+    if (code_ != script_panel_) return refuse_edit("Код в панели не тот, что записан: сохраните его (Ctrl+S), и флажок покажет свой вызов");
+    pixel::Block b;
+    b.site = st.site;
+    select_call(b);
+    return true;
+}
+
+void PixelEditor::lay_music() {
+    const f64 dp = std::max(1e-3f, dp_), w = tl_w_;
+    const u32 cols = tl_w_ > 0 ? static_cast<u32>(std::lround(tl_w_)) : 0, high = static_cast<u32>(std::lround(kMusicPx * dp));
+    std::vector<pixel::MusicRun> runs;
+    if (scene_mode_ && scene_ && rec_ok_) runs = pixel::music_runs(rec_);
+    // The same timeline, music and files: the row as it is.
+    char buf[160];
+    std::snprintf(buf, sizeof buf, "%.17g %.17g %u %u %.17g %zu|", tv_.t(0), tv_.per_second(), cols, high, rec_.length, panel_sites().size());
+    std::string key = buf;
+    if (scene_mode_ && rec_ok_)
+        for (const pixel::SceneMusic& m : rec_.music) {
+            const auto f = sound_files_.find(m.name);
+            std::snprintf(buf, sizeof buf, "%.17g %.17g %.17g %u %d %u %p|", m.start, m.fade, m.volume, m.order, m.site.site, m.site.file,
+                          f == sound_files_.end() ? nullptr : static_cast<const void*>(f->second.file.clip.get()));
+            key += m.name + " " + buf + (f == sound_files_.end() ? std::string() : f->second.file.why) + "|";
+        }
+    if (key == music_key_) return;
+    music_key_ = key;
+
+    m_music_.clear();
+    m_music_marks_.clear();
+    const auto& sites = panel_sites();
+    auto line_of = [&](const pixel::SiteRef& s) {
+        return s.file == 0 && s.site >= 0 && s.site < static_cast<i32>(sites.size()) ? sites[static_cast<usize>(s.site)].line : 0u;
+    };
+    auto at_line = [&](const pixel::SiteRef& s) { return line_of(s) ? ", строка " + std::to_string(line_of(s)) : std::string(); };
+    std::vector<f32> columns(cols, 0);
+    std::vector<bool> sounding(cols, false);
+    const f64 t0 = tv_.t(0), dt = 1 / tv_.per_second();
+    for (const pixel::MusicRun& run : runs) {
+        const auto f = sound_files_.find(run.name);
+        const bool found = f != sound_files_.end() && f->second.file.clip;
+        const std::string why = found ? std::string() : f != sound_files_.end() ? f->second.file.why : "музыка «" + run.name + "»: у игры нет папки sounds";
+        // Its block, its fade a wedge from its start.
+        const f64 x0 = tv_.x(run.start), x1 = tv_.x(run.end);
+        if (x1 >= 0 && x0 <= w) {
+            const f64 left = std::max(0.0, x0), right = std::min(w, std::max(x1, x0 + 2 * dp));
+            char style[112], fade[112];
+            std::snprintf(style, sizeof style, "left: %.1fdevpx; width: %.1fdevpx;", left, right - left);
+            if (run.fade > 0) std::snprintf(fade, sizeof fade, "left: %.1fdevpx; width: %.1fdevpx;", x0 - left, run.fade * tv_.per_second());
+            else std::snprintf(fade, sizeof fade, "display: none;");
+            const pixel::SceneMusic& first = rec_.music[run.calls[0]];
+            const std::string title = "music(\"" + run.name + "\") с " + seconds_words(run.start) + " по " + seconds_words(run.end) + " с" + at_line(first.site) +
+                                      (run.fade > 0 ? ", наплыв " + seconds_words(run.fade) + " с" : std::string()) + ", громкость " +
+                                      number_words(first.volume) + (found ? ": «" + path_to_utf8(f->second.file.file.filename()) + "» по кругу" : ": " + why) +
+                                      "; двойной щелчок — к коду";
+            m_music_.push_back({static_cast<int>(run.calls[0]), style, fade, run.name, title, !found});
+        }
+        // The calls of the same music on it.
+        for (usize j = 1; j < run.calls.size(); ++j) {
+            const pixel::SceneMusic& m = rec_.music[run.calls[j]];
+            const f64 x = tv_.x(m.start);
+            if (x < -4 * dp || x > w + 4 * dp) continue;
+            char style[96];
+            std::snprintf(style, sizeof style, "left: %.1fdevpx; width: %.1fdevpx;", x - 1.5 * dp, 3 * dp);
+            m_music_marks_.push_back({static_cast<int>(run.calls[j]), style,
+                                      "music(\"" + m.name + "\") в " + seconds_words(m.start) + " с" + at_line(m.site) + ": та же музыка играет дальше, громкость " +
+                                          number_words(m.volume) + (m.fade > 0 ? " за " + seconds_words(m.fade) + " с" : std::string(" сразу")) +
+                                          "; двойной щелчок — к коду"});
+        }
+        // Its wave, round and round from its start; the middle line where it plays at all.
+        if (!found || cols == 0) continue;
+        const audio::Clip& clip = *f->second.file.clip;
+        const f64 len = clip.seconds(), a = std::max(run.start, t0), b = std::min(run.end, t0 + cols * dt);
+        if (!(len > 0) || !(b > a)) continue;
+        f64 s = run.start + std::floor((a - run.start) / len) * len;
+        for (int n = 0; s < b && n < kMostRounds; s += len, ++n) pixel::add_wave(clip, s, run.end, t0, dt, columns);
+        for (u32 c = 0; c < cols; ++c)
+            if (t0 + (c + 1) * dt > run.start && t0 + c * dt < run.end) sounding[c] = true;
+    }
+    if (ui_) {
+        if (!music_images_[1].empty()) ui_->drop_image(music_images_[1]);
+        music_images_[1] = std::move(music_images_[0]);
+        music_images_[0].clear();
+    }
+    m_music_wave_.clear();
+    m_music_wave_style_ = "display: none;";
+    if (ui_ && std::find(sounding.begin(), sounding.end(), true) != sounding.end()) {
+        std::vector<u8> px(static_cast<usize>(cols) * high * 4, 0);
+        for (u32 c = 0; c < cols; ++c) {
+            if (!sounding[c]) continue;
+            const f64 half = std::max(0.5, std::min<f64>(1, columns[c]) * high / 2);
+            for (u32 y = 0; y < high; ++y)
+                if (std::fabs(y + 0.5 - high / 2.0) <= half) std::fill_n(&px[(static_cast<usize>(y) * cols + c) * 4], 4, u8{255});
+        }
+        music_images_[0] = "px_m_" + std::to_string(++image_serial_);
+        ui_->set_image(music_images_[0], px.data(), cols, high);
+        m_music_wave_ = "/memory/" + music_images_[0];
+        char style[96];
+        std::snprintf(style, sizeof style, "width: %udevpx; height: %udevpx;", cols, high);
+        m_music_wave_style_ = style;
+    }
+    for (const char* var : {"px_music", "px_music_marks", "px_music_wave", "px_music_wave_style"}) dirty(var);
+}
+
+bool PixelEditor::music_to_code(i32 call) {
+    if (!rec_ok_ || call < 0 || call >= static_cast<i32>(rec_.music.size())) return false;
+    const pixel::SceneMusic& m = rec_.music[static_cast<usize>(call)];
+    const std::string what = m.name.empty() ? std::string("Тишина music(nil)") : "Музыка «" + m.name + "»";
+    if (m.site.file != 0 || m.site.site < 0 || m.site.site >= static_cast<i32>(script().code().sites().size()))
+        return refuse_edit(what + " — из модуля: её код не в панели");
+    if (code_ != script_panel_) return refuse_edit("Код в панели не тот, что записан: сохраните его (Ctrl+S), и музыка покажет свой вызов");
+    pixel::Block b;
+    b.site = m.site;
+    select_call(b);
+    return true;
+}
+
+std::vector<PixelEditor::MusicNow> PixelEditor::music_now() const {
+    std::vector<MusicNow> out;
+    for (const MusicOn& m : music_on_) out.push_back({m.name, m.volume, m.call, m.voice});
+    return out;
+}
+
+void PixelEditor::play_music(bool going) {
+    std::vector<pixel::MusicVoice> want;
+    if (going && sound_on_ && scene_mode_ && rec_ok_ && !rec_.music.empty())
+        want = pixel::music_at(rec_, cut_.from + play_clock_, held_, held_at_);
+    // What does not play now stops; what plays goes on at its volume; what begins, from where it is in its file.
+    for (usize i = music_on_.size(); i-- > 0;)
+        if (std::none_of(want.begin(), want.end(), [&](const pixel::MusicVoice& v) { return v.call == music_on_[i].call && v.name == music_on_[i].name; })) {
+            mixer_.stop(music_on_[i].voice);
+            music_on_.erase(music_on_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    for (const pixel::MusicVoice& v : want) {
+        const auto on = std::find_if(music_on_.begin(), music_on_.end(), [&](const MusicOn& m) { return m.call == v.call; });
+        if (on != music_on_.end()) {
+            if (on->volume != static_cast<f32>(v.volume)) {
+                on->volume = static_cast<f32>(v.volume);
+                mixer_.set(on->voice, on->volume, 0);
+            }
+            continue;
+        }
+        const auto f = sound_files_.find(v.name);
+        if (f == sound_files_.end() || !f->second.file.clip) continue; // no file: silence
+        if (!mixer_tried_ && !offscreen) {
+            mixer_tried_ = true;
+            if (!mixer_.open()) FORGE_WARN("Звук просмотра: устройства нет (%s), звуки идут без него", SDL_GetError());
+        }
+        audio::Play p;
+        p.volume = static_cast<f32>(v.volume);
+        p.loop = true;
+        p.bus = audio::Bus::Music;
+        p.from = v.since;
+        music_on_.push_back({v.call, v.name, mixer_.play(f->second.file.clip, p), p.volume});
+        music_played_.push_back({v.name, v.since, v.call});
+    }
+}
+
+void PixelEditor::hold_check() {
+    if (!hold_on_ || !scene_mode_ || !rec_ok_ || held_at_ >= 0) return;
+    const f64 now = cut_.from + play_clock_;
+    if (next_stop_ >= rec_.stops.size()) return;
+    const pixel::SceneStop& st = rec_.stops[next_stop_];
+    if (st.time > cut_.to + 1e-9 || now + 1e-9 < st.time) return;
+    // Reached: the player stands at its moment.
+    play_clock_ = std::max(0.0, st.time - cut_.from);
+    held_at_ = static_cast<i32>(next_stop_);
+    held_.resize(rec_.stops.size(), 0);
+    hold_actions_ = game_actions ? game_actions() : std::vector<input::Action>{};
+    rebuild_held();
+    lay_stops();
+}
+
+void PixelEditor::forget_holds(f64 from) {
+    const bool had = held_at_ >= 0 || std::any_of(held_.begin(), held_.end(), [](f64 h) { return h != 0; });
+    const bool stops = scene_mode_ && rec_ok_;
+    held_.assign(stops ? rec_.stops.size() : 0, 0);
+    held_at_ = -1;
+    next_stop_ = 0;
+    if (stops)
+        while (next_stop_ < rec_.stops.size() && rec_.stops[next_stop_].time < from - 1e-9) ++next_stop_;
+    if (had) {
+        view_dirty_ = true; // the frames as recorded again
+        rebuild_held();
+        lay_stops();
+    }
+}
+
+void PixelEditor::rebuild_held() {
+    std::string words;
+    if (held_at_ >= 0 && held_at_ < static_cast<i32>(rec_.stops.size())) {
+        const pixel::SceneStop& st = rec_.stops[static_cast<usize>(held_at_)];
+        if (st.kind == pixel::SceneStop::Kind::Talk) words = "Разговор «" + st.name + "»: ▶ — дальше";
+        else if (st.name.empty()) words = "Ждёт клавишу: любая клавиша или ▶ — дальше";
+        else if (const input::Action* a = stop_action(st, hold_actions_)) {
+            const std::string keys = key_words(*a);
+            words = "Ждёт «" + st.name + "»: " + (keys.empty() ? std::string("у действия нет клавиш, ▶ — дальше") : keys + " или ▶ — дальше");
+        } else {
+            words = "Ждёт «" + st.name + "»: такого действия во «Вводе» нет, ▶ — дальше";
+        }
+    }
+    if (words != m_held_words_) {
+        m_held_words_ = words;
+        dirty("px_held_words");
+    }
+}
+
+void PixelEditor::set_hold(bool on) {
+    hold_on_ = m_hold_ = on;
+    dirty("px_hold");
+    // Off: the player goes through the flags, the frames as recorded; on: from where it is.
+    forget_holds(playing_ ? cut_.from + play_clock_ : t_);
+}
+
+bool PixelEditor::go_on() {
+    if (held_at_ < 0) return false;
+    next_stop_ = static_cast<usize>(held_at_) + 1;
+    held_at_ = -1;
+    rebuild_held();
+    lay_stops();
+    return true;
+}
+
+void PixelEditor::toggle_play() {
+    if (!go_on()) play(!playing_);
+}
+
+bool PixelEditor::hold_key(const SDL_KeyboardEvent& k) {
+    if (held_at_ < 0 || held_at_ >= static_cast<i32>(rec_.stops.size()) || k.repeat || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)))
+        return false;
+    const pixel::SceneStop& st = rec_.stops[static_cast<usize>(held_at_)];
+    if (st.kind != pixel::SceneStop::Kind::Action) return false;
+    // Any key but one pressed with another (Shift, Ctrl …).
+    if (st.name.empty()) return k.scancode >= SDL_SCANCODE_LCTRL && k.scancode <= SDL_SCANCODE_RGUI ? false : go_on();
+    if (const input::Action* a = stop_action(st, hold_actions_))
+        for (const input::Bind& b : a->binds)
+            if (b.device == input::Device::Key && b.code == static_cast<i32>(k.scancode)) return go_on();
+    return false;
 }
 
 } // namespace forge::editor_app

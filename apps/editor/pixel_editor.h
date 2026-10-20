@@ -58,6 +58,7 @@
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
+#include "forge/input/input.h"
 #include "forge/level/level.h"
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
@@ -108,6 +109,7 @@ public:
     std::function<std::string(const objects::Template&)> template_icon;
     std::function<std::string(const Guid&)> game_copy;               // the game's picture copied from that asset, or ""
     std::filesystem::path game_dir;                                  // its game.json holds «Предел кадров»
+    std::function<std::vector<input::Action>()> game_actions;        // the game's actions as «Ввод» has them (part 6в)
 
     // --- the characters (buttons, keys, the self-test) ---
     // The «.pixel.json» of the project, by path in «Ресурсы».
@@ -468,6 +470,36 @@ public:
     bool through_size(u32& w, u32& h) const;
     bool set_actor_clip_start(i32 index, f64 to);
     bool actor_clip_to_code(i32 index);
+    // Part 6в: the music's row (a block a file plays, from the call that began it to another's or music(nil), its fade
+    // and the calls of the same music on it) and the stops' (flags of wait_action and talk), each double-clicked to its
+    // call. While the player plays, the music of its moment sounds from where it is in its file (M off, paused, the ruler
+    // dragged, the tab away: silence); music_played() what it began since the player last started, music_now() what
+    // the mixer plays now. «Ждать, как в игре» (hold, not written into files): the player stands at a stop, the
+    // scene's time with it, the actors' clips and the music going on, until a key of the action waited for (its keys
+    // as «Ввод» has them, game_actions; any key for wait_action()) or ▶ and Space (go_on); paused or round again, the
+    // waits are forgotten and the frames are the recording's.
+    bool music_to_code(i32 call);
+    bool stop_to_code(i32 index);
+    struct MusicPlayed {
+        std::string name;
+        f64 from = 0; // seconds into its file
+        u32 call = 0;
+    };
+    const std::vector<MusicPlayed>& music_played() const { return music_played_; }
+    struct MusicNow {
+        std::string name;
+        f32 volume = 0;
+        u32 call = 0;
+        audio::Voice voice; // in mixer()
+    };
+    std::vector<MusicNow> music_now() const;
+    void set_hold(bool on);
+    bool hold() const { return hold_on_; }
+    i32 held_at() const { return held_at_; } // the stop the player stands at; -1: none
+    const std::vector<f64>& held() const { return held_; }
+    const std::string& held_words() const { return m_held_words_; }
+    bool go_on();
+    void toggle_play(); // ▶ and Space: on from a stop, else play or pause
     bool open_actor_character();
 
     // What the views show now (for the self-test): the vector, the pixel frame at its size, both as the UI names them.
@@ -585,6 +617,20 @@ private:
         Rml::String style, label, title;
         bool selected = false, loop = false, stop = false;
     };
+    struct MusicView {
+        int index = 0; // the call that began it
+        Rml::String style, fade, label, title;
+        bool missing = false;
+    };
+    struct MusicMark {
+        int index = 0; // the call
+        Rml::String style, title;
+    };
+    struct StopRow {
+        int index = 0;
+        Rml::String style, label, title;
+        bool missing = false, held = false;
+    };
 
     // The code the tab works on: the character's, or the scene's (part 6а).
     pixel::PoseScript& script() { return scene_mode_ && scene_ ? scene_->script() : script_; }
@@ -620,6 +666,22 @@ private:
     void draw_camera_frame(assets::CookedTexture& t, const pixel::Affine& texels) const;
     void lay_transitions();
     void rebuild_transition();
+    // Part 6в: the rows of music and stops; the stop's words, the action it waits for (null: none such, or any key)
+    // and why its flag is marked; the mixer's music as the player's moment has it (silence when not going); a stop
+    // reached while playing; the waits forgotten, the next stop the first from `from`; the line under the player; the
+    // keys of the action waited for.
+    void lay_music();
+    void lay_stops();
+    std::string stop_words(const pixel::SceneStop& st) const;
+    const input::Action* stop_action(const pixel::SceneStop& st, const std::vector<input::Action>& actions) const;
+    std::string stop_missing(const pixel::SceneStop& st, const std::vector<input::Action>& actions) const;
+    void play_music(bool going);
+    void hold_check();
+    void forget_holds(f64 from);
+    void rebuild_held();
+    const std::vector<pixel::CallSite>& panel_sites() const; // the script's call sites; none while it is not loaded
+    bool hold_key(const SDL_KeyboardEvent& k);
+    void check_stops(); // the game's talks and actions looked at again: the flags marked anew when they changed
     void redraw_scene();
     std::string scene_snapshot();
     pixel::ClipSpec* selected_clip();
@@ -763,6 +825,24 @@ private:
     i32 play_ = -1;          // the actor's clip selected on the timeline
     std::vector<i32> plays_; // the plays shown, by row of m_plays_
     i32 transition_ = -1;    // the transition selected on the timeline (part 6б)
+    // Part 6в: «Ждать, как в игре», the stop stood at, how long the player stood at each, the next it stops at; the
+    // game's actions as asked when it stopped; the music voices of the mixer by the call that began them; the game's
+    // talks and actions the stops' row was laid with; the music row's wave pictures now and before.
+    bool hold_on_ = false;
+    i32 held_at_ = -1;
+    std::vector<f64> held_;
+    usize next_stop_ = 0;
+    std::vector<input::Action> hold_actions_;
+    struct MusicOn {
+        u32 call = 0;
+        std::string name;
+        audio::Voice voice;
+        f32 volume = 0;
+    };
+    std::vector<MusicOn> music_on_;
+    std::vector<MusicPlayed> music_played_;
+    std::vector<std::string> talks_;
+    std::string stops_key_, music_key_, music_images_[2];
     // The character open.
     std::string rel_;
     std::filesystem::path file_;
@@ -906,6 +986,11 @@ private:
     std::vector<Row> m_list_, m_scenes_;
     std::vector<TrackRow> m_actor_rows_;
     std::vector<PlayRow> m_plays_, m_transitions_;
+    std::vector<MusicView> m_music_;
+    std::vector<MusicMark> m_music_marks_;
+    std::vector<StopRow> m_stops_;
+    Rml::String m_music_wave_, m_music_wave_style_ = "display: none;", m_held_words_, m_stops_height_ = "height: 22px;";
+    bool m_hold_ = false;
     Rml::String m_play_info_, m_play_call_, m_play_why_, m_actor_rows_height_, m_transition_info_, m_transition_call_;
     bool m_scene_ = false, m_has_play_ = false, m_play_can_code_ = false, m_has_transition_ = false, m_transition_can_code_ = false;
     std::vector<SvgRow> m_svgs_;

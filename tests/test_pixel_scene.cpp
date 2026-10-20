@@ -6,6 +6,8 @@
 // in their poses, laid over each other in the stage's order.
 // Part 6б: the camera (its matrix, center_on, along, follow and its end) and the transitions in and out, the player's
 // frames of each kind and of one's own function against frames worked out by hand; the errors of both.
+// Part 6в: the music's calls and what plays at a moment (fades, the same music, silence), the waits for the player and
+// the talks as stops of the scene's own flow, the actors' clips going on while the scene waits; the errors of all three.
 
 #include "forge/assets/image.h"
 #include "forge/pixel/bake.h"
@@ -26,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <span>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
 #include <vector>
@@ -537,8 +540,6 @@ TEST_CASE("Сцена: что сцене нельзя — со строкой") 
         {"    actor(\"ёжик\"):play()", "первым — имя клипа"},
         {"    actor(\"ёжик\"):stop(1)", "stop() — без аргументов"},
         {"    actor(\"жук\"):play(\"walk\")", "у персонажа «персонажи/Жук» нет клипа «walk» (есть «hop»)"},
-        {"    music(\"тема\")", "music — в части 6в"},
-        {"    talk(\"разговор\")", "talk — в части 6в"},
     };
     for (const Case& c : cases) {
         CAPTURE(c.scene);
@@ -1373,7 +1374,6 @@ TEST_CASE("Сцена: камера и переходы — ошибки со с
         {"    transition(\"сдвиг\", 1, { edge = \"лево\" })", "поля «edge» нет"},
         {"    transition(function(old, new) new.tint(\"#fff\", 1) end)", "у кадра перехода нет «tint»"},
         {"    transition(function(old, new) end, 1)", "длина перехода — длина записи функции"},
-        {"    music(\"тема\")", "music — в части 6в"},
     };
     for (const Case& c : cases) {
         CAPTURE(c.scene);
@@ -1654,4 +1654,299 @@ TEST_CASE("Сцена: камера мышью и полями пишет camera
     load(s, files, "    camera():follow(\"ёжик\")\n    wait(1)");
     record(s);
     CHECK_FALSE(part_prop_value(*s.recording(), "camera", 0.5, 1.0 / 60, Prop::X, fx, going));
+}
+
+TEST_CASE("Сцена: музыка — вызовы и что звучит в миг t") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    music("тема", { fade = 1, volume = 0.8 })
+    wait(2)
+    music("тема", { volume = 0.4, fade = 0.5 })
+    wait(1)
+    music("бой", { fade = 2 })
+    wait(3)
+    music(nil, { fade = 1 })
+    wait(1))");
+    record(s);
+    const Recording& rec = *s.recording();
+    CHECK(rec.length == doctest::Approx(7)); // music does not wait
+    REQUIRE(rec.music.size() == 4);
+    struct Want {
+        const char* name;
+        f64 start, fade, volume;
+    };
+    const Want want[] = {{"тема", 0, 1, 0.8}, {"тема", 2, 0.5, 0.4}, {"бой", 3, 2, 1}, {"", 6, 1, 1}};
+    for (usize i = 0; i < 4; ++i) {
+        CAPTURE(i);
+        CHECK(rec.music[i].name == want[i].name);
+        CHECK(rec.music[i].start == doctest::Approx(want[i].start));
+        CHECK(rec.music[i].fade == doctest::Approx(want[i].fade));
+        CHECK(rec.music[i].volume == doctest::Approx(want[i].volume));
+        REQUIRE(rec.music[i].site.site >= 0);
+        CHECK(s.script().code().sites()[static_cast<usize>(rec.music[i].site.site)].line == 11 + 2 * i);
+    }
+    // What plays: the file, how long it has played, its volume, the call that began it.
+    struct At {
+        f64 t;
+        std::vector<MusicVoice> voices;
+    };
+    const At ats[] = {
+        {0, {{"тема", 0, 0, 0}}},
+        {0.5, {{"тема", 0.5, 0.4, 0}}}, // half way in: 0,8 · 0,5
+        {1.5, {{"тема", 1.5, 0.8, 0}}},
+        {2.25, {{"тема", 2.25, 0.6, 0}}}, // the same music goes on, quieter over 0,5 s
+        {3, {{"тема", 3, 0.4, 0}, {"бой", 0, 0, 2}}},
+        {4, {{"тема", 4, 0.2, 0}, {"бой", 1, 0.5, 2}}}, // one into the other over 2 s
+        {5, {{"бой", 2, 1, 2}}},
+        {6.5, {{"бой", 3.5, 0.5, 2}}}, // music(nil): it goes out over 1 s
+        {7, {}},
+    };
+    for (const At& a : ats) {
+        CAPTURE(a.t);
+        const std::vector<MusicVoice> got = music_at(rec, a.t);
+        REQUIRE(got.size() == a.voices.size());
+        for (usize i = 0; i < got.size(); ++i) {
+            CHECK(got[i].name == a.voices[i].name);
+            CHECK(got[i].since == doctest::Approx(a.voices[i].since));
+            CHECK(got[i].volume == doctest::Approx(a.voices[i].volume));
+            CHECK(got[i].call == a.voices[i].call);
+        }
+    }
+    // The timeline's blocks: «тема» with both its calls up to «бой», «бой» up to the silence.
+    const std::vector<MusicRun> runs = music_runs(rec);
+    REQUIRE(runs.size() == 2);
+    CHECK(runs[0].name == "тема");
+    CHECK(runs[0].start == 0);
+    CHECK(runs[0].end == doctest::Approx(3));
+    CHECK(runs[0].fade == doctest::Approx(1));
+    CHECK(runs[0].calls == std::vector<u32>{0, 1});
+    CHECK(runs[1].name == "бой");
+    CHECK(runs[1].start == doctest::Approx(3));
+    CHECK(runs[1].end == doctest::Approx(6));
+    CHECK(runs[1].calls == std::vector<u32>{2});
+
+    // In spawn(…) and at(…), by time, not by the order made; at once without a fade; after silence the same name anew;
+    // the last music to the scene's end.
+    load(s, files, R"(    spawn(music("шум"))
+    at(1.5, music("тема"))
+    wait(1)
+    music(nil)
+    wait(1)
+    music("шум", { volume = 0.5 })
+    wait(1))");
+    record(s);
+    const Recording& r2 = *s.recording();
+    REQUIRE(r2.music.size() == 4);
+    const std::vector<MusicRun> r2runs = music_runs(r2);
+    REQUIRE(r2runs.size() == 3);
+    CHECK(r2runs[0].name == "шум");
+    CHECK(r2runs[0].end == doctest::Approx(1));
+    CHECK(r2runs[1].name == "тема");
+    CHECK(r2runs[1].start == doctest::Approx(1.5));
+    CHECK(r2runs[1].end == doctest::Approx(2));
+    CHECK(r2runs[2].name == "шум");
+    CHECK(r2runs[2].start == doctest::Approx(2));
+    CHECK(r2runs[2].end == doctest::Approx(3));
+    const u32 tema = r2runs[1].calls[0], again = r2runs[2].calls[0];
+    CHECK(music_at(r2, 0.5) == std::vector<MusicVoice>{{"шум", 0.5, 1, r2runs[0].calls[0]}});
+    CHECK(music_at(r2, 1.25).empty());
+    CHECK(music_at(r2, 1.75) == std::vector<MusicVoice>{{"тема", 0.25, 1, tema}});
+    CHECK(music_at(r2, 2.5) == std::vector<MusicVoice>{{"шум", 0.5, 0.5, again}});
+}
+
+TEST_CASE("Сцена: ожидание и разговор — время сцены стоит, клипы актёров идут") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    spawn(actor("жук"):play("hop"))
+    wait(0.2)
+    wait_action("Поговорить")
+    part("лес").x(10, 1)
+    talk("Встреча")
+    actor("жук"):play("hop")
+    wait_action())");
+    record(s);
+    const Recording& rec = *s.recording();
+    // Stops have no length: the next line goes from the same moment, the scene as long as without them.
+    REQUIRE(rec.stops.size() == 3);
+    CHECK(rec.stops[0].kind == SceneStop::Kind::Action);
+    CHECK(rec.stops[0].name == "Поговорить");
+    CHECK(rec.stops[0].time == doctest::Approx(0.2));
+    CHECK(rec.stops[1].kind == SceneStop::Kind::Talk);
+    CHECK(rec.stops[1].name == "Встреча");
+    CHECK(rec.stops[1].time == doctest::Approx(1.2));
+    CHECK(rec.stops[2].kind == SceneStop::Kind::Action);
+    CHECK(rec.stops[2].name.empty());
+    const ActorPlay& hop2 = play_of(rec, "жук", ActorPlay::Kind::Play, 1);
+    CHECK(hop2.start == doctest::Approx(1.2));
+    CHECK(rec.stops[2].time == doctest::Approx(1.2 + hop2.length)); // after the beetle's hop
+    CHECK(rec.length == doctest::Approx(rec.stops[2].time));
+    const u32 lines[] = {14, 16, 18};
+    for (usize i = 0; i < 3; ++i) {
+        REQUIRE(rec.stops[i].site.site >= 0);
+        CHECK(s.script().code().sites()[static_cast<usize>(rec.stops[i].site.site)].line == lines[i]);
+    }
+    bool moved = false;
+    for (const Block& b : rec.blocks)
+        if (rec.parts[b.part] == "лес" && b.prop == Prop::X) {
+            moved = true;
+            CHECK(b.start == doctest::Approx(0.2));
+        }
+    CHECK(moved);
+    CHECK(rec.stops[1].order < hop2.order); // made after the talk
+
+    // The scene waited 0,15 s for the action, 0,3 s for the talk: a clip begun before a stop is ahead by it.
+    const std::vector<f64> held = {0.15, 0.3, 0.7};
+    CHECK(actor_moment(rec, "ёжик", 0.1, held).time == doctest::Approx(0.1)); // before the first wait
+    CHECK(actor_moment(rec, "ёжик", 0.2, held).time == doctest::Approx(0.35));
+    CHECK(actor_moment(rec, "ёжик", 0.2).time == doctest::Approx(0.2)); // none given: as recorded
+    CHECK(actor_moment(rec, "ёжик", 1.2, held).time == doctest::Approx(std::fmod(1.65, 0.5))); // round and round
+    CHECK(actor_moment(rec, "жук", 0.2, held).time == doctest::Approx(0.35));
+    REQUIRE(hop2.clip_length < 1.15);
+    CHECK(actor_moment(rec, "жук", 1, held).time == doctest::Approx(hop2.clip_length)); // to its end, held there
+    // The hop begun at the talk's moment but after it: the talk does not move it.
+    CHECK(actor_moment(rec, "жук", 1.2, held).play == &hop2);
+    CHECK(actor_moment(rec, "жук", 1.2, held).time == doctest::Approx(0));
+    CHECK(actor_moment(rec, "жук", 1.5, held).time == doctest::Approx(0.3));
+    CHECK(actor_moment(rec, "ёжик", rec.length, held).time == doctest::Approx(std::fmod(rec.length + 0.15 + 0.3 + 0.7, 0.5)));
+
+    // The frame: the hedgehog where its clip is 0,15 s on, the scene's own parts where they stand at 0,2.
+    auto region = [&](f64 t, std::span<const f64> h) {
+        const bool ok = s.frame(t, h);
+        INFO(s.error());
+        REQUIRE(ok);
+        const assets::CookedTexture f = s.draw(160, 120, Affine{});
+        std::vector<u8> out;
+        for (u32 y = 40; y < 104; ++y)
+            out.insert(out.end(), f.rgba8.begin() + (y * 160 + 8) * 4, f.rgba8.begin() + (y * 160 + 72) * 4);
+        return out;
+    };
+    const std::vector<u8> waited = region(0.2, held);
+    CHECK(waited == region(0.35, {}));
+    CHECK(waited != region(0.2, {}));
+    // Half way through its move, the picture «лес» is where the scene's time puts it, not 0,15 s on.
+    auto forest_at = [&](f64 t, std::span<const f64> h) {
+        REQUIRE(s.frame(t, h));
+        return pixel_at(s.draw(160, 120, Affine{}), 20, 10);
+    };
+    CHECK(forest_at(0.7, held) == forest_at(0.7, {}));
+    CHECK_FALSE(near(forest_at(0.7, held), forest_at(0.85, {})));
+
+    // Standing at the talk: the hop made after it at its moment has not begun, the first one holds its end; the
+    // hedgehog's loop goes on as without the stand.
+    const ActorPlay& hop1 = play_of(rec, "жук", ActorPlay::Kind::Play);
+    CHECK(actor_moment(rec, "жук", 1.2, held, 1).play == &hop1);
+    CHECK(actor_moment(rec, "жук", 1.2, held, 1).time == doctest::Approx(hop1.clip_length));
+    CHECK(actor_moment(rec, "ёжик", 1.2, held, 1).time == doctest::Approx(actor_moment(rec, "ёжик", 1.2, held).time));
+    CHECK(actor_moment(rec, "жук", 1.2, held, 0).play == &hop2); // another stop: the hop has begun
+    CHECK(actor_moment(rec, "жук", 1.2, held, 7).play == &hop2); // none such: as none
+
+    // A loop stopped at a stop's moment, before it: it holds where it was then, ahead by the waits before it, not by
+    // the one after.
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    wait(0.2)
+    wait_action()
+    wait(0.2)
+    actor("ёжик"):stop()
+    talk("Встреча")
+    wait(0.5))");
+    record(s);
+    const Recording& r2 = *s.recording();
+    REQUIRE(r2.stops.size() == 2);
+    const ActorPlay& stop = play_of(r2, "ёжик", ActorPlay::Kind::Stop);
+    CHECK(stop.order < r2.stops[1].order);
+    const std::vector<f64> h2 = {0.05, 0.3};
+    CHECK(actor_moment(r2, "ёжик", 0.3, h2).time == doctest::Approx(0.35));
+    for (const f64 t : {0.4, 0.9}) {
+        CAPTURE(t);
+        CHECK(actor_moment(r2, "ёжик", t, h2).time == doctest::Approx(0.45));
+        CHECK(actor_moment(r2, "ёжик", t, h2, 1).time == doctest::Approx(0.45));
+    }
+}
+
+TEST_CASE("Сцена: музыка идёт, пока сцена ждёт, и её наплывы тоже") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    music("тема", { fade = 1 })
+    wait(0.5)
+    music("тема", { volume = 0.4, fade = 1 })
+    talk("Встреча")
+    music("бой", { fade = 0.5 })
+    wait(1))");
+    record(s);
+    const Recording& rec = *s.recording();
+    REQUIRE(rec.music.size() == 3);
+    REQUIRE(rec.stops.size() == 1);
+    CHECK(rec.music[1].order < rec.stops[0].order);
+    CHECK(rec.stops[0].order < rec.music[2].order);
+    auto same = [](const std::vector<MusicVoice>& got, const std::vector<MusicVoice>& want) {
+        REQUIRE(got.size() == want.size());
+        for (usize i = 0; i < got.size(); ++i) {
+            CAPTURE(i);
+            CHECK(got[i].name == want[i].name);
+            CHECK(got[i].since == doctest::Approx(want[i].since));
+            CHECK(got[i].volume == doctest::Approx(want[i].volume));
+            CHECK(got[i].call == want[i].call);
+        }
+    };
+    // As recorded: «бой» comes in at 0,5 at once after the talk, «тема» half way up goes out.
+    same(music_at(rec, 0.5), {{"тема", 0.5, 0.5, 0}, {"бой", 0, 0, 2}});
+    // 2 s into the talk: «тема» played on, quieted to 0,4 over its second; «бой» is after the talk.
+    const std::vector<f64> two = {2}, quarter = {0.25};
+    same(music_at(rec, 0.5, two, 0), {{"тема", 2.5, 0.4, 0}});
+    same(music_at(rec, 0.5, quarter, 0), {{"тема", 0.75, 0.475, 0}});
+    // The talk over: «бой» from then, «тема» going out from 0,4.
+    same(music_at(rec, 0.5, two), {{"тема", 2.5, 0.4, 0}, {"бой", 0, 0, 2}});
+    same(music_at(rec, 0.75, two), {{"тема", 2.75, 0.2, 0}, {"бой", 0.25, 0.5, 2}});
+    same(music_at(rec, 1, two), {{"бой", 0.5, 1, 2}});
+}
+
+TEST_CASE("Сцена: музыка, ожидание и разговор — ошибки со строкой") {
+    Files files;
+    project(files);
+    struct Case {
+        const char* scene;
+        const char* says;
+    };
+    const Case cases[] = {
+        {"    music(1)", "имя — файл звуков игры, или nil — тишина"},
+        {"    music(\"\")", "имя — файл звуков игры"},
+        {"    music(\"папка/тема\")", "без папок"},
+        {"    music(\"тема\", { fade = -1 })", "fade — число секунд не меньше 0"},
+        {"    music(\"тема\", { volume = 2 })", "volume — громкость от 0 до 1"},
+        {"    music(\"тема\", { loud = 1 })", "поля «loud» нет"},
+        {"    music(\"тема\", 1)", "вторым — таблица"},
+        {"    music(\"тема\", {}, 1)", "не больше"},
+        {"    music(nil, { volume = 1 })", "у тишины громкости нет"},
+        {"    wait_action(1)", "имя действия «Ввода», или ничего"},
+        {"    wait_action(\"\")", "имя действия «Ввода»"},
+        {"    wait_action(\"а\", \"б\")", "одно имя"},
+        {"    talk()", "имя разговора игры"},
+        {"    talk(\"а\", \"б\")", "одно имя"},
+        {"    spawn(function() wait_action() end)", "wait_action — только в самом scene"},
+        {"    all(function() talk(\"Встреча\") end)", "talk — только в самом scene"},
+        {"    leave(\"растворение\", 1) wait_action()", "после leave сцена кончается"},
+    };
+    for (const Case& c : cases) {
+        CAPTURE(c.scene);
+        Scene s;
+        load(s, files, c.scene);
+        CHECK_FALSE(s.record());
+        INFO(s.error());
+        CHECK(has(s.error(), c.says));
+        CHECK(s.error_line() == 11);
+    }
+    for (const char* call : {"music(\"тема\")", "wait_action()", "talk(\"Встреча\")"}) {
+        CAPTURE(call);
+        PoseScript code;
+        REQUIRE(code.load(std::string("return {\n  clips = { a = function(p)\n    ") + call + "\n  end },\n}\n"));
+        Recording rec;
+        CHECK_FALSE(code.record(nullptr, "a", {}, 1, {}, rec));
+        INFO(code.error());
+        CHECK(has(code.error(), "только в сцене"));
+        CHECK(code.error_line() == 3);
+    }
 }

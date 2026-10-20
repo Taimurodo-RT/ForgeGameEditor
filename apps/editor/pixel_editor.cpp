@@ -449,7 +449,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     on("px_loop", [this](Rml::Event&, const Rml::VariantList&) {
         if (const pixel::ClipSpec* c = selected_clip()) set_clip_loop(!c->loop);
     });
-    on("px_play", [this](Rml::Event&, const Rml::VariantList&) { play(!playing_); });
+    on("px_play", [this](Rml::Event&, const Rml::VariantList&) { toggle_play(); }); // part 6в: on from a stop
     on("px_step", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { step(arg_int(a, 0) < 0 ? -1 : 1); });
     on("px_onion", [this](Rml::Event&, const Rml::VariantList&) { set_onion(!onion_); });
     auto size = [this](const std::string& which, const std::string& text) {
@@ -518,8 +518,17 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
     }
     // The preview plays the range by its frames, at its speed, over again while L is on.
     const pixel::ClipSpec* c = selected_clip();
-    if (playing_ && c && !dragging_ && !move_started_ && tl_drag_ == Drag::None && cut_.frames > 0) {
-        play_clock_ += std::min(dt, 0.1) * speed_;
+    const bool going = playing_ && c && !dragging_ && !move_started_ && tl_drag_ == Drag::None && cut_.frames > 0;
+    if (going) {
+        const f64 step = std::min(dt, 0.1) * speed_;
+        if (held_at_ >= 0) {
+            // Part 6в: standing at a stop, the scene's time with it; its actors' clips go on.
+            held_[static_cast<usize>(held_at_)] += step;
+            view_dirty_ = true;
+        } else {
+            play_clock_ += step;
+            hold_check(); // a stop reached: the clock at its moment
+        }
         const f64 span = cut_.frames / static_cast<f64>(cut_.fps);
         u64 k = static_cast<u64>(std::floor(play_clock_ * cut_.fps + 1e-9));
         bool wrapped = false, ended = false;
@@ -535,14 +544,22 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         }
         // The marks of the frames shown since the last one sound (part 3в).
         sound_frames(static_cast<i64>(k), wrapped);
+        if (wrapped) {
+            // Part 6в: round again, the waits are forgotten and the music begins anew.
+            forget_holds(cut_.from);
+            for (const MusicOn& m : music_on_) mixer_.stop(m.voice);
+            music_on_.clear();
+        }
         if (ended) play(false);
-        const f64 t = cut_.time(static_cast<u32>(k));
+        // Part 6в: standing at a stop, the playhead at its moment, on a frame or not.
+        const f64 t = held_at_ >= 0 ? rec_.stops[static_cast<usize>(held_at_)].time : cut_.time(static_cast<u32>(k));
         if (t != t_) {
             t_ = t;
             ++fps_frames_;
             sync_time();
         }
     }
+    play_music(going && playing_); // part 6в
     // How many frames a second the preview shows in fact; paused, it shows none, and no number says so.
     fps_clock_ += dt;
     if (fps_clock_ >= 1 || (!playing_ && shown_fps_ != 0)) {
@@ -673,10 +690,11 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
 }
 
 bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
+    if (hold_key(k)) return true; // part 6в: the keys of the action the player waits for, before the tab's
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT)) return false;
     const bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     switch (k.key) {
-    case SDLK_SPACE: play(!playing_); return true;
+    case SDLK_SPACE: toggle_play(); return true;
     case SDLK_LEFT: shift ? to_start() : step(-1); return true;
     case SDLK_RIGHT: shift ? to_end() : step(1); return true;
     // Part 4е: the tools; L and P are the tab's own without Shift.
@@ -984,6 +1002,8 @@ void PixelEditor::check_files() {
             find_sounds();
             rebuild_console();
             lay_timeline();
+        } else {
+            check_stops(); // part 6в
         }
         return;
     }
@@ -1539,8 +1559,14 @@ void PixelEditor::play(bool on) {
         // The frame it starts from sounds too.
         sounded_.clear();
         sound_shown_ = static_cast<i64>(std::floor(play_clock_ * cut_.fps + 1e-9)) - 1;
+        music_played_.clear(); // part 6в
     }
-    if (!on) mixer_.stop_all();
+    if (!on) {
+        mixer_.stop_all();
+        music_on_.clear();
+    }
+    // Part 6в: started or stopped, the waits are forgotten; the next stop the first from where it starts.
+    if (on != playing_) forget_holds(cut_.from + play_clock_);
     playing_ = on;
     m_playing_ = on;
     dirty("px_playing");
@@ -1964,7 +1990,9 @@ void PixelEditor::redraw_scene() {
     std::vector<assets::CookedTexture> vec(ks.size());
     const pixel::Affine texels = to_texels();
     for (usize i = ks.size(); i-- > 0;) {
-        if (scene_ && !scene_->pose(ts[i], rec, poses[i]) && i == 0 && pose_problem_.empty()) pose_problem_ = "Сцена: " + scene_->error();
+        // Part 6в: the actors' clips ahead by the waits of «Ждать, как в игре».
+        if (scene_ && !scene_->pose(ts[i], rec, poses[i], held_, i == 0 ? held_at_ : -1) && i == 0 && pose_problem_.empty())
+            pose_problem_ = "Сцена: " + scene_->error();
         vec[i] = rig().draw(view_px(), view_px(), texels);
     }
     for (usize i = 1; i < ks.size(); ++i) over_faint(vec[0], vec[i], kOnion);

@@ -40,6 +40,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -158,12 +159,35 @@ struct SceneCharacter {
 bool load_character(const SceneFiles& files, const std::string& file, SceneCharacter& out, std::string& why);
 
 // Which clip an actor shows at t of a scene and its moment in that clip (rules 1–4 of the actors' clips): the play
-// started last at t or before, a stop holding the moment of the one before it; null play at rest.
+// started last at t or before, a stop holding the moment of the one before it; null play at rest. `held` (part 6в):
+// the seconds the scene waited at each of rec.stops, or none; a clip goes on while the scene waits, so its moment is
+// ahead by the waits after its start up to t (a stop at its start counts when made before it). `waiting`: the stop of
+// rec.stops the scene stands at now (-1: none), what was made after it at its moment not begun yet.
 struct ActorMoment {
     const ActorPlay* play = nullptr;
     f64 time = 0;
 };
-ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t);
+ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
+
+// Part 6в: the scene's music at t, each sound file playing then — the one coming in and the ones going out over their
+// fades — with how long it has played (from the call that began it) and its volume then. Music goes on while the scene
+// waits, its fades too: with `held` and `waiting` as actor_moment's, a call's moment and the moment now are their
+// scene times and the waits before them.
+struct MusicVoice {
+    std::string name;
+    f64 since = 0, volume = 0;
+    u32 call = 0; // in rec.music: the call that began it
+    bool operator==(const MusicVoice&) const = default;
+};
+std::vector<MusicVoice> music_at(const Recording& rec, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
+// The timeline's blocks of the scene's music: one file from the call that began it to the next call of another or
+// music(nil), else the scene's end; `calls` the calls of it in that time, the first the one that began it.
+struct MusicRun {
+    std::string name;
+    f64 start = 0, end = 0, fade = 0;
+    std::vector<u32> calls;
+};
+std::vector<MusicRun> music_runs(const Recording& rec);
 // The marks of the actors' clips in the scene's time (rule 6): each play's up to the next play of its actor or the
 // scene's end, a loop's on every round, named by its actor; by time.
 struct SceneMarkSource {
@@ -189,11 +213,12 @@ public:
     const Recording* recording() const; // null until recorded
     // Poses everything at t of the scene: its own transitions, its actors' clips under theirs (at rest without a
     // recording). False with error().
-    bool frame(f64 t);
+    bool frame(f64 t, std::span<const f64> held = {}, i32 waiting = -1);
     // The same with the scene's own pose given (its parts, its actors' and their parts', as the script's frame() of a
     // recording gives it) and the actors' clips by the plays of `rec` (null: at rest): the tab poses the scene by the
-    // recording on its timeline, a part dragged moved in it. False with error().
-    bool pose(f64 t, const Recording* rec, const Pose& scene);
+    // recording on its timeline, a part dragged moved in it; `held` the seconds it waited at rec's stops and `waiting`
+    // the one it stands at (part 6в, as actor_moment's), its actors' clips ahead by them. False with error().
+    bool pose(f64 t, const Recording* rec, const Pose& scene, std::span<const f64> held = {}, i32 waiting = -1);
     // The frame as posed, smooth: the scene's units to the drawing's pixels by px, or fitted in.
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     assets::CookedTexture draw(u32 w, u32 h);

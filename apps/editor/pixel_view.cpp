@@ -200,16 +200,22 @@ bool PixelEditor::pick_click(f32 x, f32 y) {
 void PixelEditor::set_sound(bool on) {
     sound_on_ = m_sound_on_ = on;
     dirty("px_sound_on");
-    if (!on) mixer_.stop_all();
+    if (!on) {
+        mixer_.stop_all();
+        music_on_.clear(); // part 6в: the music too
+    }
 }
 
 void PixelEditor::hush() {
     mixer_.stop_all();
     sounded_.clear();
     sound_shown_ = -1;
+    music_on_.clear(); // part 6в
+    music_played_.clear();
 }
 
 void PixelEditor::away() {
+    music_on_.clear(); // part 6в: the music stops with the rest, and begins anew when the tab is back
     if (mixer_.voices() == 0) return;
     mixer_.stop_all();
     if (!mixer_.has_device()) mixer_.advance(1); // what was stopped ends
@@ -218,17 +224,23 @@ void PixelEditor::away() {
 void PixelEditor::find_sounds() {
     std::map<std::string, SoundFound> found;
     const fs::path folder = game_dir.empty() ? fs::path() : game_dir / "sounds";
-    if (rec_ok_ && !folder.empty())
-        for (const pixel::Mark& m : rec_.marks) {
-            if (m.kind != pixel::Mark::Kind::Sound || found.count(m.name)) continue;
-            SoundFound f;
-            for (const fs::path& p : pixel::sound_files(folder, m.name)) f.stamps.push_back(stamp_of(p));
-            // The same files as they were: what was read of them stays.
-            const auto was = sound_files_.find(m.name);
-            f.file = was != sound_files_.end() && was->second.stamps == f.stamps ? was->second.file : pixel::find_sound(folder, m.name);
-            found[m.name] = std::move(f);
-        }
+    auto look = [&](const std::string& name) {
+        if (found.count(name)) return;
+        SoundFound f;
+        for (const fs::path& p : pixel::sound_files(folder, name)) f.stamps.push_back(stamp_of(p));
+        // The same files as they were: what was read of them stays.
+        const auto was = sound_files_.find(name);
+        f.file = was != sound_files_.end() && was->second.stamps == f.stamps ? was->second.file : pixel::find_sound(folder, name);
+        found[name] = std::move(f);
+    };
+    if (rec_ok_ && !folder.empty()) {
+        for (const pixel::Mark& m : rec_.marks)
+            if (m.kind == pixel::Mark::Kind::Sound) look(m.name);
+        for (const pixel::SceneMusic& m : rec_.music) // part 6в: the music's files, found as sounds'
+            if (!m.name.empty()) look(m.name);
+    }
     sound_files_ = std::move(found);
+    talks_ = scene_mode_ && !game_dir.empty() ? talk_ids(game_dir) : std::vector<std::string>{}; // part 6в: what talk() names
 }
 
 bool PixelEditor::sounds_changed() {

@@ -548,6 +548,17 @@ public:
         };
         pixel_tab.game_dir = game_dir;
         pixel_tab.offscreen = level_config.offscreen; // no sound device: the preview's sounds go without one
+        // A scene's wait_action (part 6в): the game's actions with their keys as «Ввод» has them now.
+        pixel_tab.game_actions = [this] {
+            std::vector<input::Action> out;
+            for (const input::ActionDef& d : input_tab.defs()) {
+                input::Action a{d.id, d.words, {}};
+                for (const std::string& text : input_tab.binds(d.id))
+                    if (input::Bind b; input::parse(text, b)) a.binds.push_back(b);
+                out.push_back(std::move(a));
+            }
+            return out;
+        };
         pixel_tab.init(ui_);
         // «Ввод»: the module's actions, then the shell's; what the author changed is the game's input.json.
         input_tab.open(input_file, module.actions, module.name);
@@ -2092,7 +2103,9 @@ struct Options {
     // that fails refused, by "pixel-motion-m", opened again by "pixel-motion-m-again"; part 6а of step 6, a scene: «Новая
     // сцена» with two characters and a picture typed into its code, its frames, the mouse on it, its actors' clips, by
     // "pixel-scene", opened again by "pixel-scene-again"; part 6б, its camera and transitions: typed, «Через камеру», the frame's
-    // edge and the camera's fields, the transitions' row, by "pixel-scene-b", opened again by "pixel-scene-b-again"); "input"
+    // edge and the camera's fields, the transitions' row, by "pixel-scene-b", opened again by "pixel-scene-b-again"; part 6в,
+    // its music, waits and talk: typed, the rows «Музыка» and «Ожидания», the music in the player, «Ждать, как в игре», by
+    // "pixel-scene-c", opened again by "pixel-scene-c-again"); "input"
     // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
@@ -2389,6 +2402,8 @@ public:
         if (part == "pixel-scene-again") return frame < 3 || pixel_scene_again_step();
         if (part == "pixel-scene-b") return frame < 3 || pixel_scene_b_step();
         if (part == "pixel-scene-b-again") return frame < 3 || pixel_scene_b_again_step();
+        if (part == "pixel-scene-c") return frame < 3 || pixel_scene_c_step();
+        if (part == "pixel-scene-c-again") return frame < 3 || pixel_scene_c_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19251,13 +19266,29 @@ return {
         const int filmed_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-b-again"}, twenty_eight);
         check(filmed_again == 0, "opened from another working folder: the scene's file, its recording and every frame through the camera as "
                                  "pixel-scene-b left them (pixel-scene-b-again: exit " + std::to_string(filmed_again) + ")");
+        // Part 6в: its music, its waits and a talk.
+        const fs::path twenty_nine = mo_root() / utf8_path("двадцать девятая папка"), thirty = mo_root() / utf8_path("тридцатая папка");
+        fs::create_directories(twenty_nine, ec);
+        fs::create_directories(thirty, ec);
+        const int scored = pj_run({exe, "--project", project, "--self-test", "pixel-scene-c"}, twenty_nine);
+        check(scored == 0, "«Сцена»: music, wait_action and talk typed into its code, the rows «Музыка» and «Ожидания» with what the game has "
+                           "not marked and said, each double-clicked to its call, the talk put into the game; the music in the player from where "
+                           "it is in its file, M off and on; «Ждать, как в игре»: the player standing at each stop, E, ▶ and the space, the "
+                           "actors' clips going on as the scene of the files poses them having waited, the music quieter in the talk, the frames "
+                           "as recorded when paused; undone and done again byte for byte (pixel-scene-c: exit " + std::to_string(scored) + ")");
+        const int scored_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-c-again"}, thirty);
+        check(scored_again == 0, "opened from another working folder: the scene's file, its rows, its recording and every frame as pixel-scene-c "
+                                 "left them (pixel-scene-c-again: exit " + std::to_string(scored_again) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
         const std::vector<std::string> ours = {"Ёжик", "движения", "рисунок и движение кодом", "Персонаж.luau", "Шкала", "шаг.wav", "Знак", "Маяк",
-                                               "Тележка", "Искры", "Ларец", "Маятник", "кривые", "Барабан", "барабан", "Прыгун", "прыгун", "Скакун", "скакун", "Сцена", "сцена", "сцены"};
-        check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec),
-              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец», «Маятник», «кривые», «Барабан», «Прыгун», «Скакун», «Сцена» or the sounds in B: " +
+                                               "Тележка", "Искры", "Ларец", "Маятник", "кривые", "Барабан", "барабан", "Прыгун", "прыгун", "Скакун", "скакун", "Сцена", "сцена", "сцены",
+                                               "мелодия", "Встреча"};
+        check(tg_naming(b, ours).empty() && !fs::exists(b / "game" / "sounds" / utf8_path("шаг.wav"), ec) &&
+                  !fs::exists(b / "game" / "sounds" / utf8_path("мелодия.wav"), ec) && !fs::exists(b / "game" / "dialogues" / utf8_path("Встреча.json"), ec),
+              "nothing of «Ёжик», «Персонаж», «Шкала», «Знак», «Маяк», «Тележка», «Искры», «Ларец», «Маятник», «кривые», «Барабан», «Прыгун», «Скакун», «Сцена», "
+              "«Встреча» or the sounds in B: " +
                   tg_naming(b, ours));
         check(fs::exists(a / "game" / "sounds" / utf8_path("шаг.wav"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Шкала.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Знак.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маяк.png"), ec) &&
@@ -27491,20 +27522,22 @@ return {
         f.modules = pixel::animations_reader(pjw().config().root / "game");
         return f;
     }
-    // The scene of the files on disk read, recorded and posed at t apart from the tab.
-    bool sc_apart(pixel::Scene& s, f64 t, std::string& why) {
+    // The scene of the files on disk read, recorded and posed at t apart from the tab (part 6в: having waited `held` at
+    // its stops, standing at the stop `waiting`).
+    bool sc_apart(pixel::Scene& s, f64 t, std::string& why, std::span<const f64> held = {}, i32 waiting = -1) {
         std::vector<u8> doc, code;
         pixel::SceneDoc d;
         if (!read_file(as().abs("сцены/Сцена.scene.json"), doc) || !pixel::read_scene_doc({reinterpret_cast<const char*>(doc.data()), doc.size()}, d, why))
             return why = "«Сцена.scene.json» не читается " + why, false;
         if (!read_file(as().abs("сцены/Сцена.luau"), code)) return why = "«Сцена.luau» не читается", false;
-        if (!s.load({reinterpret_cast<const char*>(code.data()), code.size()}, d, sc_files()) || !s.record() || !s.frame(t)) return why = s.error(), false;
+        if (!s.load({reinterpret_cast<const char*>(code.data()), code.size()}, d, sc_files()) || !s.record() || !s.frame(t, held, waiting))
+            return why = s.error(), false;
         return true;
     }
     // The view as it draws the scene of the files at t, at ×1.
-    bool sc_view(f64 t, assets::CookedTexture& out, std::string& why) {
+    bool sc_view(f64 t, assets::CookedTexture& out, std::string& why, std::span<const f64> held = {}, i32 waiting = -1) {
         pixel::Scene s;
-        if (!sc_apart(s, t, why)) return false;
+        if (!sc_apart(s, t, why, held, waiting)) return false;
         const u32 side = px().vector_view().width;
         out = s.draw(side, side, s.rig().to_pixels(side, side));
         return true;
@@ -27583,6 +27616,10 @@ return {
             for (const pixel::ActorPlay& p : rec->plays)
                 out += "клип " + p.actor + " " + p.clip + " " + std::to_string(static_cast<int>(p.kind)) + " с " + num(p.start) + " на " + num(p.length) + "\n";
             for (const pixel::Mark& m : rec->marks) out += "метка " + m.actor + ": " + m.name + " в " + num(m.time) + "\n";
+            for (const pixel::SceneMusic& m : rec->music)
+                out += "музыка «" + m.name + "» с " + num(m.start) + " наплыв " + num(m.fade) + " громкость " + num(m.volume) + "\n";
+            for (const pixel::SceneStop& st : rec->stops)
+                out += std::string(st.kind == pixel::SceneStop::Kind::Talk ? "разговор «" : "ждёт «") + st.name + "» в " + num(st.time) + "\n";
         }
         return out;
     }
@@ -28431,6 +28468,404 @@ return {
             const std::vector<u8> was = left("сцена б.txt");
             check(sc_seen_ == std::string(was.begin(), was.end()), "the recording and every frame as pixel-scene-b left them:\n" + sc_seen_);
             check(px().console().empty() && px().note().empty(), "nothing said");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // Part 6в of docs/models/сцены-модель.md, music, waits and a talk, on the scene pixel-scene-b left: music,
+    // wait_action and talk typed key by key; the rows «Музыка» (a block a file plays with its wave and its fade, a call of
+    // the same music a line on it, a file the game has not marked and said in the console) and «Ожидания» (flags of one
+    // moment one under another, an action «Ввод» has not and a talk the game has not marked until it has it), each
+    // double-clicked to its call; the music in the player from where it is in its file, M off and on; «Ждать, как в
+    // игре»: the player standing at each stop, the scene's time with it, the actors' clips going on as the scene of the
+    // files poses them having waited, E for «Поговорить», ▶ for the talk and the action «Ввод» has not, the music quieter
+    // in the talk; paused, the frames as recorded; undone and done again byte for byte. pixel-scene-c-again, another
+    // process from another working folder: the file, the rows and the same frames.
+    std::string sv_base_, sv_typed_;
+    std::vector<f64> sv_held_;
+    static constexpr const char* kSvMusic = "\n    music(\"мелодия\", { fade = 0.5 })";
+    static constexpr const char* kSvStops = "\n    wait_action(\"Поговорить\")\n    music(\"мелодия\", { volume = 0.4, fade = 0.2 })\n    talk(\"Встреча\")"
+                                            "\n    wait_action(\"Нырок\")";
+    static constexpr const char* kSvTheme = "\n    music(\"тема\", { fade = 0.25 })";
+    static constexpr const char* kSvFollow = "camera():follow(\"hop\", 0.2)";
+    static constexpr const char* kSvTalk =
+        R"({"id": "Встреча", "speakers": {"man": {"name": "Персонаж"}}, "start": [{"goto": "hello"}], "nodes": [{"id": "hello", "speaker": "man", "text": "Привет!"}]})";
+    // The scene's code with the music, the waits and the talk typed into it.
+    static std::string sv_typed(std::string code) {
+        code.insert(code.find("scene = function(p)") + std::strlen("scene = function(p)"), kSvMusic);
+        code.insert(code.find("wait(1.4)") + std::strlen("wait(1.4)"), kSvStops);
+        code.insert(code.find(kSvFollow) + std::strlen(kSvFollow), kSvTheme);
+        return code;
+    }
+    // «мелодия.wav»: 1 s of a square of 300 Hz, 48 kHz, louder as it goes, the right channel half the left.
+    static std::vector<u8> sv_tune() {
+        std::vector<i16> s;
+        for (u32 i = 0; i < 48000; ++i) {
+            const i16 a = static_cast<i16>(((i / 80) % 2 ? 1 : -1) * (2000 + static_cast<i32>(i / 8)));
+            s.push_back(a);
+            s.push_back(static_cast<i16>(a / 2));
+        }
+        return mc_wav(s);
+    }
+    // An element's words, its tags left out.
+    std::string sv_words(const char* id) {
+        std::string out;
+        bool tag = false;
+        for (char c : element_text(id)) {
+            if (c == '<') tag = true;
+            else if (c == '>') tag = false;
+            else if (!tag) out += c;
+        }
+        return out;
+    }
+    std::string sv_title(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        return e ? e->GetAttribute<Rml::String>("title", "") : Rml::String();
+    }
+    // A double click 10 points in from an element's left edge, half way down it (a flag runs on past the row's end).
+    bool sv_double_left(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
+        left_click(at.x + 10, at.y + size.y / 2);
+        left_click(at.x + 10, at.y + size.y / 2);
+        return true;
+    }
+    // The panel taking the keys with `call` of the typed code selected.
+    bool sv_selected(const std::string& call) {
+        u32 from = 0, to = 0;
+        return mo_panel_keys() && px().code_selection(from, to) && from == mo_char(sv_typed_, call) && to == from + mo_letters(call);
+    }
+    static bool sv_now(const std::vector<PixelEditor::MusicNow>& now, f32 volume) {
+        return now.size() == 1 && now[0].name == "мелодия" && std::fabs(now[0].volume - volume) < 1e-4f && now[0].call == 0;
+    }
+    // Where the one music playing is in its file and how loud, as the mixer has it.
+    bool sv_heard(f32& volume, f64& at) {
+        const std::vector<PixelEditor::MusicNow> now = px().music_now();
+        return now.size() == 1 && px().mixer().heard(now[0].voice, volume, at);
+    }
+    static std::string sv_now_words(const std::vector<PixelEditor::MusicNow>& now) {
+        std::string out;
+        for (const PixelEditor::MusicNow& m : now) out += " «" + m.name + "» " + std::to_string(m.volume) + " вызов " + std::to_string(m.call);
+        return out.empty() ? std::string(" тишина") : out;
+    }
+
+    // In an editor for «Движение А» after pixel-scene-b-again (--self-test pixel-scene-c).
+    bool pixel_scene_c_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "сцены/Сцена.scene.json", lua = "сцены/Сцена.luau";
+        const fs::path sounds = a / "game" / "sounds", talk = a / "game" / "dialogues" / utf8_path("Встреча.json");
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        const std::string saved = "«Сцена»: код «Сцена.luau» сохранён";
+        const std::string tail = "; время сцены стоит, клипы актёров идут, длины нет; двойной щелчок — к коду";
+        // The vector as the scene of the files draws it having waited at its stops, standing at `waiting`; and not as recorded.
+        auto waited = [&](i32 waiting, const char* what) {
+            assets::CookedTexture view, plain;
+            std::string why;
+            const f64 t = px().time();
+            check(sc_view(t, view, why, px().held(), waiting) && px_same(px().vector_view(), view),
+                  std::string(what) + ": the vector as the scene of the files draws it at " + std::to_string(t) + " s having waited " + why);
+            check(sc_view(t, plain, why) && !px_same(px().vector_view(), plain), std::string(what) + ": the actors' clips not where the recording has them");
+        };
+        auto lit = [&] {
+            std::string out;
+            for (int i = 0; i < 3; ++i)
+                if (tm_has_class(("px-stop-" + std::to_string(i)).c_str(), "held")) out += std::to_string(i);
+            return out;
+        };
+        switch (sc_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            const std::vector<u8> was = tg_bytes(mo_root() / utf8_path("сцена б.luau"));
+            sv_base_.assign(was.begin(), was.end());
+            check(!sv_base_.empty() && file(lua) == was && sv_base_.find("music") == std::string::npos, "the scene as pixel-scene-b left it, no music in it");
+            std::error_code ec;
+            check(!fs::exists(sounds / utf8_path("мелодия.wav"), ec) && !fs::exists(talk, ec), "no «мелодия» and no talk «Встреча» in the game yet");
+            check(write_file_atomic(sounds / utf8_path("мелодия.wav"), sv_tune()), "sounds/мелодия.wav: 1 s, 48 kHz, louder as it goes");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        // Typed key by key: the music at the top of scene, the waits, the music quieter and the talk after wait(1.4),
+        // another music after the follow; saved.
+        case 3: {
+            if (hold(rec && !px().stale() && px().code() == sv_base_ && shown("px-transition-1"), "the scene recorded")) return true;
+            check(!shown("px-music") && !shown("px-stops") && shown("px-hold") && !px().hold() && px().held_words().empty() && !shown("px-held"),
+                  "no rows «Музыка» and «Ожидания»; «Ждать, как в игре» off");
+            check(mo_caret(mo_char(sv_base_, "scene = function(p)") + mo_letters("scene = function(p)")), "the caret after «scene = function(p)»");
+            mo_type(kSvMusic);
+            std::string part = sv_base_;
+            part.insert(part.find("scene = function(p)") + std::strlen("scene = function(p)"), kSvMusic);
+            check(mo_caret(mo_char(part, "wait(1.4)") + mo_letters("wait(1.4)")), "the caret after «wait(1.4)»");
+            mo_type(kSvStops);
+            part.insert(part.find("wait(1.4)") + std::strlen("wait(1.4)"), kSvStops);
+            check(mo_caret(mo_char(part, kSvFollow) + mo_letters(kSvFollow)), "the caret after the follow");
+            mo_type(kSvTheme);
+            sv_typed_ = sv_typed(sv_base_);
+            check(px().code() == sv_typed_ && px().code_unsaved() && file(lua) == bytes(sv_base_), "typed key by key, not written yet:\n" + px().code());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sv_typed_) && step_label() == saved, "Ctrl+S: the file what was typed, byte for byte; one step: " + step_label());
+            break;
+        }
+        // Recorded: as long as before; three music calls, three stops of one moment; the rows.
+        case 4: {
+            if (hold(rec && !px().stale() && !px().code_unsaved() && rec->music.size() == 3 && shown("px-stop-2"), "the scene with its music recorded")) return true;
+            check(std::fabs(rec->length - 2.25) < 1e-9, "2,25 s as without them: " + std::to_string(rec->length) + " s\n" + sc_recorded());
+            const pixel::SceneMusic *m = rec->music.data();
+            check(m[0].name == "мелодия" && m[0].start == 0 && m[0].fade == 0.5 && m[0].volume == 1 && m[1].name == "мелодия" &&
+                      std::fabs(m[1].start - 1.8) < 1e-9 && m[1].fade == 0.2 && m[1].volume == 0.4 && m[2].name == "тема" && std::fabs(m[2].start - 2) < 1e-9 &&
+                      m[2].fade == 0.25,
+                  "«мелодия» from 0 with a fade of 0,5, quieter at 1,8, «тема» at 2:\n" + sc_recorded());
+            check(rec->stops.size() == 3 && rec->stops[0].name == "Поговорить" && rec->stops[1].kind == pixel::SceneStop::Kind::Talk &&
+                      rec->stops[2].name == "Нырок" && std::fabs(rec->stops[0].time - 1.8) < 1e-9 && rec->stops[2].time == rec->stops[0].time &&
+                      rec->stops[0].order < m[1].order && m[1].order < rec->stops[1].order,
+                  "three stops at 1,8, the music quieter after the first:\n" + sc_recorded());
+            const std::vector<PixelEditor::ConsoleLine>& said = px().console();
+            check(said.size() == 1 && said[0].line == 26 && said[0].warn && said[0].text == "строка 26: звук «тема» не найден: нет sounds/тема, тема.wav, тема.ogg",
+                  "the console: «тема» without its file at its line: " + (said.empty() ? std::string("пусто") : said[0].text));
+            // «Музыка»: «мелодия» with its wave to «тема», its fade a quarter of it; the quieter call a line on it; «тема» red.
+            check(shown("px-music-0") && shown("px-music-2") && !shown("px-music-1") && shown("px-music-mark-1") && shown("px-music-wave") &&
+                      sv_words("px-music-0") == "мелодия" && sv_words("px-music-2") == "тема" && !tm_has_class("px-music-0", "missing") &&
+                      tm_has_class("px-music-2", "missing"),
+                  "the blocks «мелодия» and «тема» (red), the mark of the second call, the wave: «" + sv_words("px-music-0") + "», «" + sv_words("px-music-2") + "»");
+            check(sv_title("px-music-0") == "music(\"мелодия\") с 0 по 2 с, строка 12, наплыв 0,5 с, громкость 1: «мелодия.wav» по кругу; двойной щелчок — к коду" &&
+                      sv_title("px-music-2") == "music(\"тема\") с 2 по 2,25 с, строка 26, наплыв 0,25 с, громкость 1: звук «тема» не найден: нет sounds/тема, "
+                                                "тема.wav, тема.ogg; двойной щелчок — к коду" &&
+                      sv_title("px-music-mark-1") == "music(\"мелодия\") в 1,8 с, строка 22: та же музыка играет дальше, громкость 0,4 за 0,2 с; двойной щелчок — к коду",
+                  "their titles: «" + sv_title("px-music-0") + "», «" + sv_title("px-music-2") + "», «" + sv_title("px-music-mark-1") + "»");
+            Rml::Element* block = ed_.find_element("px-music-0");
+            Rml::Element* fade = block && block->GetNumChildren() > 0 ? block->GetChild(0) : nullptr;
+            const f32 bw = block ? block->GetBox().GetSize().x : 0, fw = fade ? fade->GetBox().GetSize().x : 0;
+            check(bw > 0 && std::fabs(fw / bw - 0.25f) < 0.02f, "the fade a quarter of the block: " + std::to_string(fw) + " of " + std::to_string(bw));
+            // «Ожидания»: the three flags one under another; «Нырок» and the talk red.
+            check(sv_words("px-stop-0") == "ждёт «Поговорить»" && sv_words("px-stop-1") == "разговор «Встреча»" && sv_words("px-stop-2") == "ждёт «Нырок»" &&
+                      !tm_has_class("px-stop-0", "missing") && tm_has_class("px-stop-1", "missing") && tm_has_class("px-stop-2", "missing"),
+                  "the flags: «" + sv_words("px-stop-0") + "», «" + sv_words("px-stop-1") + "» (red), «" + sv_words("px-stop-2") + "» (red)");
+            check(sv_title("px-stop-0") == "wait_action(\"Поговорить\") в 1,8 с, строка 21: клавиши: E" + tail &&
+                      sv_title("px-stop-1") == "talk(\"Встреча\") в 1,8 с, строка 23: разговора «Встреча» в игре нет (её папка dialogues)" + tail &&
+                      sv_title("px-stop-2") == "wait_action(\"Нырок\") в 1,8 с, строка 24: действия «Нырок» во «Вводе» игры нет" + tail,
+                  "their titles: «" + sv_title("px-stop-0") + "», «" + sv_title("px-stop-1") + "», «" + sv_title("px-stop-2") + "»");
+            Rml::Element *f0 = ed_.find_element("px-stop-0"), *f1 = ed_.find_element("px-stop-1"), *f2 = ed_.find_element("px-stop-2");
+            const f32 d1 = f0 && f1 ? f1->GetAbsoluteTop() - f0->GetAbsoluteTop() : 0, d2 = f1 && f2 ? f2->GetAbsoluteTop() - f1->GetAbsoluteTop() : 0;
+            check(f0 && f1 && f2 && d1 > 15 && std::fabs(d1 - d2) < 0.5f && f0->GetAbsoluteLeft() == f1->GetAbsoluteLeft() &&
+                      f1->GetAbsoluteLeft() == f2->GetAbsoluteLeft(),
+                  "one under another at one place: " + std::to_string(d1) + ", " + std::to_string(d2));
+            check(away(), "out of the panel");
+            check(mo_double("px-music-0"), "a double click on «мелодия»");
+            break;
+        }
+        // A double click to the call: the block, the mark, a flag.
+        case 5:
+            if (wait(2)) return true;
+            check(sv_selected("music(\"мелодия\", { fade = 0.5 })"), "the block's call selected in the panel");
+            check(away(), "out of the panel");
+            check(mo_double("px-music-mark-1"), "a double click on the mark");
+            break;
+        case 6:
+            if (wait(2)) return true;
+            check(sv_selected("music(\"мелодия\", { volume = 0.4, fade = 0.2 })"), "the mark's call selected in the panel");
+            check(away(), "out of the panel");
+            check(sv_double_left("px-stop-1"), "a double click on «разговор «Встреча»»");
+            break;
+        // The talk put into the game: its flag no longer red.
+        case 7: {
+            if (wait(2)) return true;
+            check(sv_selected("talk(\"Встреча\")"), "the flag's call selected in the panel");
+            check(away(), "out of the panel");
+            std::error_code ec;
+            fs::create_directories(talk.parent_path(), ec);
+            check(write_file_atomic(talk, bytes(kSvTalk)), "dialogues/Встреча.json put into the game");
+            break;
+        }
+        case 8:
+            if (hold(!tm_has_class("px-stop-1", "missing"), "the talk found")) return true;
+            check(sv_title("px-stop-1") == "talk(\"Встреча\") в 1,8 с, строка 23: разговор игры поверх сцены" + tail && tm_has_class("px-stop-2", "missing"),
+                  "its title: «" + sv_title("px-stop-1") + "»; «Нырок» still red");
+            sc_frame(30);
+            break;
+        // Played from the middle of «мелодия»: from where it is in its file, at its volume; M off and on.
+        case 9:
+            if (wait(2)) return true;
+            check(px().frame() == 30 && !px().playing(), "frame 31");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        case 10: {
+            if (hold(!px().music_played().empty(), "the music begins")) return true;
+            const std::vector<PixelEditor::MusicPlayed>& played = px().music_played();
+            check(px().playing() && played.size() == 1 && played[0].name == "мелодия" && played[0].call == 0 && played[0].from > 0.5 && played[0].from < 0.6,
+                  "«мелодия» from 0,5 s into its file: " + (played.empty() ? std::string("ничего") : std::to_string(played[0].from)));
+            check(sv_now(px().music_now(), 1) && px().mixer().voices(audio::Bus::Music) == 1, "one voice of music, at 1:" + sv_now_words(px().music_now()));
+            f32 loud = 0;
+            f64 at = 0;
+            const bool heard = sv_heard(loud, at); // before the words that say what it heard
+            check(heard && loud == 1 && !played.empty() && std::fmod(at - played[0].from + 2, 1.0) < 0.4,
+                  "the mixer plays it from there: " + std::to_string(at) + " s into the file, at " + std::to_string(loud));
+            key(SDLK_M, SDL_KMOD_NONE);
+            break;
+        }
+        case 11:
+            if (hold(px().mixer().voices(audio::Bus::Music) == 0, "M: the music stops")) return true;
+            check(px().playing() && px().music_now().empty() && px().music_played().size() == 1, "M: nothing plays:" + sv_now_words(px().music_now()));
+            key(SDLK_M, SDL_KMOD_NONE);
+            break;
+        case 12: {
+            if (wait(2)) return true;
+            const std::vector<PixelEditor::MusicPlayed>& played = px().music_played();
+            check(played.size() == 2 && played[1].name == "мелодия" && played[1].from > played[0].from && played[1].from < 1.8 && sv_now(px().music_now(), 1) &&
+                      px().mixer().voices(audio::Bus::Music) == 1,
+                  "M again: from where the player is: " + (played.size() < 2 ? std::string("ничего") : std::to_string(played[1].from)));
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        }
+        // «Ждать, как в игре»: from 1,6 s the player stands at «Поговорить», the man's loop going on, the music as before.
+        case 13:
+            if (hold(px().mixer().voices(audio::Bus::Music) == 0, "paused: the music stops")) return true;
+            check(!px().playing() && px().music_now().empty(), "paused: no music");
+            check(px_click("px-hold") && px().hold(), "«Ждать, как в игре» on");
+            sc_frame(96);
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        case 14:
+            if (hold(px().held_at() == 0, "the player at «Поговорить»")) return true;
+            check(px().playing() && px().time() == rec->stops[0].time && px().held_words() == "Ждёт «Поговорить»: E или ▶ — дальше",
+                  "it stands at 1,8, the line under it: «" + px().held_words() + "»");
+            break;
+        // 0,4 s on: «stand» of «man» (up and down in 0,8 s, then 0,2 s still) where the recording has it still.
+        case 15:
+            if (wait(24)) return true;
+            check(px().playing() && px().held_at() == 0 && px().time() == rec->stops[0].time && px().held().size() == 3 && px().held()[0] > 0.35,
+                  "the scene's time stands: " + std::to_string(px().time()) + ", waited " + std::to_string(px().held().empty() ? 0.0 : px().held()[0]));
+            check(shown("px-held") && lit() == "0", "the line under the player, the flag lit: " + lit());
+            check(sv_now(px().music_now(), 1) && px().music_played().size() == 1, "the music goes on as before the stop:" + sv_now_words(px().music_now()));
+            waited(0, "at «Поговорить»");
+            in_key(SDL_SCANCODE_Q); // not its key
+            check(px().held_at() == 0, "Q at «Поговорить»: still there");
+            in_key(SDL_SCANCODE_E);
+            break;
+        // E: on to the talk at the same moment; E there does nothing; the music quieter while it waits.
+        case 16:
+            if (hold(px().held_at() == 1, "E: the player at the talk")) return true;
+            check(px().time() == rec->stops[0].time && px().held_words() == "Разговор «Встреча»: ▶ — дальше", "the talk: «" + px().held_words() + "»");
+            in_key(SDL_SCANCODE_E);
+            check(px().held_at() == 1, "E at the talk: still there");
+            break;
+        case 17: {
+            if (wait(15)) return true;
+            check(px().held_at() == 1 && px().held()[1] > 0.2 && lit() == "1", "at the talk, its flag lit: " + lit());
+            check(sv_now(px().music_now(), 0.4f) && px().music_played().size() == 1, "the same «мелодия» at 0,4 after 0,2 s of the talk:" + sv_now_words(px().music_now()));
+            f32 loud = 0;
+            f64 at = 0;
+            const bool heard = sv_heard(loud, at);
+            check(heard && std::fabs(loud - 0.4f) < 1e-4f, "the mixer has it at 0,4: " + std::to_string(loud));
+            waited(1, "at the talk");
+            check(px_click("px-play"), "▶");
+            break;
+        }
+        // ▶: on to «Нырок»; E does nothing there (no such action), the space goes on; then the scene's time again.
+        case 18:
+            if (hold(px().held_at() == 2, "▶: the player at «Нырок»")) return true;
+            check(px().playing() && px().held_words() == "Ждёт «Нырок»: такого действия во «Вводе» нет, ▶ — дальше", "«" + px().held_words() + "»");
+            break;
+        case 19:
+            if (wait(2)) return true;
+            check(px().held_at() == 2 && lit() == "2", "at «Нырок», its flag lit: " + lit());
+            in_key(SDL_SCANCODE_E);
+            check(px().held_at() == 2, "E at «Нырок»: still there");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        case 20:
+            if (wait(3)) return true;
+            check(px().playing() && px().held_at() < 0 && px().time() > rec->stops[0].time && px().held_words().empty() && !shown("px-held") && lit().empty(),
+                  "the space: the scene's time goes on: " + std::to_string(px().time()));
+            sv_held_ = px().held();
+            check(sv_held_.size() == 3 && sv_held_[0] > 0.35 && sv_held_[1] > 0.2 && sv_held_[2] > 0, "each stop waited");
+            waited(-1, "after the stops");
+            key(SDLK_SPACE, SDL_KMOD_NONE);
+            break;
+        // Paused: the waits forgotten, the frame as recorded.
+        case 21: {
+            if (wait(2)) return true;
+            assets::CookedTexture view;
+            std::string why;
+            check(!px().playing() && px().held_at() < 0 && std::all_of(px().held().begin(), px().held().end(), [](f64 h) { return h == 0; }),
+                  "paused: the waits forgotten");
+            check(sc_view(px().time(), view, why) && px_same(px().vector_view(), view), "the frame as recorded " + why);
+            check(px_click("px-hold") && !px().hold(), "«Ждать, как в игре» off");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sv_base_), "Ctrl+Z: as pixel-scene-b left it, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sv_typed_) && step_label() == saved, "Ctrl+Y: again, byte for byte");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-scene-c-again.
+        case 22: {
+            if (hold(rec && !px().stale() && px().code() == sv_typed_ && shown("px-stop-2"), "the scene again")) return true;
+            if (mb_look(sc_seen_)) return true;
+            sc_seen_ = sc_recorded() + sc_seen_;
+            const fs::path root = mo_root();
+            check(write_file_atomic(root / utf8_path("сцена в.txt"), bytes(sc_seen_)) && write_file_atomic(root / utf8_path("сцена в.luau"), file(lua)),
+                  "what the tab shows and the file, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-scene-c (--self-test pixel-scene-c-again).
+    bool pixel_scene_c_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "сцены/Сцена.scene.json", lua = "сцены/Сцена.luau";
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        switch (sc_step_) {
+        case 0:
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "«Движение А», from another working folder");
+            check(!left("сцена в.luau").empty() && file(lua) == left("сцена в.luau"), "the file as pixel-scene-c left it");
+            check(tg_bytes(a / "game" / "sounds" / utf8_path("мелодия.wav")) == sv_tune() &&
+                      tg_bytes(a / "game" / "dialogues" / utf8_path("Встреча.json")) == std::vector<u8>(kSvTalk, kSvTalk + std::strlen(kSvTalk)),
+                  "«мелодия» and «Встреча» as it put them");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        case 3: {
+            if (hold(rec && !px().stale() && shown("px-stop-2") && shown("px-music-2"), "the scene recorded")) return true;
+            check(!px().hold() && px().held_words().empty(), "«Ждать, как в игре» off: it is not written into the files");
+            check(!tm_has_class("px-music-0", "missing") && tm_has_class("px-music-2", "missing") && shown("px-music-mark-1") && !tm_has_class("px-stop-0", "missing") &&
+                      !tm_has_class("px-stop-1", "missing") && tm_has_class("px-stop-2", "missing") && sv_title("px-stop-0").find(": клавиши: E;") != std::string::npos,
+                  "the rows as pixel-scene-c left them: «" + sv_title("px-stop-0") + "»");
+            if (mb_look(sc_seen_)) return true;
+            sc_seen_ = sc_recorded() + sc_seen_;
+            const std::vector<u8> was = left("сцена в.txt");
+            check(sc_seen_ == std::string(was.begin(), was.end()), "the recording and every frame as pixel-scene-c left them:\n" + sc_seen_);
+            check(px().console().size() == 1 && px().console()[0].line == 26 && px().note().empty(), "only «тема» said");
             return false;
         }
         default: break;
@@ -35866,7 +36301,8 @@ int main(int argc, char** argv) {
                                          "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "pixel-motion-g",
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
-                                         "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again",
+                                         "pixel-scene-c", "pixel-scene-c-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -35883,7 +36319,8 @@ int main(int argc, char** argv) {
                     "pixel-motion-b-again, pixel-motion-c, pixel-motion-c-again, pixel-motion-d, pixel-motion-d-again, pixel-motion-e, "
                     "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, pixel-motion-g, pixel-motion-g-again, pixel-motion-h, "
                     "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
-                    "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, "
+                    "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, pixel-scene, "
+                    "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

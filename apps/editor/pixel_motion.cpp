@@ -328,6 +328,7 @@ void PixelEditor::recount() {
     rec_error_line_ = rec_line;
     watch_modules();
     find_sounds();
+    forget_holds(playing_ ? cut_.from + play_clock_ : t_); // part 6в: another recording, its stops
     sync_time();
 }
 
@@ -748,6 +749,8 @@ void PixelEditor::lay_timeline() {
     lay_sounds();      // part 3в
     lay_actor_clips(); // part 6а
     lay_transitions(); // part 6б
+    lay_music();       // part 6в
+    lay_stops();
     tl_laid_w_ = tl_w_;
     place_head();
     for (const char* var : {"px_start", "px_start_style", "px_start_title"}) dirty(var);
@@ -1319,22 +1322,26 @@ void PixelEditor::rebuild_console() {
     if (!rec_error_.empty()) lines.push_back({"Запись клипа «" + state_name(clip_) + "»: " + rec_error_, rec_error_line_, true, false});
     if (!pose_problem_.empty()) lines.push_back({pose_problem_, script().error_line(), true, false});
     for (const std::string& w : warnings_) lines.push_back({w, 0, false, true});
-    // A sound without its file, once a name, at its first call (part 3в).
+    // A sound without its file, once a name, at its first call (part 3в); a scene's music the same way (part 6в).
     if (rec_ok_) {
         std::vector<std::string> said;
-        for (const pixel::Mark& m : rec_.marks) {
-            if (m.kind != pixel::Mark::Kind::Sound || std::find(said.begin(), said.end(), m.name) != said.end()) continue;
-            said.push_back(m.name);
-            const auto f = sound_files_.find(m.name);
-            if (f == sound_files_.end() || f->second.file.clip) continue;
+        auto say = [&](const std::string& name, const pixel::SiteRef& site) {
+            if (std::find(said.begin(), said.end(), name) != said.end()) return;
+            said.push_back(name);
+            const auto f = sound_files_.find(name);
+            if (f == sound_files_.end() || f->second.file.clip) return;
             u32 line = 0;
             std::string where;
-            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script().code().sites().size()))
-                line = script().code().sites()[static_cast<usize>(m.site.site)].line;
-            else if (m.site.file > 0 && m.site.file < rec_.files.size())
-                where = rec_.files[m.site.file] + ".luau: ";
+            if (site.file == 0 && site.site >= 0 && site.site < static_cast<i32>(script().code().sites().size()))
+                line = script().code().sites()[static_cast<usize>(site.site)].line;
+            else if (site.file > 0 && site.file < rec_.files.size())
+                where = rec_.files[site.file] + ".luau: ";
             lines.push_back({where + (line ? "строка " + std::to_string(line) + ": " : std::string()) + f->second.file.why, line, false, true});
-        }
+        };
+        for (const pixel::Mark& m : rec_.marks)
+            if (m.kind == pixel::Mark::Kind::Sound) say(m.name, m.site);
+        for (const pixel::SceneMusic& m : rec_.music)
+            if (!m.name.empty()) say(m.name, m.site);
     }
     // What the clip asks and the frame does not do, once a part (part 4а): a skew past 89°, a dash without a pattern.
     if (rec_ok_)
