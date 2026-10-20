@@ -28755,6 +28755,8 @@ return {
             check(shown("px-held") && lit() == "0", "the line under the player, the flag lit: " + lit());
             check(sv_now(px().music_now(), 1) && px().music_played().size() == 1, "the music goes on as before the stop:" + sv_now_words(px().music_now()));
             waited(0, "at «Поговорить»");
+            in_key(SDL_SCANCODE_Q); // not its key
+            check(px().held_at() == 0, "Q at «Поговорить»: still there");
             in_key(SDL_SCANCODE_E);
             break;
         // E: on to the talk at the same moment; E there does nothing; the music quieter while it waits.

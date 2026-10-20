@@ -1842,6 +1842,28 @@ TEST_CASE("Сцена: ожидание и разговор — время сц�
     CHECK(actor_moment(rec, "ёжик", 1.2, held, 1).time == doctest::Approx(actor_moment(rec, "ёжик", 1.2, held).time));
     CHECK(actor_moment(rec, "жук", 1.2, held, 0).play == &hop2); // another stop: the hop has begun
     CHECK(actor_moment(rec, "жук", 1.2, held, 7).play == &hop2); // none such: as none
+
+    // A loop stopped at a stop's moment, before it: it holds where it was then, ahead by the waits before it, not by
+    // the one after.
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    wait(0.2)
+    wait_action()
+    wait(0.2)
+    actor("ёжик"):stop()
+    talk("Встреча")
+    wait(0.5))");
+    record(s);
+    const Recording& r2 = *s.recording();
+    REQUIRE(r2.stops.size() == 2);
+    const ActorPlay& stop = play_of(r2, "ёжик", ActorPlay::Kind::Stop);
+    CHECK(stop.order < r2.stops[1].order);
+    const std::vector<f64> h2 = {0.05, 0.3};
+    CHECK(actor_moment(r2, "ёжик", 0.3, h2).time == doctest::Approx(0.35));
+    for (const f64 t : {0.4, 0.9}) {
+        CAPTURE(t);
+        CHECK(actor_moment(r2, "ёжик", t, h2).time == doctest::Approx(0.45));
+        CHECK(actor_moment(r2, "ёжик", t, h2, 1).time == doctest::Approx(0.45));
+    }
 }
 
 TEST_CASE("Сцена: музыка идёт, пока сцена ждёт, и её наплывы тоже") {
