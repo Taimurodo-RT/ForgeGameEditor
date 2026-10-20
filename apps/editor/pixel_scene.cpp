@@ -778,6 +778,11 @@ std::string stops_key(const std::vector<std::string>& talks, const std::vector<i
 
 } // namespace
 
+const std::vector<pixel::CallSite>& PixelEditor::panel_sites() const {
+    static const std::vector<pixel::CallSite> none;
+    return script().loaded() ? script().code().sites() : none;
+}
+
 std::string PixelEditor::stop_words(const pixel::SceneStop& st) const {
     if (st.kind == pixel::SceneStop::Kind::Talk) return "разговор «" + st.name + "»";
     return st.name.empty() ? std::string("ждёт клавишу") : "ждёт «" + st.name + "»";
@@ -803,7 +808,7 @@ void PixelEditor::lay_stops() {
     const std::vector<input::Action> actions = game_actions ? game_actions() : std::vector<input::Action>{};
     stops_key_ = stops_key(talks_, actions);
     const f64 dp = std::max(1e-3f, dp_), w = tl_w_;
-    const auto& sites = script().code().sites();
+    const auto& sites = panel_sites();
     // Flags that would cover one another (the same moment, or near) go each a lane lower: the right edge of each lane's last.
     std::vector<f64> lanes;
     if (scene_mode_ && scene_ && rec_ok_ && tl_w_ > 0)
@@ -866,7 +871,7 @@ void PixelEditor::lay_music() {
     if (scene_mode_ && scene_ && rec_ok_) runs = pixel::music_runs(rec_);
     // The same timeline, music and files: the row as it is.
     char buf[160];
-    std::snprintf(buf, sizeof buf, "%.17g %.17g %u %u %.17g %zu|", tv_.t(0), tv_.per_second(), cols, high, rec_.length, script().code().sites().size());
+    std::snprintf(buf, sizeof buf, "%.17g %.17g %u %u %.17g %zu|", tv_.t(0), tv_.per_second(), cols, high, rec_.length, panel_sites().size());
     std::string key = buf;
     if (scene_mode_ && rec_ok_)
         for (const pixel::SceneMusic& m : rec_.music) {
@@ -880,7 +885,7 @@ void PixelEditor::lay_music() {
 
     m_music_.clear();
     m_music_marks_.clear();
-    const auto& sites = script().code().sites();
+    const auto& sites = panel_sites();
     auto line_of = [&](const pixel::SiteRef& s) {
         return s.file == 0 && s.site >= 0 && s.site < static_cast<i32>(sites.size()) ? sites[static_cast<usize>(s.site)].line : 0u;
     };

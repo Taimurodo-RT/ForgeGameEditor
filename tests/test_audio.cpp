@@ -134,10 +134,11 @@ TEST_CASE("audio: the mixer plays, pans, loops and stops") {
 }
 
 TEST_CASE("audio: a clip begins from a moment of it") {
-    // A second whose left samples count the frames: what plays at the end of a buffer says where it began.
+    // A second whose left samples count the frames: what plays at the end of a buffer says where it began (quiet
+    // enough that the mix's soft limit above 0,8 leaves it as it is).
     auto ramp = std::make_shared<audio::Clip>();
     ramp->samples.resize(static_cast<usize>(audio::kRate) * 2);
-    for (u32 i = 0; i < audio::kRate; ++i) ramp->samples[i * 2] = static_cast<f32>(i + 1) / audio::kRate;
+    for (u32 i = 0; i < audio::kRate; ++i) ramp->samples[i * 2] = 0.25f * static_cast<f32>(i + 1) / audio::kRate;
     const u32 n = 4800;
     audio::Mixer from_start, from_half, round;
     from_start.play(ramp, {.pan = -1});

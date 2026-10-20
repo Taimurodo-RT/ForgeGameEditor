@@ -678,6 +678,7 @@ private:
     void hold_check();
     void forget_holds(f64 from);
     void rebuild_held();
+    const std::vector<pixel::CallSite>& panel_sites() const; // the script's call sites; none while it is not loaded
     bool hold_key(const SDL_KeyboardEvent& k);
     void check_stops(); // the game's talks and actions looked at again: the flags marked anew when they changed
     void redraw_scene();

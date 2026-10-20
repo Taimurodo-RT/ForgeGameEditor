@@ -28737,9 +28737,10 @@ return {
             check(px().playing() && px().time() == rec->stops[0].time && px().held_words() == "Ждёт «Поговорить»: E или ▶ — дальше",
                   "it stands at 1,8, the line under it: «" + px().held_words() + "»");
             break;
+        // 0,4 s on: «stand» of «man» (up and down in 0,8 s, then 0,2 s still) where the recording has it still.
         case 15:
-            if (wait(12)) return true;
-            check(px().playing() && px().held_at() == 0 && px().time() == rec->stops[0].time && px().held().size() == 3 && px().held()[0] > 0.15,
+            if (wait(24)) return true;
+            check(px().playing() && px().held_at() == 0 && px().time() == rec->stops[0].time && px().held().size() == 3 && px().held()[0] > 0.35,
                   "the scene's time stands: " + std::to_string(px().time()) + ", waited " + std::to_string(px().held().empty() ? 0.0 : px().held()[0]));
             check(shown("px-held") && lit() == "0", "the line under the player, the flag lit: " + lit());
             check(sv_now(px().music_now(), 1) && px().music_played().size() == 1, "the music goes on as before the stop:" + sv_now_words(px().music_now()));
@@ -28777,7 +28778,7 @@ return {
             check(px().playing() && px().held_at() < 0 && px().time() > rec->stops[0].time && px().held_words().empty() && !shown("px-held") && lit().empty(),
                   "the space: the scene's time goes on: " + std::to_string(px().time()));
             sv_held_ = px().held();
-            check(sv_held_.size() == 3 && sv_held_[0] > 0.15 && sv_held_[1] > 0.2 && sv_held_[2] > 0, "each stop waited");
+            check(sv_held_.size() == 3 && sv_held_[0] > 0.35 && sv_held_[1] > 0.2 && sv_held_[2] > 0, "each stop waited");
             waited(-1, "after the stops");
             key(SDLK_SPACE, SDL_KMOD_NONE);
             break;
