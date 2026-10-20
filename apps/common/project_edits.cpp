@@ -87,6 +87,16 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("an_hero", &forge::edits::ProjectEdits::an_hero);
     t.field("an_walker", &forge::edits::ProjectEdits::an_walker);
     t.field("an_still", &forge::edits::ProjectEdits::an_still);
+    t.field("mk_of", &forge::edits::ProjectEdits::mk_of);
+    t.field("mk_state", &forge::edits::ProjectEdits::mk_state);
+    t.field("mk_name", &forge::edits::ProjectEdits::mk_name);
+    t.field("mk_sound", &forge::edits::ProjectEdits::mk_sound);
+    t.field("mk_frame", &forge::edits::ProjectEdits::mk_frame);
+    t.field("mk_frames", &forge::edits::ProjectEdits::mk_frames);
+    t.field("mk_scheme", &forge::edits::ProjectEdits::mk_scheme);
+    t.field("mk_mark", &forge::edits::ProjectEdits::mk_mark);
+    t.field("mk_count_var", &forge::edits::ProjectEdits::mk_count_var);
+    t.field("mk_going_var", &forge::edits::ProjectEdits::mk_going_var);
     t.field("in_action", &forge::edits::ProjectEdits::in_action);
     t.field("in_count", &forge::edits::ProjectEdits::in_count);
     t.field("in_binds", &forge::edits::ProjectEdits::in_binds);

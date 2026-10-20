@@ -34,6 +34,7 @@ using Mode = Impl::Mode;
 constexpr const char* kPartMeta = "forge.motion.part";
 constexpr const char* kPropMeta = "forge.motion.prop";
 constexpr const char* kTaskMeta = "forge.motion.task";
+constexpr const char* kBezierMeta = "forge.motion.bezier";
 // The properties a part has as fields (body.y, { y = 2 }): all but morph, a method of its own, the mask and the order.
 constexpr Prop kHandleProps[] = {Prop::X,          Prop::Y,       Prop::Rot,     Prop::Scale,      Prop::Sx,      Prop::Sy,
                                  Prop::SkewX,      Prop::SkewY,   Prop::Opacity, Prop::Fill,       Prop::Stroke,  Prop::StrokeWidth,
@@ -269,7 +270,13 @@ bool read_timing(Impl& im, lua_State* L, int idx, MotionState& ms, MoveStep& st)
                                       "… in_out_bounce)");
         return true;
     }
-    if (!lua_isfunction(L, idx)) return call_error(ms, "сглаживание — слово или функция(k)");
+    // bezier(x1, y1, x2, y2) (part 4ж): its numbers and its call, computed exactly.
+    if (lua_type(L, idx) == LUA_TUSERDATA && is_meta(L, idx, kBezierMeta)) {
+        st.bezier = static_cast<i32>(ms.rec->beziers.size());
+        ms.rec->beziers.push_back(*static_cast<const BezierUse*>(lua_touserdata(L, idx)));
+        return true;
+    }
+    if (!lua_isfunction(L, idx)) return call_error(ms, "сглаживание — слово, bezier(…) или функция(k)");
     // An author's easing, taken at kCurvePoints points.
     std::vector<f64> curve(kCurvePoints);
     const Mode was = im.mode;
@@ -417,7 +424,7 @@ bool value_now(Impl& im, MotionState& ms, u32 part, Prop p, f64 t, PropValue& ou
     if (!resolve_now(im, ms)) return false;
     const i32 tr = ms.rec->track(part, p);
     if (tr < 0) {
-        out = rest_value(p);
+        out = first_value(*ms.rec, part, p); // part 5б
         return true;
     }
     std::string why;
@@ -448,6 +455,7 @@ bool add_block(Impl& im, MotionState& ms, const MoveStep& st, u32 part, Prop p, 
     b.binding = st.binding;
     b.timing = st.timing;
     b.curve = st.curve;
+    b.bezier = st.bezier;
     b.site = st.site;
     b.value_arg = st.value_arg;
     b.length_arg = st.length_arg;
@@ -1069,6 +1077,7 @@ int api_now(lua_State* L) {
             return 1;
         }
         if (!flush_current(im, L)) raise(L, ms);
+        ms.read = true; // no start_from after it (part 5б)
         lua_pushnumber(L, ms.contexts.back().cursor);
         return 1;
     }
@@ -1723,6 +1732,52 @@ int link_call(lua_State* L, bool attach) {
 int api_part_attach(lua_State* L) { return link_call(L, true); }
 int api_part_detach(lua_State* L) { return link_call(L, false); }
 
+// ---- part 5б: the start ----
+
+// start_from("idle"): the clip starts where clip idle stands at its end. Met first with no pose given, the try stops
+// and asks for idle (script.cpp records it, then this clip again); given it, the pose goes in: its parts, its links
+// with their bones.
+bool start_from_call(Impl& im, lua_State* L, MotionState& ms) {
+    if (lua_gettop(L) != 1 || lua_type(L, 1) != LUA_TSTRING)
+        return call_error(ms, "start_from(\"idle\"): одно имя клипа, с позы конца которого начать");
+    const std::string name = lua_tostring(L, 1);
+    const std::string call = "start_from(\"" + name + "\")";
+    if (ms.contexts.size() > 1) return call_error(ms, call + " — в самой функции клипа, не внутри другой функции");
+    StartRequest* req = im.start;
+    if (!ms.tasks.empty() || ms.read || !ms.rec->events.empty() || !ms.rec->start.clip.empty() || (req && !req->wanted.empty()))
+        return call_error(ms, call + " — первая строка клипа: до неё уже переход, ожидание, метка или чтение значения");
+    if (!std::binary_search(im.clips.begin(), im.clips.end(), name))
+        return call_error(ms, "в коде нет клипа «" + name + "»: start_from начинает с позы конца другого клипа");
+    if (!req) return call_error(ms, call + ": клип записывается без начала");
+    if (!req->pose) {
+        req->wanted = name;
+        req->site = here(im);
+        return call_error(ms, call + ": поза конца ещё не записана");
+    }
+    if (req->pose->clip != name) return call_error(ms, call + ": между записями клип начался с другого клипа");
+    StartPose pose = *req->pose;
+    pose.site = here(im);
+    for (const StartValue& sv : pose.values) {
+        part_slot(ms, sv.part.c_str());
+        if (sv.prop != Prop::Link || sv.value.v <= 0) continue;
+        // Held by a part: no link round through it, and both stand by their bones.
+        ms.links.emplace_back(sv.part, sv.value.target);
+        if (!im.rig) continue;
+        const Rig& tr = im.rig->holder(sv.value.target);
+        add_bone(ms, tr, tr.part(sv.value.target));
+        add_bone_of(ms, rig_of(*im.rig, *ms.rec, sv.part), sv.part.c_str());
+    }
+    ms.rec->start = std::move(pose);
+    return true;
+}
+
+int api_start_from(lua_State* L) {
+    Impl& im = impl_of(L);
+    MotionState& ms = motion(L, "start_from");
+    if (!start_from_call(im, L, ms)) raise(L, ms);
+    return 0;
+}
+
 int api_part_to_top(lua_State* L) { return order_call(L, OrderStep::Kind::Top, "to_top"); }
 int api_part_to_bottom(lua_State* L) { return order_call(L, OrderStep::Kind::Bottom, "to_bottom"); }
 int api_part_above(lua_State* L) { return order_call(L, OrderStep::Kind::Above, "above"); }
@@ -1751,6 +1806,7 @@ void push_value(lua_State* L, Prop p, const PropValue& v) {
 bool get_value(Impl& im, lua_State* L, const char* id, Prop p, PropValue& out, std::string& why) {
     if (im.mode == Mode::Record && im.motion) {
         MotionState& ms = *im.motion;
+        ms.read = true; // no start_from after it (part 5б)
         f64 t = ms.tween_t;
         if (ms.in_tween) {
             for (const TweenTrack& tt : ms.tween)
@@ -1775,7 +1831,7 @@ bool get_value(Impl& im, lua_State* L, const char* id, Prop p, PropValue& out, s
         const i32 part = recorded_part(*im.frame_rec, id);
         const i32 tr = part < 0 ? -1 : im.frame_rec->track(static_cast<u32>(part), p);
         if (tr < 0) {
-            out = rest_value(p);
+            out = part < 0 ? rest_value(p) : first_value(*im.frame_rec, static_cast<u32>(part), p); // part 5б
             return true;
         }
         return sample(*im.frame_rec, static_cast<u32>(tr), im.frame_t, &im, out, why);
@@ -1883,6 +1939,39 @@ int api_prop_spring(lua_State* L) {
     u32 task = 0;
     if (!spring_task(im, L, ms, id, true, p, 2, task)) raise(L, ms);
     push_task(L, ms, task);
+    return 1;
+}
+
+// bezier(x1, y1, x2, y2): CSS's cubic-bezier as an easing (part 4ж), anywhere a timing goes; e(x) gives y at x. It
+// keeps the call that made it, so its numbers are rewritten there.
+constexpr const char* kBezierWrong = "bezier: x1 и x2 — от 0 до 1, y1 и y2 — числа";
+
+int api_bezier(lua_State* L) {
+    vector::Bezier b;
+    f64* n[] = {&b.x1, &b.y1, &b.x2, &b.y2};
+    for (int i = 0; i < 4; ++i) {
+        if (lua_type(L, i + 1) != LUA_TNUMBER) luaL_error(L, "%s", kBezierWrong);
+        *n[i] = lua_tonumber(L, i + 1);
+    }
+    if (!vector::bezier_valid(b)) luaL_error(L, "%s", kBezierWrong);
+    const BezierUse use{b, here(impl_of(L))};
+    *static_cast<BezierUse*>(lua_newuserdata(L, sizeof(BezierUse))) = use;
+    luaL_getmetatable(L, kBezierMeta);
+    lua_setmetatable(L, -2);
+    return 1;
+}
+
+int api_bezier_call(lua_State* L) {
+    if (lua_type(L, 2) != LUA_TNUMBER) luaL_error(L, "bezier: кривая(x) — x число от 0 до 1");
+    lua_pushnumber(L, vector::bezier(static_cast<const BezierUse*>(lua_touserdata(L, 1))->curve, lua_tonumber(L, 2)));
+    return 1;
+}
+
+int api_bezier_text(lua_State* L) {
+    const vector::Bezier& b = static_cast<const BezierUse*>(lua_touserdata(L, 1))->curve;
+    const std::string text = "bezier(" + format_number(b.x1) + ", " + format_number(b.y1) + ", " + format_number(b.x2) + ", " +
+                             format_number(b.y2) + ")";
+    lua_pushlstring(L, text.data(), text.size());
     return 1;
 }
 
@@ -2035,6 +2124,15 @@ void register_motion_api(lua_State* L) {
                   {"attach", &api_part_attach}, {"detach", &api_part_detach}});
     methods_meta(L, kPropMeta, &api_prop_index, {{"rest", &api_prop_rest}, {"spring", &api_prop_spring}}, &api_prop_call);
     methods_meta(L, kTaskMeta, &api_task_index, {{"to", &api_task_to}, {"back", &api_task_back}, {"wait", &api_task_wait}});
+    luaL_newmetatable(L, kBezierMeta);
+    lua_pushcfunction(L, &api_bezier_call, "bezier");
+    lua_setfield(L, -2, "__call");
+    lua_pushcfunction(L, &api_bezier_text, "bezier");
+    lua_setfield(L, -2, "__tostring");
+    lua_pushstring(L, "закрыто");
+    lua_setfield(L, -2, "__metatable");
+    lua_setreadonly(L, -1, 1);
+    lua_pop(L, 1);
     const std::pair<const char*, lua_CFunction> globals[] = {
         {"part", &api_part},       {"parts", &api_parts},           {"all", &api_all},
         {"any", &api_any},         {"chain", &api_chain},           {"sequence", &api_sequence},
@@ -2044,7 +2142,7 @@ void register_motion_api(lua_State* L) {
         {"run", &api_run},         {"spawn", &api_spawn},           {"join", &api_join},
         {"tween", &api_tween},     {"spring", &api_spring},         {"emit", &api_emit},
         {"sound", &api_sound},     {"log", &api_log},               {"copies", &api_copies},
-        {"swap", &api_swap},
+        {"swap", &api_swap},       {"bezier", &api_bezier},     {"start_from", &api_start_from},
     };
     for (const auto& [name, fn] : globals) {
         lua_pushcfunction(L, fn, name);
@@ -2090,7 +2188,7 @@ void add_notes(const Impl& im, const Rig* rig, Recording& rec) {
 } // namespace
 
 bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, const std::map<std::string, f64>& values,
-                 u64 seed, const MotionLengths& lengths, Recording& out) {
+                 u64 seed, const MotionLengths& lengths, Recording& out, StartRequest* start, StartPose* ends) {
     lua_getfield(T, -1, "clips");
     lua_pushlstring(T, clip.data(), clip.size());
     lua_gettable(T, -2);
@@ -2110,6 +2208,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     lua_getglobal(T, "rng");
     im.mode = Mode::Record;
     im.rig = rig;
+    im.start = start;
     im.rng = frame_seed(seed, 0, clip);
     im.seed = seed;
     const u64 budget = im.budget_ns;
@@ -2121,6 +2220,8 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
         im.fail(lua_tostring(T, -1));
         lua_pop(T, 1);
     }
+    // start_from asked for a pose not given yet, even under pcall: this try ends here (part 5б).
+    if (start && !start->wanted.empty()) ok = false;
     if (ok && !flush(im, T, 0)) {
         ok = false;
         im.fail(ms.error.c_str());
@@ -2146,9 +2247,17 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
         }
     }
     if (ok) add_notes(im, rig, out);
+    if (ok && ends) {
+        // The pose a clip that starts from this one starts with, its bindings asked while they are this recording's.
+        std::string why;
+        if (!end_pose(out, &im, *ends, why)) {
+            ok = false;
+            im.fail(why.c_str());
+        }
+    }
     for (const ScriptFile& f : im.files) out.files.push_back(f.name);
     for (int r : ms.refs) lua_unref(im.L, r);
-    if (ok) {
+    if (ok && !ends) {
         auto& slot = im.bindings[std::string(clip)];
         if (slot.first != LUA_NOREF && slot.second != 0) lua_unref(im.L, slot.first);
         slot = {ms.bindings, out.generation};
@@ -2158,6 +2267,7 @@ bool record_clip(Impl& im, lua_State* T, const Rig* rig, std::string_view clip, 
     im.in_call = false;
     im.mode = Mode::None;
     im.rig = nullptr;
+    im.start = nullptr;
     im.budget_ns = budget;
     im.motion.reset();
     if (!ok) out = {};

@@ -185,6 +185,9 @@ public:
     void stop_ticks() { stop_ticks_ = true; }
 
     const SimClock& clock() const { return clock_; }
+    // The number of the next tick to run; while a tick runs, the one after it: the tick the world is at when the
+    // tick under way is over (clock().tick() is already the frame's last from the frame's start).
+    u64 next_tick() const { return current_tick_; }
     const Zones& zones() const { return zones_; }
     const TileView& tiles() const { return tiles_; }
     // Everything that happened during the last frame's ticks.

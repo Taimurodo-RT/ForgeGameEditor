@@ -324,6 +324,10 @@ part("ball").x(0, 1, "linear"))"));
     s = script_of(clip_of(R"(part("ball"):along("route", 1, "smooth"))"));
     rec = recorded(s, &rig);
     CHECK(frame(s, rec, &rig, 0.25).parts.at("ball").x == doctest::Approx(48 * vector::timing(vector::Timing::Smooth, 0.25)));
+    // bezier(…) too (part 4ж).
+    s = script_of(clip_of(R"(part("ball"):along("route", 1, bezier(0.3, 0, 0.2, 1)))"));
+    rec = recorded(s, &rig);
+    CHECK(frame(s, rec, &rig, 0.25).parts.at("ball").x == doctest::Approx(48 * vector::bezier({0.3, 0, 0.2, 1}, 0.25)));
     // back overshoots: an open path holds the part at its ends.
     s = script_of(clip_of(R"(part("ball"):along("route", 1, "back"))"));
     rec = recorded(s, &rig);

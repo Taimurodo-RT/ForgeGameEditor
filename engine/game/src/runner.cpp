@@ -33,6 +33,8 @@ struct Options {
     // --size WxH: the window (in the system's points: a high-DPI screen has
     // more pixels) or the picture of a run without a window (pixels).
     u32 width = 0, height = 0;
+    // --hz N: a run without a window shows N frames a second, as on a screen of N Hz (a test of 144); 60 unless said.
+    u32 hz = 60;
 };
 
 // A packaged game has no console: everything logged also goes to log.txt
@@ -155,7 +157,7 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
                     if (!shell.handle_event(e) && shell.screen() == Screen::Playing && !shell.in_dialogue())
                         game.handle_event(e);
                 const u64 t0 = time_now_ns();
-                shell.update(1.0 / 60.0);
+                shell.update(1.0 / o.hz);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 shell.render(cmd, target, w, h);
                 SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
@@ -234,6 +236,11 @@ int run_game(Game& game, const GameMain& main, int argc, char** argv) {
         else if (std::strcmp(argv[i], "--theme") == 0 && has_value) o.shell.theme = argv[++i];
         else if (std::strcmp(argv[i], "--no-vsync") == 0) o.vsync = false;
         else if (std::strcmp(argv[i], "--play") == 0) o.play = true;
+        else if (std::strcmp(argv[i], "--hz") == 0 && has_value) {
+            const unsigned long v = std::strtoul(argv[++i], nullptr, 10);
+            if (v >= 30 && v <= 480) o.hz = static_cast<u32>(v);
+            else FORGE_ERROR("--hz: нужно число кадров в секунду от 30 до 480, например 144");
+        }
         else if (std::strcmp(argv[i], "--ui-scale") == 0 && has_value) {
             // The display's scale, standing for the system's (a px of the UI is this many pixels, times the player's
             // «Масштаб интерфейса»).

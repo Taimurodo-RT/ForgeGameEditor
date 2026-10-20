@@ -369,6 +369,17 @@ int api_ease(lua_State* L) {
     return 1;
 }
 
+// forge.anim.going(thing, mark): whether its animation shows the mark now, as the game tells (part 5а of
+// docs/models/движение-модель.md).
+int api_anim_going(lua_State* L) {
+    const flecs::entity_t e = check_entity(L, 1);
+    size_t len = 0;
+    const char* mark = luaL_checklstring(L, 2, &len);
+    GameBridge* b = bridge_of(L);
+    lua_pushboolean(L, b && b->anim_going(e, std::string_view(mark, len)));
+    return 1;
+}
+
 int api_ui_show(lua_State* L) { return screen_call(L, "show"); }
 int api_ui_hide(lua_State* L) { return screen_call(L, "hide"); }
 int api_ui_toggle(lua_State* L) { return screen_call(L, "toggle"); }
@@ -748,6 +759,10 @@ void register_core_api(ScriptApi& api) {
         .help("Доля изменения в момент t (0 … 1): smooth, linear, in, out, back, bounce, elastic — как у движения в «Интерфейсе».")
         .param("how", V::String, "Как", "How", "\"smooth\"").param("t", V::Number, "t", "t", "0")
         .result("value", V::Number, "Доля", "Share");
+    api.add("anim.going", &api_anim_going).pure().category("Анимация").icon("flag").title("Идёт метка анимации", "Animation mark on")
+        .help("Да, пока анимация вещи показывает кадр метки emit(\"удар\") из «Векторной» или любой кадр её окна: «удар бьёт, пока идёт окно».")
+        .param("thing", V::Entity, "Вещь", "Thing").param("mark", V::String, "Метка", "Mark")
+        .result("on", V::Bool, "Да", "On");
 
     api.add("compare", &api_compare).hidden().pure().category("Логика").title("Сравнить", "Compare")
         .param("a", V::Any, "A", "A").param("op", V::String, "Как", "Op").param("b", V::Any, "B", "B")

@@ -166,6 +166,30 @@ bool read_root(yyjson_val* root, PixelDoc& d, std::string& why) {
                            false;
                 c.first = static_cast<u32>(first), c.frames = static_cast<u32>(frames), c.fps = static_cast<f32>(fps);
                 c.loop = yyjson_get_bool(l);
+                if (yyjson_val* events = yyjson_obj_get(val, "events")) {
+                    const std::string bad = "bake.strip." + name +
+                                            ".events: нужен список меток {\"frame\": 0, \"emit\": \"удар\", \"frames\": 2} или {\"frame\": 0, "
+                                            "\"sound\": \"шаг\"} в кадрах клипа";
+                    if (!yyjson_is_arr(events)) return why = bad, false;
+                    usize j, m;
+                    yyjson_val* ev;
+                    yyjson_arr_foreach(events, j, m, ev) {
+                        StripEvent e;
+                        yyjson_val* emit = yyjson_is_obj(ev) ? yyjson_obj_get(ev, "emit") : nullptr;
+                        yyjson_val* sound = yyjson_is_obj(ev) ? yyjson_obj_get(ev, "sound") : nullptr;
+                        yyjson_val* fr = yyjson_is_obj(ev) ? yyjson_obj_get(ev, "frames") : nullptr;
+                        u64 at = 0, span = 1;
+                        if ((emit != nullptr) == (sound != nullptr) || !yyjson_is_str(emit ? emit : sound) ||
+                            !whole(yyjson_obj_get(ev, "frame"), 0, c.frames - 1, at) || (fr && !whole(fr, 1, c.frames - at, span)) ||
+                            (sound && span != 1))
+                            return why = bad, false;
+                        e.sound = sound != nullptr;
+                        e.name = yyjson_get_str(emit ? emit : sound);
+                        if (e.name.empty()) return why = bad, false;
+                        e.frame = static_cast<u32>(at), e.frames = static_cast<u32>(span);
+                        c.events.push_back(std::move(e));
+                    }
+                }
                 d.strip.push_back(std::move(c));
             }
         }
@@ -253,6 +277,17 @@ std::string write_pixel_doc(const PixelDoc& d) {
             yyjson_mut_obj_add_uint(doc, o, "frames", c.frames);
             yyjson_mut_obj_add_real(doc, o, "fps", c.fps);
             yyjson_mut_obj_add_bool(doc, o, "loop", c.loop);
+            if (!c.events.empty()) {
+                yyjson_mut_val* events = yyjson_mut_arr(doc);
+                for (const StripEvent& e : c.events) {
+                    yyjson_mut_val* ev = yyjson_mut_obj(doc);
+                    yyjson_mut_obj_add_uint(doc, ev, "frame", e.frame);
+                    yyjson_mut_obj_add_strcpy(doc, ev, e.sound ? "sound" : "emit", e.name.c_str());
+                    if (e.frames != 1) yyjson_mut_obj_add_uint(doc, ev, "frames", e.frames);
+                    yyjson_mut_arr_append(events, ev);
+                }
+                yyjson_mut_obj_add_val(doc, o, "events", events);
+            }
             yyjson_mut_obj_add(strip, yyjson_mut_strcpy(doc, c.state.c_str()), o);
         }
         yyjson_mut_obj_add_val(doc, bake, "strip", strip);

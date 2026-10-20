@@ -110,6 +110,10 @@ private:
         Rml::String icon;
         int index = 0;
         bool used = false, shown = false;
+        // In the animation's frames (part 5а): the icon of the marks that begin on it ("flag" for emit, "music_note" for
+        // a sound only, ""), and whether a window of emit holds it.
+        Rml::String mark;
+        bool window = false;
     };
     struct FpsChip {
         Rml::String label;
@@ -153,6 +157,7 @@ private:
     std::vector<Thumb> m_strip_, m_seq_;
     std::vector<FpsChip> m_fps_;
     Rml::String m_note_, m_sel_name_, m_sel_note_, m_preview_, m_problem_, m_state_name_;
+    Rml::String m_marks_; // the selected state's marks in words: «♪ взмах — кадр 1, удар — кадры 2–3»
     int m_frames_ = 1;
     bool m_has_sel_ = false, m_own_ = false, m_loop_ = true, m_playing_ = true;
 };

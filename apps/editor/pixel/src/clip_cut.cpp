@@ -61,8 +61,7 @@ bool cut_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, const Cli
         out = cut_clip(c, false, 0);
         return true;
     }
-    const auto it = doc.lengths.find(c.state);
-    script.set_lengths(c.state, it != doc.lengths.end() ? it->second : MotionLengths{});
+    script.set_lengths(doc.lengths); // every clip's: a start_from records another (part 5б)
     const Recording* rec = script.recording(rig, c.state, doc.params, doc.seed);
     if (!rec) {
         why = "клип «" + c.state + "»: " + script.error();

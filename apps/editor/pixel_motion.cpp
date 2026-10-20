@@ -149,6 +149,9 @@ void PixelEditor::bind_motion(Rml::DataModelConstructor& model) {
     model.Bind("px_range_from", &m_range_from_);
     model.Bind("px_range_to", &m_range_to_);
     model.Bind("px_more_blocks", &m_more_blocks_);
+    model.Bind("px_start", &m_start_);
+    model.Bind("px_start_style", &m_start_style_);
+    model.Bind("px_start_title", &m_start_title_);
     model.Bind("px_tracks_height", &m_tracks_height_);
     model.Bind("px_code_name", &m_code_name_);
     model.Bind("px_inspector", &m_inspector_);
@@ -186,6 +189,7 @@ void PixelEditor::bind_motion(Rml::DataModelConstructor& model) {
     on("px_flag_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         if (const int i = arg_int(a, 0); i >= 0) flag_to_code(static_cast<usize>(i));
     });
+    on("px_start_code", [this](Rml::Event&, const Rml::VariantList&) { start_to_code(); });
     // The middle button on a clip's chip: all of that clip.
     on("px_state_button", [this, arg_str, arg_int](Rml::Event&, const Rml::VariantList& a) {
         if (arg_int(a, 1) == 2) whole_range(arg_str(a, 0));
@@ -212,8 +216,15 @@ const pixel::MotionLengths& PixelEditor::lengths_now(const std::string& state) c
     return it != doc_.lengths.end() ? it->second : none;
 }
 
+void PixelEditor::give_lengths() {
+    // Every clip's, the dragged flag's clip as dragged: a start_from records another clip with its own (part 5б).
+    std::map<std::string, pixel::MotionLengths> all = doc_.lengths;
+    if (tl_drag_ == Drag::Flag) all[clip_] = drag_lengths_;
+    script_.set_lengths(all);
+}
+
 bool PixelEditor::pose_at(const pixel::ClipSpec& c, f64 t, u32 k, pixel::Pose& out, std::string& why) {
-    script_.set_lengths(c.state, lengths_now(c.state));
+    give_lengths();
     if (script_.pose(rig_, t, c.state, doc_.params, doc_.seed, out)) return true;
     why = "клип «" + c.state + "», кадр " + std::to_string(k + 1) + ": " + script_.error();
     return false;
@@ -249,7 +260,7 @@ void PixelEditor::recount() {
         rec_ok_ = false;
         cut_ = whole_ = {};
     } else if (code) {
-        script_.set_lengths(c->state, lengths_now(c->state));
+        give_lengths();
         if (const pixel::Recording* rec = script_.recording(rig_, c->state, doc_.params, doc_.seed)) {
             if (rec_clip_ != c->state) block_ = -1;
             rec_ = *rec;
@@ -291,6 +302,12 @@ void PixelEditor::recount() {
                     warnings_.push_back("Длина «" + name + "» " + seconds_words(s) + " с из файла: в клипе " + clip + " нет duration(\"" + name +
                                         "\") или loop_until(\"" + name + "\")");
         }
+        // Marks no frame of the range shows do not go into the picture (part 5а).
+        std::vector<usize> left;
+        pixel::strip_events(rec_, cut_, &left);
+        std::string names;
+        for (usize i : left) names += (names.empty() ? "" : ", ") + rec_.marks[i].name + " " + seconds_words(rec_.marks[i].time) + " с";
+        if (!names.empty()) warnings_.push_back("Клип " + clip + ": метки за диапазоном не запекаются: " + names);
     }
     // The playhead stays at its moment, at the clip's end when it got shorter.
     const f64 last = whole_.frames > 0 ? whole_.time(whole_.frames - 1) : 0;
@@ -481,6 +498,9 @@ void PixelEditor::lay_timeline() {
     m_frames_.clear();
     m_flags_.clear();
     m_marks_.clear();
+    m_start_.clear();
+    m_start_style_.clear();
+    m_start_title_.clear();
     m_pauses_.clear();
     m_tracks_.clear();
     m_blocks_.clear();
@@ -500,6 +520,9 @@ void PixelEditor::lay_timeline() {
         };
         tv_.length = std::max(whole_.length, cell_end(static_cast<i64>(whole_.frames) - 1));
         tv_.clamp();
+        // A flag dragged makes the clip longer or shorter at each move: the view stays as at the press, so the moment
+        // under the mouse is the one it showed there (a short clip fills the timeline and would be fitted again).
+        if (tl_drag_ == Drag::Flag) tv_.scale = drag_view_.scale, tv_.start = drag_view_.start;
         const f64 w = tl_w_, per_frame = tv_.per_second() / fps;
         // Frames and the ruler's marks in sight.
         const f64 t0 = tv_.t(0), t1 = tv_.t(w);
@@ -533,6 +556,18 @@ void PixelEditor::lay_timeline() {
         }
         if (rec_ok_) {
             const pixel::Recording& r = rec_;
+            if (!r.start.clip.empty()) {
+                // start_from (part 5б): a flag at 0, the clip it starts from.
+                const pixel::SiteRef s = r.start.site;
+                const u32 line = s.file == 0 && s.site >= 0 && s.site < static_cast<i32>(script_.code().sites().size())
+                                     ? script_.code().sites()[static_cast<usize>(s.site)].line
+                                     : 0;
+                const f64 x0 = tv_.x(0);
+                m_start_ = "из " + r.start.clip;
+                m_start_style_ = x0 >= -2 && x0 <= w ? at_x(std::max(0.0, x0)) : std::string("display: none;");
+                m_start_title_ = "клип начинается с позы конца «" + r.start.clip + "»" +
+                                 (line ? ", строка " + std::to_string(line) : std::string()) + ": двойной щелчок — к коду";
+            }
             for (usize i = 0; i < r.events.size(); ++i) {
                 const pixel::TimeEvent& e = r.events[i];
                 const f64 end = e.start + e.length, xe = tv_.x(end);
@@ -646,6 +681,7 @@ void PixelEditor::lay_timeline() {
     lay_sounds(); // part 3в
     tl_laid_w_ = tl_w_;
     place_head();
+    for (const char* var : {"px_start", "px_start_style", "px_start_title"}) dirty(var);
     for (const char* var : {"px_ticks", "px_frames", "px_flags", "px_marks", "px_pauses", "px_tracks", "px_blocks", "px_more_blocks", "px_range",
                             "px_range_from", "px_range_to", "px_tracks_height", "px_head"})
         dirty(var);
@@ -672,6 +708,7 @@ void PixelEditor::timeline_press(f32 x, f32, Rml::Element* over, bool middle) {
         tl_drag_ = Drag::Flag;
         drag_event_ = i;
         drag_rec_ = rec_;
+        drag_view_ = tv_;
         drag_base_lengths_ = lengths_now(clip_);
         drag_lengths_ = drag_base_lengths_;
         drag_only_ = shift_;
@@ -712,7 +749,7 @@ void PixelEditor::timeline_drag(f32 x) {
     case Drag::Flag: {
         // A new recording at once: the code is the same, the lengths are new.
         drag_lengths_ = pixel::drag_flag(drag_rec_, drag_base_lengths_, drag_event_, t, drag_only_ || shift_);
-        script_.set_lengths(c->state, drag_lengths_);
+        give_lengths();
         if (const pixel::Recording* rec = script_.recording(rig_, c->state, doc_.params, doc_.seed)) {
             rec_ = *rec;
             cut_ = pixel::cut_clip(*c, true, rec_.length);
@@ -811,6 +848,17 @@ bool PixelEditor::flag_to_code(usize event) {
     const pixel::SiteRef s = rec_.events[event].site;
     if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script_.code().sites().size())) {
         note_ = "Событие «" + rec_.events[event].name + "» из модуля: его код не в панели";
+        rebuild();
+        return false;
+    }
+    return goto_line(script_.code().sites()[static_cast<usize>(s.site)].line);
+}
+
+bool PixelEditor::start_to_code() {
+    if (!rec_ok_ || rec_.start.clip.empty()) return false;
+    const pixel::SiteRef s = rec_.start.site;
+    if (s.file != 0 || s.site < 0 || s.site >= static_cast<i32>(script_.code().sites().size())) {
+        note_ = "start_from клипа — в модуле: его код не в панели";
         rebuild();
         return false;
     }

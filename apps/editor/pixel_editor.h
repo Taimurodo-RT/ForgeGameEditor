@@ -218,6 +218,8 @@ public:
     // A time event's line in the panel (a double click on its flag); the playhead on its flag (the middle button).
     bool flag_to_code(usize event);
     void playhead_to_flag(usize event);
+    // The line of the clip's start_from in the panel (a double click on the flag «из …» at 0, part 5б).
+    bool start_to_code();
     // Where a moment of the clip is on the timeline, the window's pixels; false when it is not laid out.
     bool timeline_x(f64 t, f32& x) const;
 
@@ -250,6 +252,35 @@ public:
     const std::string& hovered_part() const { return hovered_; }
     // The timings' list of the inspector open.
     bool timings_open() const { return timings_open_; }
+
+    // --- the part's fields and the curve (part 4ж, pixel_mouse.cpp) ---
+    // The fields of the selected part: «Трансформация» (x … opacity), «Контур» (stroke, stroke_width), «Заливка»
+    // (fill). Each is what the clip's code gives the property in the frame shown (its transition going: its end,
+    // `going`), `now` the frame's own value when it shows another ("" when the same), `section` the heading over the
+    // first of each. A field typed is written by the drag's rules for one property (pixel::edit_part_prop): one step,
+    // the panel saved first; note() why not. part_values() keeps the frame's values of all the properties.
+    struct PartField {
+        std::string name, section, value, now;
+        bool going = false;
+    };
+    const std::vector<PartField>& part_fields() const { return part_fields_; }
+    bool set_part_field(const std::string& field, const std::string& text);
+    // The list's «кривая»: the selected block's timing as bezier(0.25, 0.1, 0.25, 1); nothing when it is one already.
+    bool set_block_bezier_timing();
+    // The numbers of the selected block's bezier(…) (the graph's handle let go): one step.
+    bool set_block_bezier(const vector::Bezier& curve);
+    // The graph under «как»: the selected block's curve as shown (where a handle held is now); null when its timing is no
+    // bezier(…). ease_screen: the graph's point (x of the time, y of the way) on the screen (the context's pixels), false
+    // when no graph shows; ease_handle: handle 1 or 2 there, false when the graph shows none (a curve not to be edited).
+    const vector::Bezier* ease_curve() const { return ease_has_ ? &ease_live_ : nullptr; }
+    bool ease_screen(f64 x, f64 y, f32& sx, f32& sy) const;
+    bool ease_handle(int handle, f32& x, f32& y) const;
+    int ease_held() const { return ease_held_; }
+    const std::string& ease_why() const { return m_ease_why_; }
+    const std::string& ease_share() const { return m_ease_share_; }
+    // The graph's picture as last drawn (RGBA, w × h) and where its point (x, y) falls in it; false before one is drawn.
+    const std::vector<u8>& ease_pixels(u32& w, u32& h) const { return w = ease_w_, h = ease_h_, ease_px_; }
+    bool ease_texel(f64 x, f64 y, i64& tx, i64& ty) const;
 
     // --- the view and the sounds (part 3в, pixel_view.cpp) ---
     // The vector's zoom and pan: step 0 … pixel::kZoomTop round a point of the screen (the context's pixels), = and −
@@ -497,6 +528,9 @@ private:
     struct ShapeFieldRow {
         Rml::String name, value;
     };
+    struct PartFieldRow {
+        Rml::String name, label, section, value, now;
+    };
 
     pixel::ClipSpec* selected_clip();
     const pixel::ClipSpec* selected_clip() const;
@@ -523,6 +557,7 @@ private:
     // Part 3а (pixel_motion.cpp).
     void bind_motion(Rml::DataModelConstructor& model);
     const pixel::MotionLengths& lengths_now(const std::string& state) const; // the file's, or the flag's being dragged
+    void give_lengths(); // every clip's to the script, lengths_now's (part 5б)
     bool pose_at(const pixel::ClipSpec& c, f64 t, u32 k, pixel::Pose& out, std::string& why);
     void recount();          // the cuts, the clips' frames, the recording of the selected clip
     void sync_time();        // frame_ of t_, the labels
@@ -565,6 +600,15 @@ private:
     void start_move();
     void update_hover(Rml::Context* context);
     void make_curves();
+    // Part 4ж (pixel_mouse.cpp).
+    void rebuild_fields(bool has, const pixel::PartPose& pp); // the part's fields: the code's values, pp the frame's
+    void rebuild_ease(const pixel::Block* b);      // the graph of block b (null: none), its texture when it changed
+    void draw_ease();                              // the graph's texture as ease_live_ / the block's timing shows it (update())
+    bool ease_box(f32& x, f32& y, f32& w, f32& h) const; // the graph's image on the screen
+    bool ease_press(f32 x, f32 y);                 // a press on the graph: a handle near it held
+    void ease_drag(f32 x, f32 y);
+    void ease_release();
+    void ease_cancel();                            // Esc while held: back where it was, nothing written
     // Part 3в (pixel_view.cpp).
     void bind_view(Rml::DataModelConstructor& model);
     pixel::Affine to_view() const;   // picture units to the view's points (kViewPx) at its zoom
@@ -658,7 +702,22 @@ private:
     bool shown_ok_ = false;
     std::string hovered_;
     std::vector<PartValue> part_values_;
+    std::vector<PartField> part_fields_;
+    // The part's field with the keyboard and the text it showed when it took it (what it writes nothing as); the field
+    // whose text is the code's again though it has the keyboard (written, or refused).
+    std::string field_focus_, field_shown_, field_fresh_;
     i32 part_block_ = -1;
+    // Part 4ж: the graph of the selected block's easing: a bezier(…) shown (ease_has_), editable (ease_can_), its curve
+    // as shown, the handle held (0: none) and the curve when it was pressed; the texture's names now and before.
+    // ease_dirty_: drawn at the next update, once between two of the UI's (the picture before the last is dropped).
+    bool ease_has_ = false, ease_can_ = false, ease_dirty_ = false;
+    vector::Bezier ease_live_, ease_from_;
+    int ease_held_ = 0;
+    i32 ease_block_ = -1;
+    f32 ease_grab_x_ = 0, ease_grab_y_ = 0; // the press's offset from the handle's middle, the context's pixels
+    std::string ease_key_, ease_images_[2];
+    std::vector<u8> ease_px_; // the picture as last drawn, ease_w_ × ease_h_
+    u32 ease_w_ = 0, ease_h_ = 0;
     bool timings_open_ = false, curves_made_ = false;
     // Part 3в: the view, the line under it, the sounds.
     pixel::PictureView zoom_;
@@ -717,6 +776,7 @@ private:
     bool drag_only_ = false;
     pixel::MotionLengths drag_lengths_, drag_base_lengths_;
     pixel::Recording drag_rec_;
+    pixel::TimeView drag_view_; // the timeline as at the press of a flag: the clip's length changes under the mouse
     f64 drag_from_ = 0, drag_to_ = 0;
     bool shift_ = false;
     // The code panel.
@@ -756,6 +816,9 @@ private:
     std::vector<PartValueRow> m_part_values_;
     std::vector<SoundView> m_sounds_;
     std::vector<ShapeFieldRow> m_shape_fields_;
+    std::vector<PartFieldRow> m_part_fields_;
+    Rml::String m_ease_image_, m_ease_share_, m_ease_why_;
+    bool m_has_ease_ = false;
     Rml::String m_tool_ = "select", m_shape_color_ = pixel::kShapeColor, m_shape_swatch_, m_shape_why_, m_shape_count_;
     bool m_snapping_ = false, m_has_shape_ = false;
     Rml::String m_zoom_words_, m_coords_, m_picked_, m_pick_swatch_;
@@ -765,6 +828,7 @@ private:
          m_part_can_code_ = false;
     Rml::String m_time_, m_shown_fps_, m_head_, m_range_, m_range_from_, m_range_to_, m_more_blocks_, m_tracks_height_, m_code_name_,
         m_inspector_, m_inspector_call_, m_clip_cut_;
+    Rml::String m_start_, m_start_style_, m_start_title_; // the flag «из idle» at 0 (part 5б); empty: none
     bool m_code_unsaved_ = false, m_code_conflict_ = false, m_has_range_ = false, m_loop_view_ = true, m_stale_ = false,
          m_has_rec_ = false, m_code_clip_ = false, m_has_block_ = false;
     Rml::String m_name_, m_vector_, m_pixel_, m_one_, m_problem_, m_note_, m_frame_label_, m_clip_name_, m_seed_, m_fw_, m_fh_,

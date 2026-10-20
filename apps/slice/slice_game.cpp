@@ -376,7 +376,7 @@ private:
 // Scripts and schemes reach the game's variables and screens through this.
 class ShellBridge final : public script::GameBridge {
 public:
-    ShellBridge(game::Shell& shell, std::set<std::string>& opened) : s_(shell), opened_(opened) {}
+    ShellBridge(SliceGame& game, game::Shell& shell, std::set<std::string>& opened) : g_(game), s_(shell), opened_(opened) {}
     f64 var(std::string_view name, std::string* text) override {
         const game::Value v = s_.vars().get(name);
         if (text && v.is_text()) *text = v.text();
@@ -403,8 +403,10 @@ public:
         c.text = std::string(text);
         return s_.screens().svg(c, why);
     }
+    bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }
 
 private:
+    SliceGame& g_;
     game::Shell& s_;
     std::set<std::string>& opened_;
 };
@@ -1266,7 +1268,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     shell.screens().on_music = [this](const std::string& name) { sounds_.screens().music(name); };
     shell.screens().on_sound = [this](const std::string& name) { sounds_.screens().click(name); };
     logic_ = std::make_unique<SliceLogic>(*this);
-    bridge_ = std::make_unique<ShellBridge>(shell, level_screens_);
+    bridge_ = std::make_unique<ShellBridge>(*this, shell, level_screens_);
     // A button's «Сообщение логике» goes to every scheme listening nearby.
     shell.on_message = [this](const std::string& message) {
         if (level_ && level_->scripts) level_->scripts->send(0, message);
@@ -1428,6 +1430,9 @@ bool SliceGame::begin(const fs::path& session, bool new_game, std::string* error
     stomps_ = enemy_hits_ = hazard_hits_ = falls_ = backs_ = endings_ = nowheres_ = 0;
     spared_.clear();
     level_screens_.clear();
+    marks_ = {};
+    marks_fired_.clear();
+    marks_count_ = 0;
     deeds_.clear();
     hints_.clear();
     cues_.clear();
@@ -2328,6 +2333,7 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     follow_camera(dt);
     emit_effects(going ? dt : 0.0);
     build_sprites();
+    anim_marks(going);
     watch_links();
     update_hud(playing);
 
@@ -2367,6 +2373,95 @@ void SliceGame::hero_sounds(f64 dt) {
     fall_ = ground ? 0.0 : std::max(fall_ * (wet ? 0.0 : 1.0), static_cast<f64>(b.vy));
     was_ground_ = ground;
     was_wet_ = wet;
+}
+
+void SliceGame::anim_marks(bool fire) {
+    const Simulation& sim = *level_->sim;
+    const u64 now = sim.clock().tick();
+    if (marks_.world != level_->sim.get() || now < marks_.tick) {
+        // Another level, a game begun or loaded, the past rewound: marks go on from the frames after the one shown.
+        marks_ = {};
+        marks_.world = level_->sim.get();
+        marks_.tick = now;
+    }
+    // The hero: its pose's animation from the tick it took it; a new pose begins at its frame 0.
+    const Pictures::Picture* hero = pictures_.hero();
+    if (hero && level_->hero.is_alive() && hero_look_.world == marks_.world) {
+        const u64 t = now >= hero_look_.since ? now - hero_look_.since : 0;
+        if (marks_.hero_was != Marks::kTake && (hero_look_.pose != marks_.hero_pose || hero_look_.since != marks_.hero_since))
+            marks_.hero_was = -1;
+        if (marks_.hero_was != Marks::kTake && fire) {
+            const objects::Clip& clip = hero->clips[static_cast<usize>(hero_look_.pose)];
+            for (u32 i : objects::clip_events(clip, marks_.hero_was, t))
+                fire_mark(clip.events[i], level_->hero.id(), hero_x_, hero_y_ + kHeroHalfH, *hero);
+        }
+        marks_.hero_pose = hero_look_.pose;
+        marks_.hero_since = hero_look_.since;
+        marks_.hero_was = static_cast<i64>(t);
+    }
+    // The copies of templates in the part of the world that runs: their pose's animation by the level's clock.
+    if (fire && now > marks_.tick && pictures_.marks()) {
+        const Zones& zones = sim.zones();
+        level_->objects.copies.each([&](flecs::entity e, const Position& p, const objects::ObjectRef& ref) {
+            const Pictures::Picture* pic = pictures_.of(ref.key);
+            if (!pic || !pic->marks || zones.zone_of(p.chunk()) == Zone::Asleep) return;
+            const objects::Clip& clip = pic->clips[static_cast<usize>(copy_pose(e))];
+            for (u32 i : objects::clip_events(clip, static_cast<i64>(marks_.tick), now))
+                fire_mark(clip.events[i], e.id(), p.tile_x(), p.tile_y(), *pic);
+        });
+    }
+    marks_.tick = now;
+}
+
+void SliceGame::fire_mark(const objects::ClipEvent& e, flecs::entity_t thing, f64 x, f64 y, const Pictures::Picture& pic) {
+    FiredMark f{e.name, e.sound, false, thing, level_->sim->clock().tick(), x, y};
+    if (e.sound) {
+        f.sounded = sounds_.play_mark(e.name, x, y);
+        if (!f.sounded && marks_silent_.insert(e.name).second)
+            FORGE_WARN("метка анимации «%s»: звука «%s» нет в sounds", pic.name.c_str(), e.name.c_str());
+    } else if (level_->scripts) {
+        // For its scheme's «При метке анимации» and Luau's on_anim, at the next tick (a thing without them: nothing).
+        level_->scripts->anim(thing, e.name);
+    }
+    if (marks_fired_.size() < kMarksKept) marks_fired_.push_back(std::move(f));
+    ++marks_count_;
+}
+
+Pose SliceGame::copy_pose_of(flecs::entity_t copy) const {
+    if (!level_ || copy == 0) return Pose::Idle;
+    const flecs::entity e(level_->scene->ecs(), copy);
+    return e.is_alive() ? copy_pose(e) : Pose::Idle;
+}
+
+bool SliceGame::asleep(flecs::entity_t copy) const {
+    if (!level_ || copy == 0) return true;
+    const flecs::entity e(level_->scene->ecs(), copy);
+    const Position* p = e.is_alive() ? e.try_get<Position>() : nullptr;
+    return !p || level_->sim->zones().zone_of(p->chunk()) == Zone::Asleep;
+}
+
+bool SliceGame::anim_going(flecs::entity_t thing, std::string_view mark) const {
+    if (!level_ || thing == 0) return false;
+    // Asked by a scheme while a tick runs: the frame shown when that tick is over.
+    const u64 now = level_->sim->next_tick();
+    const objects::Clip* clip = nullptr;
+    u64 ticks = now;
+    if (level_->hero.is_alive() && thing == level_->hero.id()) {
+        const Pictures::Picture* pic = pictures_.hero();
+        if (!pic || hero_look_.world != level_->sim.get()) return false;
+        clip = &pic->clips[static_cast<usize>(hero_look_.pose)];
+        ticks = now >= hero_look_.since ? now - hero_look_.since : 0;
+    } else {
+        const flecs::entity e(level_->scene->ecs(), thing);
+        if (!e.is_alive() || e.has<Hero>()) return false;
+        const objects::ObjectRef* ref = e.try_get<objects::ObjectRef>();
+        const Pictures::Picture* pic = ref ? pictures_.of(ref->key) : nullptr;
+        if (!pic) return false;
+        clip = &pic->clips[static_cast<usize>(copy_pose(e))];
+    }
+    for (const objects::ClipEvent& e : clip->events)
+        if (e.name == mark && objects::clip_event_going(*clip, e, ticks)) return true;
+    return false;
 }
 
 void SliceGame::emit_effects(f64 dt) {
