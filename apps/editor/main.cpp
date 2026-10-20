@@ -30261,6 +30261,7 @@ return {
     static constexpr u32 kShTabFrames[5] = {12, 90, 99, 108, 111};
     usize sh_frame_ = 0;
     std::string sh_marks_;
+    std::vector<vector::SceneMark> sh_game_marks_; // the marks the game plays of «Сцена 2» before the blends
     std::vector<std::string> sh_blend_files_;
     static std::string sh_bad() {
         std::string code = sg_typed();
@@ -30323,6 +30324,7 @@ return {
             check(std::none_of(gift.motion.file.plays.begin(), gift.motion.file.plays.end(), [](const vector::ScenePlay& p) { return p.blend > 0; }) &&
                       text_of(built["scene.json"]).find("\"version\": 1,") != std::string::npos,
                   "no blends yet, scene.json of version 1");
+            check(vector::scene_marks(gift.motion, sh_game_marks_, why) && !sh_game_marks_.empty(), "the marks the game plays " + why);
             check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
             break;
         }
@@ -30471,6 +30473,9 @@ return {
             check(jump_at >= 0 && idle_at >= 0 && stand_at >= 0 && f.plays[static_cast<usize>(jump_at)].blend == 0.3 &&
                       f.plays[static_cast<usize>(stand_at)].blend == 0.4 && f.plays[static_cast<usize>(idle_at)].blend == 0,
                   "scene.json: «jump» blended over 0,3 s, «stand» over 0,4 s, «idle» at once");
+            std::vector<vector::SceneMark> marks;
+            check(vector::scene_marks(gift.motion, marks, why) && marks == sh_game_marks_,
+                  "the marks the game plays as before the blends: none of «idle» while «jump» comes in " + why);
             const vector::SceneActorMoment mid = vector::scene_actor_moment(gift.motion, "hop", 1.65), after = vector::scene_actor_moment(gift.motion, "hop", 1.85),
                                            first = vector::scene_actor_moment(gift.motion, "man", 0.2);
             check(mid.play == jump_at && mid.blend.size() == 2 && mid.blend[0].play == idle_at && std::fabs(mid.blend[0].time - std::fmod(1.65, 0.5)) < 1e-9 &&

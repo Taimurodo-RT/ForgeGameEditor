@@ -4616,6 +4616,53 @@ TEST_CASE("Смешивание (6г5а): что актёр показывает
                 }
 }
 
+TEST_CASE("Смешивание (6г5а): тот же клип ещё раз — с начала, от своей прежней позы") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    spawn(actor("ёжик"):play("wave"))
+    wait(0.3)
+    actor("ёжик"):play("wave", { blend = 0.2 })
+    wait(0.1))");
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& first = play_of(rec, "ёжик", ActorPlay::Kind::Play, 0);
+    const ActorPlay& again = play_of(rec, "ёжик", ActorPlay::Kind::Play, 1);
+    CHECK(again.start == doctest::Approx(0.3));
+    // At 0,4 s: the first wave going on (0,4 s of it), the new one from its start (0,1 s) over it by half.
+    const ActorMoment m = actor_moment(rec, "ёжик", 0.4);
+    CHECK(m.play == &again);
+    CHECK(m.time == doctest::Approx(0.1));
+    REQUIRE(m.blend.size() == 2);
+    CHECK(m.blend[0].play == &first);
+    CHECK(m.blend[0].time == doctest::Approx(0.4));
+    CHECK(m.blend[1].play == &again);
+    CHECK(m.blend[1].time == doctest::Approx(0.1));
+    CHECK(m.blend[1].k == doctest::Approx(0.5));
+    const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, "ёжик", 0.4);
+    REQUIRE(game.blend.size() == 2);
+    CHECK(game.blend[0].play == static_cast<i32>(&first - rec.plays.data()));
+    CHECK(game.blend[0].time == doctest::Approx(0.4));
+    CHECK(game.blend[1].play == static_cast<i32>(&again - rec.plays.data()));
+    CHECK(game.blend[1].k == doctest::Approx(0.5));
+    // The nose comes back from the first's turn towards the start: halfway between them, in the tab and in the game.
+    const vector::MotionFile& hf = gift.motion.actors[0];
+    using P = vector::MotionProp;
+    auto nose_at = [&](f64 t) { return game_value_of(vector::motion_pose(hf, *hf.clip("wave"), t), "ёжик/nose", P::Rot).v; };
+    CHECK(nose_at(0.4) > nose_at(0.1) + 5);
+    const f64 nose = (nose_at(0.4) + nose_at(0.1)) / 2;
+    ScenePoses poses;
+    REQUIRE(s.poses(0.4, {}, -1, poses));
+    CHECK(poses.actors["ёжик"].parts["ёжик/nose"].rot == doctest::Approx(nose));
+    const vector::ScenePose whole = vector::scene_pose(gift.motion, 0.4);
+    CHECK(game_value_of(whole.actors[0].parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    // After its blend, the new wave alone.
+    const ActorMoment after = actor_moment(rec, "ёжик", 0.55);
+    CHECK(after.play == &again);
+    CHECK(after.time == doctest::Approx(0.25));
+    CHECK(after.blend.empty());
+}
+
 TEST_CASE("Смешивание (6г5а): поза в смене — свойства, рисунки и метки по правилам 5е, во вкладке и в игре") {
     Files files;
     project(files);
