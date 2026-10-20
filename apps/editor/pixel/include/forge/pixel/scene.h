@@ -36,6 +36,7 @@
 #include "forge/pixel/motion.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/script.h"
+#include "forge/vector/scene_file.h"
 
 #include <functional>
 #include <map>
@@ -96,6 +97,8 @@ struct SceneCamera {
     f64 x = 0, y = 0, zoom = 1, rot = 0;
     bool operator==(const SceneCamera&) const = default;
 };
+// Which of a scene's times a moment is: coming in, the scene, going out, after it (the game's, as a game plays it).
+using ScenePhase = vector::ScenePhase;
 // The stage's units to the player's frame, a w × h canvas: q = (w/2, h/2) + zoom · R(−rot) · (p − c), c = the
 // middle of the canvas moved by x, y.
 Affine camera_matrix(const SceneCamera& cam, f64 w, f64 h);
@@ -197,6 +200,18 @@ struct SceneMarkSource {
 };
 bool actor_marks(const Recording& rec, SceneMarkSource& clips, std::vector<Mark>& out, std::string& why);
 
+// What a frame of the scene gives its pictures (part 6г1): the scene's own pose as its recording gives it, the camera,
+// the transitions' frames and the phase it makes; the stage's pose (its own parts, its actors' groups) and each actor's
+// (its clip's under its name with the scene's over it), as Scene::pose puts them on the rigs.
+struct ScenePoses {
+    Pose scene;
+    SceneCamera camera;
+    PartPose layers[4]; // kLayerParts
+    ScenePhase phase = ScenePhase::Scene;
+    Pose stage;
+    std::map<std::string, Pose> actors;
+};
+
 class Scene : SceneMarkSource {
 public:
     Scene();
@@ -219,6 +234,9 @@ public:
     // recording on its timeline, a part dragged moved in it; `held` the seconds it waited at rec's stops and `waiting`
     // the one it stands at (part 6в, as actor_moment's), its actors' clips ahead by them. False with error().
     bool pose(f64 t, const Recording* rec, const Pose& scene, std::span<const f64> held = {}, i32 waiting = -1);
+    // Part 6г1: what frame() would give the pictures at t, by the recording, without posing them (the game's files are
+    // checked against it). False with error().
+    bool poses(f64 t, std::span<const f64> held, i32 waiting, ScenePoses& out);
     // The frame as posed, smooth: the scene's units to the drawing's pixels by px, or fitted in.
     assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     assets::CookedTexture draw(u32 w, u32 h);
@@ -241,6 +259,9 @@ public:
     const Rig* actor_rig(std::string_view id) const;
     // An actor's character as read; null for none.
     const SceneCharacter* character(std::string_view actor) const;
+    // Part 6г1: the code of an actor's character that records the clip of a play, and the values it records it with
+    // (the character's parameters, the actor's over them, the play's over those). Null with why.
+    PoseScript* actor_script(const ActorPlay& play, std::map<std::string, f64>& values, std::string& why);
     // The scene's marks and its actors' clips' at their moments of the scene, by time: false with error().
     bool marks(std::vector<Mark>& out);
     // Only the actors' clips' marks, by the plays of `rec` (a recording of this scene's code), by time.

@@ -2,6 +2,8 @@
 
 #include "forge/vector/trig.h"
 
+#include "json_text.h"
+
 #include <yyjson.h>
 
 #include <algorithm>
@@ -15,6 +17,11 @@
 namespace forge::vector {
 
 namespace {
+
+using json::number;
+using json::put_number;
+using json::put_string;
+using json::text;
 
 constexpr const char* kWords[] = {"x",       "y",       "rot",  "scale",  "sx",           "sy",      "skew_x",    "skew_y",
                                   "opacity", "fill",    "stroke", "stroke_width", "visible", "morph", "dash", "draw_from",
@@ -51,31 +58,6 @@ f64 curve_at(const std::vector<f64>& c, f64 s) {
 }
 
 // --- writing ---------------------------------------------------------------------------------
-
-void put_number(std::string& out, f64 v) {
-    if (!std::isfinite(v)) v = 0;
-    char buf[32];
-    const auto [end, ec] = std::to_chars(buf, buf + sizeof buf, v);
-    out.append(buf, ec == std::errc() ? end : buf);
-}
-
-void put_string(std::string& out, std::string_view s) {
-    out += '"';
-    for (const char ch : s) {
-        const auto c = static_cast<unsigned char>(ch);
-        if (c == '"') out += "\\\"";
-        else if (c == '\\') out += "\\\\";
-        else if (c == '\n') out += "\\n";
-        else if (c == '\r') out += "\\r";
-        else if (c == '\t') out += "\\t";
-        else if (c < 0x20) {
-            char buf[8];
-            std::snprintf(buf, sizeof buf, "\\u%04x", c);
-            out += buf;
-        } else out += ch;
-    }
-    out += '"';
-}
 
 std::string hex8(const MotionColor& c) {
     char buf[10];
@@ -252,18 +234,6 @@ void put_piece(std::string& out, const MotionFile& f, MotionProp p, const Motion
 }
 
 // --- reading ---------------------------------------------------------------------------------
-
-bool number(yyjson_val* v, f64& out) {
-    if (!yyjson_is_num(v)) return false;
-    out = yyjson_get_num(v);
-    return std::isfinite(out);
-}
-
-bool text(yyjson_val* v, std::string& out) {
-    if (!yyjson_is_str(v)) return false;
-    out.assign(yyjson_get_str(v), yyjson_get_len(v));
-    return true;
-}
 
 int hex_digit(char c) {
     if (c >= '0' && c <= '9') return c - '0';

@@ -17,9 +17,12 @@
 #include "forge/pixel/motion_edit.h"
 #include "forge/pixel/rig.h"
 #include "forge/pixel/scene.h"
+#include "forge/pixel/scene_gift.h"
+#include "forge/pixel/screen.h"
 #include "forge/pixel/script.h"
 #include "forge/pixel/timeline.h"
 #include "forge/vector/motion_file.h"
+#include "forge/vector/scene_file.h"
 
 #include <doctest/doctest.h>
 
@@ -1949,4 +1952,675 @@ TEST_CASE("Сцена: музыка, ожидание и разговор — о
         CHECK(has(code.error(), "только в сцене"));
         CHECK(code.error_line() == 3);
     }
+}
+
+// ---- part 6г1: the scene's files for the game --------------------------------------------------------------------
+
+namespace {
+
+std::string replaced(std::string text, std::string_view from, std::string_view to) {
+    const usize at = text.find(from);
+    REQUIRE(at != std::string::npos);
+    return text.replace(at, from.size(), to);
+}
+
+const std::string* gift_file(const SceneGift& g, std::string_view path) {
+    for (const SceneGift::File& f : g.files)
+        if (f.path == path) return &f.bytes;
+    return nullptr;
+}
+
+// A part's value as the game poses it, at rest without a track.
+vector::MotionValue game_value_of(const std::vector<vector::MotionPartPose>& parts, std::string_view id, vector::MotionProp p) {
+    for (const vector::MotionPartPose& pp : parts)
+        if (pp.id == id && pp.has[static_cast<usize>(p)]) return pp.values[static_cast<usize>(p)];
+    return vector::motion_rest(p);
+}
+
+// Pictures, actors of each kind (drawn by code with pivots, with another drawing, from «Ресурсы» with a morph) and
+// shapes; lines 3–11, the scene's from 14.
+const char* kGiftStage = R"(    canvas(160, 120)
+    background("#203040")
+    picture("лес", "картинки/лес.png", { x = 8, y = 6 })
+    picture("лес_2", "картинки/лес.png", { x = 100, y = 10, w = 20, h = 15 })
+    actor("ёжик", "персонажи/Ёжик", { x = 40, y = 100, pivot = { 32, 60 } })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
+    actor("флаг", "персонажи/Флаг", { x = 20, y = 30 })
+    path("дорога", { d = "M 40 100 L 120 100", fill = "none", stroke = "#ffffff", hidden = true })
+    rect("пол", { x = 0, y = 110, w = 160, h = 10, fill = "#405060" }))";
+
+// Everything 6а–6в make: a transition in, music, clips of each kind at once, the camera following, the scene's moves of
+// an actor and its part, a wait, the same clip at other values, a stop, a talk, silence and a leave.
+const char* kGiftScene = R"(    transition("растворение", 0.5)
+    music("тема", { fade = 1 })
+    actor("ёжик"):loop("walk")
+    spawn(actor("жук"):play("hop"))
+    spawn(actor("флаг"):play("talk"))
+    spawn(part("ёжик/nose").rot(15, 0.5))
+    spawn(part("ёжик").tint("#ff0000", 0.25))
+    camera():follow("ёжик", 0.5)
+    part("ёжик"):along("дорога", 2)
+    wait_action("Поговорить")
+    actor("ёжик"):play("walk", { params = { height = 8 } })
+    actor("ёжик"):stop()
+    talk("Встреча")
+    part("пол").fill("#806040", 0.5)
+    music(nil, { fade = 0.5 })
+    leave("сдвиг", 0.5, { from = "лево" }))";
+
+} // namespace
+
+TEST_CASE("Сцена в игре: scene.json — каждое поле туда и обратно, ошибки называют поле") {
+    using K = vector::ScenePlay::Kind;
+    vector::SceneFile f;
+    f.name = "Вступление";
+    f.from = "сцены/Вступление.luau";
+    f.width = 160;
+    f.height = 120;
+    f.background = "#203040";
+    f.length = 12.4;
+    f.pictures = {{"лес", "pictures/лес.png", 8, 6, 40, 30}, {"лес 2", "pictures/лес.png", -4.5, 0.1, 80, 60}};
+    f.actors = {{"ёжик", "персонажи/Ёжик", "actors/ёжик.svg", "actors/ёжик.motion.json", {0, 0}, 64, 64},
+                {"флаг", "персонажи/Флаг", "actors/флаг.svg", "actors/флаг.motion.json", {-10, -20}, 40, 40}};
+    f.plays = {{K::Loop, "ёжик", "walk", 0, 1, 3}, {K::Play, "ёжик", "walk 2", 0.1, 1.5, 4}, {K::Stop, "ёжик", "", 2.5, 1, 9}, {K::Play, "флаг", "talk", 3.2, 1, 8}};
+    f.music = {{0, 2, "тема леса", 1, 0.8}, {6, 10, "", 1, 1}};
+    f.stops = {{3.2, 7, false, "Поговорить"}, {3.2, 8, true, "Встреча"}, {4, 11, false, ""}};
+    f.transitions = {{false, "", "", 0, 0.5}, {true, "сдвиг", "лево", 11.9, 0.5}};
+    f.not_drawn = {"blur", "mask_by_item"};
+    const std::string text = vector::write_scene_file(f);
+    INFO(text);
+    vector::SceneFile back;
+    std::string why;
+    REQUIRE(vector::read_scene_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_scene_file(back) == text);
+    CHECK(has(text, "\"forge\": \"scene\""));
+    CHECK(has(text, "\"version\": 1"));
+    CHECK(has(text, "\"length\": 12.4,"));
+    CHECK(has(text, "{\"actor\": \"ёжик\", \"kind\": \"stop\", \"at\": 2.5, \"order\": 9}")); // no clip, no speed
+    CHECK(has(text, "{\"at\": 6, \"order\": 10, \"fade\": 1, \"volume\": 1}"));             // music(nil): no name
+    // A transparent scene has no background.
+    vector::SceneFile clear = f;
+    clear.background.clear();
+    const std::string clear_text = vector::write_scene_file(clear);
+    CHECK_FALSE(has(clear_text, "background"));
+    REQUIRE(vector::read_scene_file(clear_text, back, why));
+    CHECK(back == clear);
+
+    struct Bad {
+        const char *from, *to, *said;
+    };
+    const Bad bad[] = {
+        {"\"forge\": \"scene\"", "\"forge\": \"screen\"", "forge: "},
+        {"\"version\": 1", "\"version\": 2", "version 2: сцену отдал редактор новее этой игры"},
+        {"\"name\": \"Вступление\"", "\"name\": \"\"", "name: "},
+        {"\"canvas\": [160, 120]", "\"canvas\": [160, 0]", "canvas: "},
+        {"\"background\": \"#203040\"", "\"background\": \"red\"", "background: "},
+        {"\"length\": 12.4", "\"length\": -1", "length: "},
+        {"\"file\": \"pictures/лес.png\"", "\"file\": \"../лес.png\"", "pictures[0]: file: "},
+        {"\"w\": 80", "\"w\": 0", "pictures[1]: w, h: "},
+        {"\"motion\": \"actors/ёжик.motion.json\"", "\"motion\": \"/ёжик.motion.json\"", "actors[0]: motion: "},
+        {"\"picture\": \"actors/флаг.svg\"", "\"picture\": \"actors\\\\..\\\\флаг.svg\"", "actors[1]: picture: "},
+        {"\"id\": \"флаг\"", "\"id\": \"ёжик\"", "actors[1]: имя «ёжик» дважды"},
+        {"\"id\": \"флаг\"", "\"id\": \"лес\"", "actors[1]: имя «лес» дважды"},
+        {"\"id\": \"флаг\"", "\"id\": \"camera\"", "actors[1]: имя camera"},
+        {"\"size\": [64, 64]", "\"size\": [64]", "actors[0]: size: "},
+        {"\"kind\": \"loop\"", "\"kind\": \"spin\"", "plays[0]: kind: «spin»"},
+        {"\"actor\": \"флаг\"", "\"actor\": \"лиса\"", "plays[3]: actor: "},
+        {"\"kind\": \"stop\"", "\"kind\": \"stop\", \"clip\": \"walk\"", "plays[2]: clip: у stop клипа нет"},
+        {"\"clip\": \"walk 2\"", "\"clip\": \"\"", "plays[1]: clip: "},
+        {"\"speed\": 1.5", "\"speed\": 0", "plays[1]: speed: "},
+        {"\"order\": 3}", "\"order\": -3}", "plays[0]: order: "},
+        {"\"volume\": 0.8", "\"volume\": 2", "music[0]: volume: "},
+        {"\"name\": \"тема леса\"", "\"name\": 5", "music[0]: name: "},
+        {"\"talk\": \"Встреча\"", "\"talk\": \"Встреча\", \"action\": \"\"", "stops[1]: нужно одно из"},
+        {"\"talk\": \"Встреча\"", "\"talk\": \"\"", "stops[1]: talk: "},
+        {"\"at\": 4, \"order\": 11", "\"at\": 1, \"order\": 11", "stops[2]: at: ожидания идут по времени"},
+        {"\"leave\": true", "\"leave\": 1", "transitions[1]: leave: "},
+        {"\"length\": 0.5}", "\"length\": -0.5}", "transitions[0]: length: "},
+        {"\"not_drawn\": [\"blur\"", "\"not_drawn\": [3", "not_drawn[0]: "},
+        {"\"plays\": [", "\"plays\": {\"a\": [", "не JSON"},
+    };
+    for (const Bad& b : bad) {
+        CAPTURE(b.to);
+        vector::SceneFile out;
+        CHECK_FALSE(vector::read_scene_file(replaced(text, b.from, b.to), out, why));
+        CHECK(why.rfind(b.said, 0) == 0);
+        CHECK(out == vector::SceneFile{});
+    }
+}
+
+TEST_CASE("Сцена в игре: «Отдать игре» — папка сцены, её файлы и сверка с вкладкой") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kGiftScene, kGiftStage);
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Вступление", "сцены/Вступление.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    const Recording& rec = *s.recording();
+    std::vector<std::string> paths;
+    for (const SceneGift::File& f : gift.files) paths.push_back(f.path);
+    CHECK(std::is_sorted(paths.begin(), paths.end()));
+    std::sort(paths.begin(), paths.end());
+    const std::vector<std::string> want_paths = {"actors/жук.flat.svg", "actors/жук.motion.json", "actors/жук.svg",       "actors/флаг.motion.json",
+                                                 "actors/флаг.svg",      "actors/ёжик.motion.json", "actors/ёжик.svg", "pictures/лес.png",
+                                                 "scene.json",           "stage.motion.json",      "stage.svg"};
+    CHECK(paths == want_paths);
+    CHECK(gift.notes.empty()); // nothing the game will not draw
+
+    // scene.json: what the tab recorded.
+    const vector::SceneFile& f = gift.motion.file;
+    vector::SceneFile read;
+    REQUIRE(vector::read_scene_file(*gift_file(gift, "scene.json"), read, why));
+    CHECK(read == f);
+    CHECK(f.name == "Вступление");
+    CHECK(f.from == "сцены/Вступление.luau");
+    CHECK(f.width == 160);
+    CHECK(f.height == 120);
+    CHECK(f.background == "#203040");
+    CHECK(f.length == rec.length);
+    CHECK(f.length == doctest::Approx(4));
+    REQUIRE(f.pictures.size() == 2);
+    CHECK(f.pictures[0] == vector::ScenePicture{"лес", "pictures/лес.png", 8, 6, 40, 30});
+    CHECK(f.pictures[1] == vector::ScenePicture{"лес_2", "pictures/лес.png", 100, 10, 20, 15}); // one file of one picture
+    CHECK(*gift_file(gift, "pictures/лес.png") == std::string(files.bytes["картинки/лес.png"].begin(), files.bytes["картинки/лес.png"].end()));
+    REQUIRE(f.actors.size() == 3);
+    CHECK(f.actors[0] == vector::SceneActor{"ёжик", "персонажи/Ёжик", "actors/ёжик.svg", "actors/ёжик.motion.json", {0, 0}, 64, 64});
+    CHECK(f.actors[2] == vector::SceneActor{"флаг", "персонажи/Флаг", "actors/флаг.svg", "actors/флаг.motion.json", {-10, -20}, 40, 40});
+    // The plays as recorded: the same clip at other values is another clip of the file.
+    REQUIRE(f.plays.size() == rec.plays.size());
+    for (usize i = 0; i < f.plays.size(); ++i) {
+        CAPTURE(i);
+        CHECK(static_cast<u8>(f.plays[i].kind) == static_cast<u8>(rec.plays[i].kind));
+        CHECK(f.plays[i].actor == rec.plays[i].actor);
+        CHECK(f.plays[i].at == rec.plays[i].start);
+        CHECK(f.plays[i].order == rec.plays[i].order);
+    }
+    std::vector<std::string> hedgehog;
+    for (const vector::ScenePlay& p : f.plays)
+        if (p.actor == "ёжик") hedgehog.push_back(p.clip);
+    CHECK(hedgehog == std::vector<std::string>{"walk", "walk 2", ""});
+    const vector::MotionFile& hf = gift.motion.actors[0];
+    REQUIRE(hf.clips.size() == 2);
+    CHECK(hf.clips[0].name == "walk");
+    CHECK(hf.clips[1].name == "walk 2");
+    // walk bobs the head by p.height: 4, then 8.
+    auto lowest = [&](const vector::MotionClip& c) {
+        f64 y = 0;
+        for (f64 t = 0; t <= c.length; t += 1.0 / 120) y = std::min(y, game_value_of(vector::motion_pose(hf, c, t), "ёжик/head", vector::MotionProp::Y).v);
+        return y;
+    };
+    CHECK(lowest(hf.clips[0]) == doctest::Approx(-4));
+    CHECK(lowest(hf.clips[1]) == doctest::Approx(-8));
+    CHECK(hf.picture == "ёжик.svg");
+    CHECK(hf.from == "персонажи/Ёжик.pixel.json");
+    REQUIRE(f.music.size() == 2);
+    CHECK(f.music[0] == vector::SceneMusicCall{0, rec.music[0].order, "тема", 1, 1});
+    CHECK(f.music[1].name.empty());
+    CHECK(f.music[1].at == doctest::Approx(3.5));
+    REQUIRE(f.stops.size() == 2);
+    CHECK(f.stops[0] == vector::SceneStop{rec.stops[0].time, rec.stops[0].order, false, "Поговорить"});
+    CHECK(f.stops[1] == vector::SceneStop{rec.stops[1].time, rec.stops[1].order, true, "Встреча"});
+    CHECK(f.stops[0].at == doctest::Approx(2.5));
+    REQUIRE(f.transitions.size() == 2);
+    CHECK(f.transitions[0] == vector::SceneTransition{false, "растворение", "", 0, 0.5});
+    CHECK(f.transitions[1].leave);
+    CHECK(f.transitions[1].kind == "сдвиг");
+    CHECK(f.transitions[1].from == "лево");
+    CHECK(f.transitions[1].at == doctest::Approx(3.5));
+    CHECK(f.not_drawn.empty());
+
+    // The pictures: the stage's without its background, its items' groups empty; each actor's ids under its name.
+    const std::string& stage_svg_text = *gift_file(gift, "stage.svg");
+    CHECK_FALSE(has(stage_svg_text, "#203040"));
+    CHECK(has(stage_svg_text, "id=\"пол\""));
+    CHECK(has(stage_svg_text, "id=\"ёжик\""));
+    CHECK_FALSE(has(stage_svg_text, "ёжик/"));
+    const std::string& hedgehog_svg = *gift_file(gift, "actors/ёжик.svg");
+    CHECK(has(hedgehog_svg, "id=\"ёжик/head\""));
+    CHECK(has(hedgehog_svg, "id=\"ёжик\""));
+    CHECK(hedgehog_svg == prefix_svg_ids(s.character("ёжик")->svg, "ёжик"));
+    CHECK(has(*gift_file(gift, "actors/жук.flat.svg"), "id=\"жук/shell\""));
+    CHECK(has(*gift_file(gift, "actors/флаг.svg"), "id=\"флаг/open\""));
+    // Every file is the motion it says.
+    vector::MotionFile stage_back, beetle_back;
+    REQUIRE(vector::read_motion_file(*gift_file(gift, "stage.motion.json"), stage_back, why));
+    CHECK(stage_back == gift.motion.stage);
+    REQUIRE(vector::read_motion_file(*gift_file(gift, "actors/жук.motion.json"), beetle_back, why));
+    CHECK(beetle_back == gift.motion.actors[1]);
+    REQUIRE(gift.motion.stage.clips.size() == 1);
+    CHECK(gift.motion.stage.clips[0].name == "scene");
+    CHECK(gift.motion.stage.part("camera"));
+    CHECK(gift.motion.stage.part("camera")->pivot == vector::Point{80, 60});
+    CHECK(gift.motion.stage.part("ёжик"));
+    // The scene's turn of the hedgehog's nose is the actor's to place: its pivot in the actor's file.
+    REQUIRE(gift.motion.actors[0].part("ёжик/nose"));
+    CHECK(gift.motion.actors[0].part("ёжик/nose")->pivot == vector::Point{30, 26});
+
+    // The game's pose at a moment: the stage's group of the hedgehog half way along the road, the scene's turn of its
+    // nose over its clip, its tint on its picture, the camera on it.
+    const vector::ScenePose pose = vector::scene_pose(gift.motion, 1.5);
+    CHECK(pose.phase == vector::ScenePhase::Scene);
+    CHECK(game_value_of(pose.stage, "ёжик", vector::MotionProp::X).v == doctest::Approx(40));
+    CHECK(game_value_of(pose.stage, "ёжик", vector::MotionProp::Y).v == doctest::Approx(0));
+    CHECK(game_value_of(pose.stage, "ёжик", vector::MotionProp::Tint).v == 0); // on its picture, not its group
+    const vector::SceneActorPose& h = pose.actors[0];
+    CHECK(h.moment.play == 0);
+    CHECK(h.moment.time == doctest::Approx(0)); // walk's third round begins
+    CHECK(vector::scene_pose(gift.motion, 1.6).actors[0].moment.time == doctest::Approx(0.1));
+    CHECK(game_value_of(h.parts, "ёжик/nose", vector::MotionProp::Rot).v == doctest::Approx(15));
+    CHECK(game_value_of(h.parts, "ёжик", vector::MotionProp::Tint).v == doctest::Approx(1));
+    CHECK(game_value_of(h.parts, "ёжик", vector::MotionProp::Tint).color == vector::MotionColor{255, 0, 0, 255});
+    CHECK(pose.camera.values[static_cast<usize>(vector::MotionProp::X)].v == doctest::Approx(80 - 80));
+    CHECK(vector::scene_pose(gift.motion, 0.25).phase == vector::ScenePhase::Enter);
+    CHECK(vector::scene_pose(gift.motion, 3.75).phase == vector::ScenePhase::Leave);
+    CHECK(vector::scene_pose(gift.motion, 4).phase == vector::ScenePhase::Gone);
+    // The beetle shows its flat drawing on the way down.
+    bool flat = false;
+    for (f64 t = 0; t < 1; t += 0.05) flat = flat || vector::scene_pose(gift.motion, t).actors[1].shown.drawing == "flat";
+    CHECK(flat);
+
+    // The same again: the same files byte for byte.
+    SceneGift again;
+    REQUIRE(build_scene_gift(s, "Вступление", "сцены/Вступление.luau", files.scene(), again, why));
+    REQUIRE(again.files.size() == gift.files.size());
+    for (usize i = 0; i < gift.files.size(); ++i) {
+        CAPTURE(gift.files[i].path);
+        CHECK(again.files[i].path == gift.files[i].path);
+        CHECK(again.files[i].bytes == gift.files[i].bytes);
+    }
+}
+
+TEST_CASE("Сцена в игре: миг клипа и музыка по файлам — как во вкладке, с ожиданиями и без") {
+    Files files;
+    project(files);
+    Scene s;
+    // 6в's waits and talks, and its music going on while the scene waits.
+    load(s, files, R"(    music("тема", { fade = 1, volume = 0.8 })
+    actor("ёжик"):loop("walk")
+    spawn(actor("жук"):play("hop", { speed = 2 }))
+    wait(0.2)
+    wait_action("Поговорить")
+    music("бой", { fade = 0.5 })
+    part("лес").x(10, 1)
+    talk("Встреча")
+    actor("жук"):play("hop")
+    actor("ёжик"):stop()
+    music(nil, { fade = 1 })
+    wait_action()
+    wait(0.5))");
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Ожидание", "сцены/Ожидание.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    const Recording& rec = *s.recording();
+    REQUIRE(rec.stops.size() == 3);
+    const std::vector<std::vector<f64>> helds = {{}, {0.15, 0.3, 0.7}, {1, 0, 2}};
+    for (const std::vector<f64>& held : helds)
+        for (f64 t = 0; t <= rec.length + 1e-9; t += 0.05)
+            for (i32 waiting = -1; waiting < 3; ++waiting) {
+                CAPTURE(t);
+                CAPTURE(waiting);
+                CAPTURE(held.size());
+                for (const char* actor : {"ёжик", "жук"}) {
+                    CAPTURE(actor);
+                    const ActorMoment tab = actor_moment(rec, actor, t, held, waiting);
+                    const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, actor, t, held, waiting);
+                    CHECK(game.play == (tab.play ? static_cast<i32>(tab.play - rec.plays.data()) : -1));
+                    CHECK(game.time == doctest::Approx(tab.time));
+                }
+                const std::vector<MusicVoice> heard = music_at(rec, t, held, waiting);
+                const std::vector<vector::SceneMusicVoice> played = vector::scene_music_at(gift.motion.file, t, held, waiting);
+                REQUIRE(played.size() == heard.size());
+                for (usize i = 0; i < heard.size(); ++i) {
+                    CHECK(played[i].name == heard[i].name);
+                    CHECK(played[i].call == heard[i].call);
+                    CHECK(played[i].since == doctest::Approx(heard[i].since));
+                    CHECK(played[i].volume == doctest::Approx(heard[i].volume));
+                }
+            }
+    // The beetle's hop at speed 2 is the same clip of the file: speed is the play's, not the clip's.
+    CHECK(gift.motion.actors[1].clips.size() == 1);
+}
+
+TEST_CASE("Сцена в игре: сверка ловит, где файлы разошлись бы со вкладкой") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kGiftScene, kGiftStage);
+    SceneGift gift;
+    std::string why;
+    REQUIRE(build_scene_gift(s, "Вступление", "сцены/Вступление.luau", files.scene(), gift, why));
+    REQUIRE(check_scene_gift(s, gift.motion, why));
+    auto refused = [&](const vector::SceneMotion& m, std::string_view said) {
+        CAPTURE(said);
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, m, w));
+        INFO(w);
+        CHECK(w.rfind("в игре сцена разошлась бы со вкладкой: ", 0) == 0);
+        CHECK(has(w, said));
+    };
+    auto track = [](vector::MotionClip& c, std::string_view part, vector::MotionProp p) -> vector::MotionTrack& {
+        for (vector::MotionTrack& t : c.tracks)
+            if (t.part == part && t.prop == p) return t;
+        FAIL("no such track");
+        return c.tracks.front();
+    };
+    {
+        // A piece of the hedgehog's road a little off.
+        vector::SceneMotion m = gift.motion;
+        vector::MotionTrack& x = track(m.stage.clips[0], "ёжик", vector::MotionProp::X);
+        bool moved = false;
+        for (vector::MotionPiece& pc : x.pieces)
+            for (vector::MotionValue& v : pc.frames) v.v += 0.5, moved = true;
+        REQUIRE(moved);
+        refused(m, "«ёжик», место по x");
+    }
+    {
+        // The hedgehog's nose turned by its clip as well as by the scene.
+        vector::SceneMotion m = gift.motion;
+        vector::MotionClip& walk = m.actors[0].clips[0];
+        vector::MotionTrack rot;
+        rot.part = "ёжик/nose";
+        rot.prop = vector::MotionProp::Rot;
+        vector::MotionPiece hold;
+        hold.value.v = 3;
+        rot.pieces.push_back(hold);
+        walk.tracks.push_back(rot);
+        refused(m, "«ёжик/nose», поворот");
+    }
+    {
+        // The head's bob of «walk 2» at the first values.
+        vector::SceneMotion m = gift.motion;
+        m.actors[0].clips[1].tracks = m.actors[0].clips[0].tracks;
+        refused(m, "«ёжик/head», место по y");
+    }
+    {
+        // The second play a little later.
+        vector::SceneMotion m = gift.motion;
+        for (vector::ScenePlay& p : m.file.plays)
+            if (p.clip == "walk 2") p.at += 0.1;
+        refused(m, "«ёжик», клип и его миг");
+    }
+    {
+        vector::SceneMotion m = gift.motion;
+        m.file.music[0].volume = 0.5;
+        refused(m, "музыка «тема»");
+    }
+    {
+        vector::SceneMotion m = gift.motion;
+        m.file.transitions[1].at += 0.1;
+        refused(m, "вход, сцена или уход");
+    }
+    {
+        // A part the scene moves without where it stands: the game would not turn it round its pivot.
+        vector::SceneMotion m = gift.motion;
+        std::erase_if(m.actors[0].parts, [](const vector::MotionPart& p) { return p.id == "ёжик/nose"; });
+        refused(m, "«ёжик/nose»: в файле нет того, где часть стоит");
+    }
+    {
+        // A wait the scene stood at a little later: the clips' moments after it differ (with waits only).
+        vector::SceneMotion m = gift.motion;
+        m.file.stops[0].at += 0.05;
+        refused(m, "с ожиданиями по 0,5 с");
+    }
+}
+
+TEST_CASE("Сцена в игре: имена, которые не годятся для файла или дали бы один файл") {
+    Files files;
+    project(files);
+    files.bytes["картинки/лес2.png"] = files.bytes["картинки/лес.png"];
+    // Characters with drawings whose names make no file, or one file of two.
+    auto character = [&](const std::string& name, std::string_view drawings) {
+        PixelDoc d;
+        d.script = name + ".luau";
+        d.frame_w = d.frame_h = 16;
+        files.put("персонажи/" + name + ".pixel.json", write_pixel_doc(d));
+        files.put("персонажи/" + name + ".luau", "return {\n  clips = { c = function(p) wait(0.1) end },\n  draw = function(p, rng)\n    canvas(16, 16)\n"
+                                                 "    rect(\"a\", { x = 0, y = 0, w = 16, h = 16, fill = \"#000000\" })\n  end,\n  drawings = {\n" +
+                                                     std::string(drawings) + "  },\n}\n");
+    };
+    auto drawing = [](std::string_view name) {
+        return "    [\"" + std::string(name) + "\"] = function(p, rng)\n      canvas(16, 16)\n      rect(\"a\", { x = 0, y = 0, w = 8, h = 16, fill = \"#000000\" })\n    end,\n";
+    };
+    character("Злой", drawing("злой?"));
+    character("Двое", drawing("Flat") + drawing("flat"));
+    auto refused = [&](std::string_view stage, std::string_view said, std::string_view name = "Сцена", std::string_view code = "    wait(1)") {
+        Scene s;
+        load(s, files, code, stage);
+        SceneGift gift;
+        std::string why;
+        CHECK_FALSE(build_scene_gift(s, name, "сцены/Сцена.luau", files.scene(), gift, why));
+        CHECK(why == said);
+        CHECK(gift.files.empty());
+    };
+    // The stage's ids are letters, digits, _ and - already: two of them make one file by their capitals.
+    refused(R"(    actor("Ёжик", "персонажи/Ёжик")
+    actor("ёжик", "персонажи/Ёжик", { x = 20 }))",
+            "актёр «Ёжик» и актёр «ёжик» дали бы один файл «actors/ёжик.svg»");
+    refused(R"(    picture("Лес", "картинки/лес.png")
+    picture("лес", "картинки/лес2.png"))",
+            "картинка «Лес» и картинка «лес» дали бы один файл «pictures/лес.png»");
+    // (Its drawings are given with its clips: an actor that plays none gives neither.)
+    refused(R"(    actor("злюка", "персонажи/Злой"))", "актёр «злюка»: рисунок «злой?» — такое имя не годится для файла", "Сцена",
+            R"(    actor("злюка"):play("c"))");
+    refused(R"(    actor("двое", "персонажи/Двое"))", "рисунок «Flat» актёра «двое» и рисунок «flat» актёра «двое» дали бы один файл «actors/двое.flat.svg»",
+            "Сцена", R"(    actor("двое"):play("c"))");
+    refused("    canvas(10, 10)", "имя сцены «а:б» не годится для имени папки", "а:б");
+    // Two pictures of one file are one file, by the first.
+    Scene s;
+    load(s, files, "    wait(1)", R"(    picture("Лес", "картинки/лес.png")
+    picture("лес", "картинки/лес.png")
+    actor("Ёжик", "персонажи/Ёжик"))");
+    SceneGift gift;
+    std::string why;
+    CHECK(build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why));
+    INFO(why);
+    CHECK(gift_file(gift, "pictures/Лес.png"));
+    CHECK_FALSE(gift_file(gift, "pictures/лес.png"));
+    CHECK(gift_file(gift, "actors/Ёжик.svg"));
+    // An actor that plays no clip: its drawings of names that make no file are not given.
+    Scene z;
+    load(z, files, "    wait(1)", R"(    actor("злюка", "персонажи/Злой"))");
+    SceneGift zg;
+    CHECK(build_scene_gift(z, "Сцена", "сцены/Сцена.luau", files.scene(), zg, why));
+    INFO(why);
+    std::vector<std::string> paths;
+    for (const SceneGift::File& f : zg.files) paths.push_back(f.path);
+    CHECK(paths == std::vector<std::string>{"actors/злюка.svg", "scene.json", "stage.motion.json", "stage.svg"});
+}
+
+TEST_CASE("Сцена в игре: актёр без клипов — без файла клипов, его части стоят по записям сцены") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    spawn(actor("жук"):play("hop"))
+    spawn(part("ёжик/nose"):to({ rot = 15 }, 0.5))
+    part("ёжик"):to({ x = 60 }, 0.5))",
+         std::string(kGiftStage));
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    const vector::SceneMotion& m = gift.motion;
+    REQUIRE(m.file.actors.size() == 3);
+    CHECK(m.file.actors[0].id == "ёжик");
+    CHECK(m.file.actors[0].motion.empty());
+    CHECK(m.file.actors[1].motion == "actors/жук.motion.json");
+    CHECK(m.file.actors[2].motion.empty());
+    CHECK(gift_file(gift, "actors/ёжик.svg"));
+    CHECK_FALSE(gift_file(gift, "actors/ёжик.motion.json"));
+    CHECK_FALSE(gift_file(gift, "actors/флаг.motion.json"));
+    CHECK(has(*gift_file(gift, "scene.json"), "\"picture\": \"actors/ёжик.svg\""));
+    CHECK_FALSE(has(*gift_file(gift, "scene.json"), "\"motion\": \"\""));
+    // The nose turns round its own pivot, by the stage's record of it.
+    REQUIRE(m.stage.part("ёжик/nose"));
+    CHECK(m.stage.part("ёжик/nose")->pivot.x == doctest::Approx(30));
+    CHECK(m.stage.part("ёжик/nose")->pivot.y == doctest::Approx(26));
+    const vector::ScenePose pose = vector::scene_pose(m, 0.5);
+    const vector::MotionPartPose* nose = nullptr;
+    for (const vector::MotionPartPose& pp : pose.actors[0].parts)
+        if (pp.id == "ёжик/nose") nose = &pp;
+    REQUIRE(nose);
+    CHECK(nose->moves);
+    CHECK(game_value_of(pose.actors[0].parts, "ёжик/nose", vector::MotionProp::Rot).v == doctest::Approx(15));
+    // Read back as the game reads it, written again the same.
+    vector::SceneFile back;
+    REQUIRE(vector::read_scene_file(*gift_file(gift, "scene.json"), back, why));
+    CHECK(back == m.file);
+    CHECK(vector::write_scene_file(back) == *gift_file(gift, "scene.json"));
+    // Without the record the game would not turn it round its pivot; a play of it would find no clip.
+    {
+        vector::SceneMotion t = m;
+        std::erase_if(t.stage.parts, [](const vector::MotionPart& p) { return p.id == "ёжик/nose"; });
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, t, w));
+        CHECK(has(w, "«ёжик/nose»: в файле нет того, где часть стоит"));
+    }
+    {
+        vector::SceneMotion t = m;
+        t.file.plays.push_back({vector::ScenePlay::Kind::Play, "ёжик", "walk", 0.2, 1, 9});
+        std::string w;
+        CHECK_FALSE(vector::check_scene(t, w));
+        CHECK(w == "актёр «ёжик» играет «walk», а файла клипов у него нет");
+    }
+}
+
+namespace {
+
+// A ball whose clip grows it twice as big, turning round its middle.
+const char* kBall = R"(return {
+  clips = {
+    grow = function(p)
+      part("ball").scale(2, 0.5)
+    end,
+  },
+  draw = function(p, rng)
+    canvas(32, 32)
+    circle("ball", { x = 16, y = 16, r = 8, fill = "#ff8000" })
+  end,
+}
+)";
+
+} // namespace
+
+TEST_CASE("Сцена в игре: копии сцены, кусок по кадрам и масштаб поверх клипа — по файлам как во вкладке") {
+    Files files;
+    project(files);
+    PixelDoc ball;
+    ball.script = "Шар.luau";
+    ball.frame_w = ball.frame_h = 32;
+    ball.pivots["ball"] = {16, 16};
+    files.put("персонажи/Шар.pixel.json", write_pixel_doc(ball));
+    files.put("персонажи/Шар.luau", kBall);
+    // The floor goes along an arc; the beetle's play at 0.31 s falls between two of the arc's frames, the copies are
+    // born then.
+    Scene s;
+    load(s, files, R"(    spawn(actor("шар"):play("grow"))
+    spawn(part("шар/ball").scale(1.5, 0.5))
+    spawn(part("пол"):along("дуга", 1))
+    wait(0.31)
+    copies("пол", 2, function(i, c) c.y(i * -10, 0.2) end)
+    actor("жук"):play("hop"))",
+         R"(    canvas(160, 120)
+    actor("шар", "персонажи/Шар", { x = 80, y = 40 })
+    path("дуга", { d = "M 0 100 Q 80 0 160 100", fill = "none", stroke = "#ffffff", hidden = true })
+    rect("пол", { x = 0, y = 110, w = 20, h = 10, fill = "#405060" })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90 }))");
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    const vector::SceneMotion& m = gift.motion;
+    // The floor's way is kept frame by frame: between two frames the game mixes them, so the check (at 0.31 s) took its
+    // values only at the frames.
+    bool frames = false;
+    for (const vector::MotionTrack& t : m.stage.clip("scene")->tracks)
+        if (t.part == "пол")
+            for (const vector::MotionPiece& pc : t.pieces) frames = frames || pc.kind == vector::MotionPiece::Kind::Frames;
+    CHECK(frames);
+    // The copies are drawn from their birth, not before.
+    CHECK(vector::scene_pose(m, 0.3).copies.empty());
+    CHECK(vector::scene_pose(m, 0.32).copies.size() == 2);
+    // The scene's scale of the ball multiplies its clip's.
+    REQUIRE(m.file.actors[0].id == "шар");
+    CHECK(game_value_of(vector::scene_pose(m, 0.5).actors[0].parts, "шар/ball", vector::MotionProp::Scale).v == doctest::Approx(3));
+}
+
+TEST_CASE("Сцена в игре: сверка ловит миг клипа без дорожек и то, что видно, только пока сцена ждёт") {
+    Files files;
+    project(files);
+    {
+        // stretch moves nothing: only its moment tells a game it went twice as fast.
+        Scene s;
+        load(s, files, R"(    actor("ёжик"):play("stretch"))", std::string(kGiftStage));
+        SceneGift gift;
+        std::string why;
+        REQUIRE(build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why));
+        vector::SceneMotion m = gift.motion;
+        REQUIRE(m.file.plays.size() == 1);
+        m.file.plays[0].speed = 2;
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, m, w));
+        CHECK(w == "в игре сцена разошлась бы со вкладкой: 0,033 с, «ёжик», клип и его миг");
+    }
+    {
+        // While the scene stands at the wait, wave goes on; walk, called after the wait, begins when it ends. The nose's
+        // turn from 0.2 s of wave is seen only while standing there.
+        Scene s;
+        load(s, files, R"(    spawn(actor("ёжик"):play("wave"))
+    wait(0.1)
+    wait_action("Поговорить")
+    actor("ёжик"):play("walk"))",
+             std::string(kGiftStage));
+        SceneGift gift;
+        std::string why;
+        const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+        INFO(why);
+        REQUIRE(ok);
+        vector::SceneMotion m = gift.motion;
+        vector::MotionClip* wave = nullptr;
+        for (vector::MotionClip& c : m.actors[0].clips)
+            if (c.name == "wave") wave = &c;
+        REQUIRE(wave);
+        vector::MotionTrack* rot = nullptr;
+        for (vector::MotionTrack& t : wave->tracks)
+            if (t.part == "ёжик/nose" && t.prop == vector::MotionProp::Rot) rot = &t;
+        REQUIRE(rot);
+        vector::MotionPiece hold;
+        hold.kind = vector::MotionPiece::Kind::Hold;
+        hold.at = 0.2;
+        hold.value.v = 99;
+        rot->pieces.push_back(hold);
+        std::string w;
+        CHECK_FALSE(check_scene_gift(s, m, w));
+        CHECK(w == "в игре сцена разошлась бы со вкладкой: 0,1 с у ожидания 1 через 0,25 с, «ёжик/nose», поворот");
+    }
+}
+
+TEST_CASE("Сцена в игре: что игра не нарисует") {
+    Files files;
+    project(files);
+    Scene s;
+    // A blur; a mask by an actor. A mask by a part of the same actor, or by a shape of the stage, the game draws.
+    load(s, files, R"(    actor("ёжик"):play("walk")
+    part("ёжик/head"):to({ blur = 2 }, 0.5)
+    part("лес"):mask("ёжик")
+    part("ёжик"):mask("пол")
+    part("ёжик/nose"):mask("ёжик/head"))",
+         std::string(kGiftStage));
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, "Сцена", "сцены/Сцена.luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    CHECK(gift.motion.file.not_drawn == std::vector<std::string>{"blur", "mask_by_item"});
+    REQUIRE(gift.notes.size() == 1);
+    CHECK(gift.notes[0] == "В игре не будет: размытие, маска по актёру или картинке");
 }

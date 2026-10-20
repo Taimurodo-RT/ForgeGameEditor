@@ -16,9 +16,12 @@
 #include "forge/assets/image.h"
 #include "forge/data/json.h"
 #include "forge/pixel/motion_edit.h"
+#include "forge/pixel/scene_gift.h"
+#include "forge/vector/scene_file.h"
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 namespace fs = std::filesystem;
 
@@ -168,6 +171,7 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
     on("px_music_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { music_to_code(arg_int(a, 0)); });
     on("px_stop_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { stop_to_code(arg_int(a, 0)); });
     on("px_hold_toggle", [this](Rml::Event&, const Rml::VariantList&) { set_hold(!hold_on_); });
+    on("px_give_game", [this](Rml::Event&, const Rml::VariantList&) { give_game(); });
 }
 
 // --- what a scene reads ------------------------------------------------------------------------------------
@@ -506,6 +510,72 @@ std::string PixelEditor::scene_snapshot() {
     note_ = "Снимок кадра: «" + file_name + "» рядом с «" + path_to_utf8(file_.filename()) + "»";
     rebuild();
     return rel_of(assets_, target);
+}
+
+// --- «Отдать игре» (part 6г1) ------------------------------------------------------------------------------------
+
+bool PixelEditor::give_game() {
+    note_.clear();
+    auto refuse = [&](std::string why) {
+        note_ = std::move(why);
+        rebuild();
+        return false;
+    };
+    if (!scene_mode_) return refuse("Игре отдаётся сцена; персонажа — «Отдать экрану»");
+    if (game_dir.empty()) return refuse("Отдать игре можно в открытой игре");
+    if (!has_ || !scene_) return refuse("Нечего отдавать: сцена не открыта");
+    if (!script_problem_.empty()) return refuse("Нечего отдавать: " + script_problem_);
+    if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: отдайте через миг");
+    const fs::path code = script_file();
+    const std::string name = path_to_utf8(code.stem()), from = rel_of(assets_, code);
+    pixel::SceneGift gift;
+    std::string why;
+    const bool ok = pixel::build_scene_gift(*scene_, name, from, scene_files(), gift, why);
+    view_dirty_ = true; // the scene was recorded again: the view draws its own
+    if (!ok) return refuse(why);
+    const fs::path scenes = game_dir / "scenes", dir = scenes / utf8_path(name);
+    std::error_code ec;
+    // The folder of a scene of another file of «Ресурсы», or a folder not of a scene, is not written over.
+    if (const std::optional<std::vector<u8>> was = bytes_of(dir / "scene.json")) {
+        vector::SceneFile f;
+        if (!vector::read_scene_file({reinterpret_cast<const char*>(was->data()), was->size()}, f, why))
+            return refuse("В игре уже есть папка сцены «" + name + "», её scene.json не читается: " + why);
+        if (f.from != from) return refuse("В игре уже есть сцена «" + name + "» из «" + f.from + "»: переименуйте сцену или ту");
+    } else if (fs::exists(dir, ec) && !fs::is_empty(dir, ec))
+        return refuse("В игре уже есть папка «scenes/" + name + "» не от сцены: переименуйте сцену или ту папку");
+    std::vector<PixelFiles::File> files;
+    for (const pixel::SceneGift::File& f : gift.files) {
+        const fs::path path = dir / utf8_path(f.path);
+        files.push_back({path, bytes_of(path), text_bytes(f.bytes)});
+    }
+    // The folder's files the scene writes no more (an actor taken away from it) go in the same step; a file whose name
+    // only changed its capitals is the new one's where names do not tell them apart (Windows), not taken away.
+    const usize written = files.size();
+    if (fs::is_directory(dir, ec))
+        for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            const bool kept = std::any_of(files.begin(), files.begin() + static_cast<std::ptrdiff_t>(written), [&](const PixelFiles::File& f) {
+                std::error_code e;
+                return f.path == it->path() || fs::equivalent(f.path, it->path(), e);
+            });
+            if (!kept)
+                if (std::optional<std::vector<u8>> before = bytes_of(it->path())) files.push_back({it->path(), std::move(before), std::nullopt});
+        }
+    if (std::all_of(files.begin(), files.end(), [](const PixelFiles::File& f) { return f.before == f.after; })) return refuse("Уже отдано так");
+    std::vector<fs::path> made; // outer first: Ctrl+Z takes away those left empty
+    for (const fs::path& d : {scenes, dir, dir / "actors", dir / "pictures"})
+        if (!fs::exists(d, ec)) made.push_back(d);
+    history_.execute(std::make_unique<PixelFiles>(*this, assets_, std::move(files), "«" + name + "»: отдана игре", std::move(made)));
+    history_.seal();
+    const vector::SceneFile& f = gift.motion.file;
+    std::string what;
+    if (!f.actors.empty()) what += ", " + count_words(static_cast<u32>(f.actors.size()), "актёр", "актёра", "актёров");
+    if (!f.pictures.empty()) what += ", " + count_words(static_cast<u32>(f.pictures.size()), "картинка", "картинки", "картинок");
+    note_ = "Отдано игре: «" + name + "»" + what + ", " + number_words(std::round(f.length * 100) / 100) + " с.";
+    for (const std::string& n : gift.notes) note_ += " " + n + ".";
+    FORGE_INFO("Векторная: %s", note_.c_str());
+    rebuild();
+    return true;
 }
 
 // --- the actors' clips on the timeline ------------------------------------------------------------------------

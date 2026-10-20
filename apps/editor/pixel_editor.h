@@ -445,6 +445,12 @@ public:
     // open game, over a pair another character gave, when a clip fails or there is none; false with «Уже отдано так»
     // when the game has these bytes already.
     bool give_screen();
+    // «Отдать игре» of a scene (part 6г1 of docs/models/сцены-модель.md): its folder game/scenes/<name>/ (name: its
+    // code's file without .luau) as pixel::build_scene_gift makes it, one step; the folder's files it writes no more go
+    // in that step. Refused, note() saying why, outside a scene or an open game, when the scene or a clip of an actor
+    // does not record, a name makes no file, the files would part from the tab, or over the folder of a scene of another
+    // file; false with «Уже отдано так» when the folder has these bytes already.
+    bool give_game();
 
     // --- scenes (part 6а of docs/models/сцены-модель.md, pixel_scene.cpp) ---
     // The «.scene.json» of the project, by path in «Ресурсы»: open() opens one as it opens a character.

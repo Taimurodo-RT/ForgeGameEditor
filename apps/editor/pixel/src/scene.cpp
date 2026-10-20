@@ -710,8 +710,7 @@ struct Scene::Impl {
     // Part 6б: the camera and the transition's frames as the last pose put them, and which of the scene's times it was.
     SceneCamera camera;
     PartPose layers[4]; // kLayerParts
-    enum class Phase : u8 { Scene, Enter, Leave, Gone };
-    Phase phase = Phase::Scene;
+    ScenePhase phase = ScenePhase::Scene;
 
     bool ok = false, recorded = false;
     Recording rec;
@@ -830,6 +829,76 @@ struct Scene::Impl {
         error_line = line;
         return false;
     }
+
+    // What pose() gives the pictures at t by the plays of `by`: the camera and the transitions' frames (part 6б), which of
+    // the scene's times t is, the stage's pose (its own parts, its actors' groups) and each actor's (its clip's under its
+    // name, the scene's over it). False with error() when an actor's clip does not pose; the rest is filled.
+    bool compose(f64 t, const Recording* by, const Pose& scene, std::span<const f64> held, i32 waiting, ScenePoses& out) {
+        out = {};
+        out.scene = scene;
+        if (by) {
+            bool entering = false;
+            for (const SceneTransition& tr : by->transitions) {
+                const f64 end = snap_time(tr.start + tr.length);
+                if (!tr.leave) entering = entering || (t >= tr.start && t < end);
+                else if (t >= tr.start) out.phase = t < end ? ScenePhase::Leave : ScenePhase::Gone;
+            }
+            if (entering && out.phase == ScenePhase::Scene) out.phase = ScenePhase::Enter;
+        }
+        // The scene's pose: its own parts' on the stage, its actors' over their clips.
+        std::map<std::string, Pose> over; // by actor
+        for (const auto& [id, pp] : scene.parts) {
+            if (id == kCameraPart) {
+                out.camera = {pp.x, pp.y, pp.scale, pp.rot};
+                continue;
+            }
+            bool layer = false;
+            for (usize i = 0; i < std::size(kLayerParts); ++i)
+                if (id == kLayerParts[i]) out.layers[i] = pp, layer = true;
+            if (layer) continue;
+            if (actor(id)) {
+                PartPose look;
+                split_actor(pp, out.stage.parts[id], look);
+                over[id].parts[id] = look;
+            } else if (const Actor* a = owner(id)) {
+                over[a->id].parts[id] = pp;
+            } else {
+                out.stage.parts[id] = pp;
+            }
+        }
+        for (const auto& [id, m] : scene.morphs) {
+            if (const Actor* a = owner(id)) over[a->id].morphs[id] = m;
+            else out.stage.morphs[id] = m;
+        }
+        for (const OrderStep& s : scene.order) {
+            if (const Actor* a = owner(s.part)) over[a->id].order.push_back(s);
+            else out.stage.order.push_back(s);
+        }
+        out.stage.copies = scene.copies;
+        bool posed = true;
+        std::string why;
+        for (const auto& a : actors) {
+            Pose& pose = out.actors[a->id];
+            const ActorMoment m = by ? actor_moment(*by, a->id, t, held, waiting) : ActorMoment{};
+            if (m.play) {
+                const std::map<std::string, f64> v = values(*a, *m.play);
+                PoseScript* s = script_for(*a->character, v, why);
+                Pose clip;
+                if (s && s->pose(a->character->rig, m.time, m.play->clip, v, a->character->doc.seed, clip)) {
+                    pose = prefix_pose(clip, a->id);
+                } else {
+                    posed = fail("актёр «" + a->id + "», клип «" + m.play->clip + "»: " + (s ? s->error() : why));
+                }
+            }
+            if (const auto o = over.find(a->id); o != over.end()) {
+                for (const auto& [id, pp] : o->second.parts) over_part(pose.parts[id], pp);
+                for (const auto& [id, mm] : o->second.morphs)
+                    if (mm.k > 0) pose.morphs[id] = mm;
+                pose.order.insert(pose.order.end(), o->second.order.begin(), o->second.order.end());
+            }
+        }
+        return posed;
+    }
 };
 
 Scene::Scene() : impl_(std::make_unique<Impl>()) {}
@@ -913,77 +982,31 @@ bool Scene::pose(f64 t, const Recording* rec, const Pose& scene, std::span<const
     if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
     im.error.clear();
     im.error_line = 0;
-    // The camera and the transitions' frames (part 6б), not the stage's; which of the scene's times t is.
-    im.camera = {};
-    for (PartPose& l : im.layers) l = {};
-    im.phase = Impl::Phase::Scene;
-    if (rec) {
-        bool entering = false;
-        for (const SceneTransition& tr : rec->transitions) {
-            const f64 end = snap_time(tr.start + tr.length);
-            if (!tr.leave) entering = entering || (t >= tr.start && t < end);
-            else if (t >= tr.start) im.phase = t < end ? Impl::Phase::Leave : Impl::Phase::Gone;
-        }
-        if (entering && im.phase == Impl::Phase::Scene) im.phase = Impl::Phase::Enter;
-    }
-    // The scene's pose: its own parts' on the stage, its actors' over their clips.
-    Pose stage;
-    std::map<std::string, Pose> over; // by actor
-    for (const auto& [id, pp] : scene.parts) {
-        if (id == kCameraPart) {
-            im.camera = {pp.x, pp.y, pp.scale, pp.rot};
-            continue;
-        }
-        bool layer = false;
-        for (usize i = 0; i < std::size(kLayerParts); ++i)
-            if (id == kLayerParts[i]) im.layers[i] = pp, layer = true;
-        if (layer) continue;
-        if (im.actor(id)) {
-            PartPose look;
-            split_actor(pp, stage.parts[id], look);
-            over[id].parts[id] = look;
-        } else if (const Impl::Actor* a = im.owner(id)) {
-            over[a->id].parts[id] = pp;
-        } else {
-            stage.parts[id] = pp;
-        }
-    }
-    for (const auto& [id, m] : scene.morphs) {
-        if (const Impl::Actor* a = im.owner(id)) over[a->id].morphs[id] = m;
-        else stage.morphs[id] = m;
-    }
-    for (const OrderStep& s : scene.order) {
-        if (const Impl::Actor* a = im.owner(s.part)) over[a->id].order.push_back(s);
-        else stage.order.push_back(s);
-    }
-    stage.copies = scene.copies;
-    bool ok = true;
+    ScenePoses ps;
+    bool ok = im.compose(t, rec, scene, held, waiting, ps);
+    im.camera = ps.camera;
+    for (usize i = 0; i < std::size(kLayerParts); ++i) im.layers[i] = ps.layers[i];
+    im.phase = ps.phase;
     std::string why;
     for (const auto& a : im.actors) {
-        Pose pose;
-        const ActorMoment m = rec ? actor_moment(*rec, a->id, t, held, waiting) : ActorMoment{};
-        if (m.play) {
-            const std::map<std::string, f64> values = im.values(*a, *m.play);
-            PoseScript* s = im.script_for(*a->character, values, why);
-            Pose clip;
-            if (s && s->pose(a->character->rig, m.time, m.play->clip, values, a->character->doc.seed, clip)) {
-                pose = prefix_pose(clip, a->id);
-            } else {
-                ok = im.fail("актёр «" + a->id + "», клип «" + m.play->clip + "»: " + (s ? s->error() : why));
-            }
-        }
-        if (const auto o = over.find(a->id); o != over.end()) {
-            for (const auto& [id, pp] : o->second.parts) over_part(pose.parts[id], pp);
-            for (const auto& [id, mm] : o->second.morphs)
-                if (mm.k > 0) pose.morphs[id] = mm;
-            pose.order.insert(pose.order.end(), o->second.order.begin(), o->second.order.end());
-        }
         why.clear();
-        if (!a->rig.pose(pose, why)) ok = im.fail("актёр «" + a->id + "»: " + why);
+        if (!a->rig.pose(ps.actors[a->id], why)) ok = im.fail("актёр «" + a->id + "»: " + why);
     }
     why.clear();
-    if (!im.rig.pose(stage, why)) ok = im.fail(why);
+    if (!im.rig.pose(ps.stage, why)) ok = im.fail(why);
     return ok;
+}
+
+bool Scene::poses(f64 t, std::span<const f64> held, i32 waiting, ScenePoses& out) {
+    Impl& im = *impl_;
+    out = {};
+    if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
+    if (!im.recorded) return im.fail("сцена не записана");
+    im.error.clear();
+    im.error_line = 0;
+    Pose scene;
+    if (!im.script.frame(im.rec, &im.rig, t, im.doc.params, im.doc.seed, scene)) return im.fail(im.script.error(), im.script.error_line());
+    return im.compose(t, &im.rec, scene, held, waiting, out);
 }
 
 assets::CookedTexture Scene::draw(u32 w, u32 h, const Affine& px) { return impl_->ok ? impl_->rig.draw(w, h, px) : assets::CookedTexture{}; }
@@ -1020,7 +1043,7 @@ assets::CookedTexture Scene::draw_frame(u32 w, u32 h, const Affine& px) {
     const Affine look = camera_matrix();
     auto scene = [&](const Affine& m) { return im.rig.draw(w, h, m * look); };
     auto outside = [&](const Affine& m) { return draw_rect(w, h, cw, ch, kOutsideScene, m); };
-    using Phase = Impl::Phase;
+    using Phase = ScenePhase;
     if (im.phase == Phase::Scene) return scene(px);
     if (im.phase == Phase::Gone) return outside(px);
     // A transition: its frames, each in its pose round the frame's middle, faded and masked, the new over the old.
@@ -1062,6 +1085,17 @@ const SceneDoc& Scene::doc() const { return impl_->doc; }
 PoseScript& Scene::script() { return impl_->script; }
 Rig& Scene::rig() { return impl_->rig; }
 const Rig& Scene::rig() const { return impl_->rig; }
+
+PoseScript* Scene::actor_script(const ActorPlay& play, std::map<std::string, f64>& values, std::string& why) {
+    Impl& im = *impl_;
+    const Impl::Actor* a = im.actor(play.actor);
+    if (!a) {
+        why = "на сцене нет актёра «" + play.actor + "»";
+        return nullptr;
+    }
+    values = im.values(*a, play);
+    return im.script_for(*a->character, values, why);
+}
 
 const Rig* Scene::actor_rig(std::string_view id) const {
     const Impl::Actor* a = impl_->actor(id);

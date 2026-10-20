@@ -14,6 +14,7 @@
 #include "forge/pixel/script.h"
 #include "forge/vector/motion_file.h"
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -26,8 +27,15 @@ vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector
 // Clip `clip` of the code as the screen plays it, at the file's values and seed and the lengths the script was given:
 // its tracks of the picture's parts, its marks, what it does that the screen does not draw; the authors' easings its
 // pieces use go into file.curves (each once). False with why: «клип «jump», строка 5: …».
+// `more`: ids of parts the frames pose that are not the rig's (a scene's camera, its transitions' frames and its actors'
+// parts, part 6г1), drawn as its own.
 bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::string_view clip, vector::MotionFile& file,
-                 vector::MotionClip& out, std::string& why);
+                 vector::MotionClip& out, std::string& why, std::span<const std::string> more = {});
+
+// What a frame shows of the drawings, as the file's motion_shown has it; whether two such are the same (the share of a
+// swap to a billionth).
+vector::MotionShown screen_shown(const Pose& pose);
+bool screen_same_shown(const vector::MotionShown& a, const vector::MotionShown& b);
 
 struct ScreenGift {
     struct File {
@@ -49,5 +57,13 @@ bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::
 
 // The drawing with the shapes of these ids written as <path> of the same outline.
 Drawing drawing_with_paths(const Drawing& d, const std::vector<std::string>& ids);
+
+// Whether a name makes a file name everywhere: not empty, none of / \ : * ? " < > | or a control character, not ending in
+// a dot or a space.
+bool file_name_ok(std::string_view name);
+// A name with its Latin and Cyrillic capitals small: two names Windows keeps as one file.
+std::string folded(std::string_view name);
+// A drawing's text with the main picture's root size (part 5д): its width, height, viewBox and preserveAspectRatio.
+std::string with_root_of(const std::string& text, std::string_view main);
 
 } // namespace forge::pixel

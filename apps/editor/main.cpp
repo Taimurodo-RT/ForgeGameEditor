@@ -76,6 +76,7 @@
 #include "forge/editor/undo.h"
 #include "forge/game/game_module.h"
 #include "forge/modules/modules.h"
+#include "forge/pixel/scene_gift.h"
 #include "forge/pixel/screen.h"
 #include "forge/platform/app.h"
 #include "forge/render/camera.h"
@@ -2105,7 +2106,9 @@ struct Options {
     // "pixel-scene", opened again by "pixel-scene-again"; part 6б, its camera and transitions: typed, «Через камеру», the frame's
     // edge and the camera's fields, the transitions' row, by "pixel-scene-b", opened again by "pixel-scene-b-again"; part 6в,
     // its music, waits and talk: typed, the rows «Музыка» and «Ожидания», the music in the player, «Ждать, как в игре», by
-    // "pixel-scene-c", opened again by "pixel-scene-c-again"); "input"
+    // "pixel-scene-c", opened again by "pixel-scene-c-again"; part 6г1, the scene given to the game: «Отдать игре», its folder
+    // as the library builds it, undone and done again, an actor taken away, a folder of another scene refused, by
+    // "pixel-scene-d", given again from another working folder by "pixel-scene-d-again"); "input"
     // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
@@ -2404,6 +2407,8 @@ public:
         if (part == "pixel-scene-b-again") return frame < 3 || pixel_scene_b_again_step();
         if (part == "pixel-scene-c") return frame < 3 || pixel_scene_c_step();
         if (part == "pixel-scene-c-again") return frame < 3 || pixel_scene_c_again_step();
+        if (part == "pixel-scene-d") return frame < 3 || pixel_scene_d_step();
+        if (part == "pixel-scene-d-again") return frame < 3 || pixel_scene_d_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19279,6 +19284,18 @@ return {
         const int scored_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-c-again"}, thirty);
         check(scored_again == 0, "opened from another working folder: the scene's file, its rows, its recording and every frame as pixel-scene-c "
                                  "left them (pixel-scene-c-again: exit " + std::to_string(scored_again) + ")");
+        // Part 6г1: the scene given to the game.
+        const fs::path thirty_one = mo_root() / utf8_path("тридцать первая папка"), thirty_two = mo_root() / utf8_path("тридцать вторая папка");
+        fs::create_directories(thirty_one, ec);
+        fs::create_directories(thirty_two, ec);
+        const int given_scene = pj_run({exe, "--project", project, "--self-test", "pixel-scene-d"}, thirty_one);
+        check(given_scene == 0, "«Сцена»: «Отдать игре» refused over the folder of a scene of another file; given: game/scenes/Сцена as the library "
+                                "builds it of the files, the line under the player, one step; «Уже отдано так»; the man taken away from its code on "
+                                "disk and given: the folder anew, his files gone in that step, undone and done again byte for byte; the code back "
+                                "and given: the first folder again (pixel-scene-d: exit " + std::to_string(given_scene) + ")");
+        const int given_scene_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-d-again"}, thirty_two);
+        check(given_scene_again == 0, "opened from another working folder: the folder as pixel-scene-d left it and as the library builds it there, "
+                                      "«Уже отдано так» (pixel-scene-d-again: exit " + std::to_string(given_scene_again) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -27756,9 +27773,9 @@ return {
             key(SDLK_R, SDL_KMOD_NONE);
             check(px().tool() == PixelEditor::Tool::Select && px().note() == "в сцене фигуры мышью не рисуются: их пишет stage в коде сцены",
                   "R: no rect in a scene: «" + px().note() + "»");
-            check(!px().bake() && px().note() == "Сцена не запекается в кадры: она отдаётся игре в части 6г", "no baking of a scene: «" + px().note() + "»");
-            check(!px().give(0) && px().note() == "Сцена отдаётся игре в части 6г, не объекту", "no giving to an object: «" + px().note() + "»");
-            check(!px().give_screen() && px().note() == "Сцена отдаётся игре в части 6г, не экрану", "no giving to a screen: «" + px().note() + "»");
+            check(!px().bake() && px().note() == "Сцена не запекается в кадры: она отдаётся игре («Отдать игре»)", "no baking of a scene: «" + px().note() + "»");
+            check(!px().give(0) && px().note() == "Сцена отдаётся игре («Отдать игре»), не объекту", "no giving to an object: «" + px().note() + "»");
+            check(!px().give_screen() && px().note() == "Сцена отдаётся игре («Отдать игре»), не экрану", "no giving to a screen: «" + px().note() + "»");
             check(file(lua) == bytes(typed) && file(doc) == fresh_doc && step_label() == saved, "nothing written by the refusals; one step: " + step_label());
             sc_frame(0);
             break;
@@ -28866,6 +28883,238 @@ return {
             const std::vector<u8> was = left("сцена в.txt");
             check(sc_seen_ == std::string(was.begin(), was.end()), "the recording and every frame as pixel-scene-c left them:\n" + sc_seen_);
             check(px().console().size() == 1 && px().console()[0].line == 26 && px().note().empty(), "only «тема» said");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // Part 6г1 of docs/models/сцены-модель.md, the scene given to the game, on the scene pixel-scene-c left: the folder of a
+    // scene of another file refused; «Отдать игре»: game/scenes/Сцена as the library builds it of the files apart from the
+    // tab, the line under the player, one step; again «Уже отдано так»; the man taken away from the code on disk and given:
+    // the folder anew and his files gone in that step, Ctrl+Z as before byte for byte, Ctrl+Y anew; the code back and
+    // given: the first folder again. pixel-scene-d-again, another process from another working folder: the folder as it
+    // left it and as the library builds it there, «Уже отдано так».
+    using SdFolder = std::map<std::string, std::vector<u8>>;
+    SdFolder sd_first_, sd_second_;
+    std::string sd_base_, sd_alone_;
+    std::filesystem::path sd_dir() { return pjw().config().root / "game" / "scenes" / utf8_path("Сцена"); }
+    // The folder as it is, by path in it with /.
+    SdFolder sd_folder() {
+        SdFolder out;
+        for (auto& [path, bytes] : pj_tree(sd_dir())) {
+            std::string p = path;
+            std::replace(p.begin(), p.end(), '\\', '/');
+            out[p] = std::move(bytes);
+        }
+        return out;
+    }
+    // The folder as the library builds it of the scene's files on disk, apart from the tab.
+    bool sd_gift(pixel::SceneGift& gift, SdFolder& out, std::string& why) {
+        std::vector<u8> doc, code;
+        pixel::SceneDoc d;
+        if (!read_file(as().abs("сцены/Сцена.scene.json"), doc) || !pixel::read_scene_doc({reinterpret_cast<const char*>(doc.data()), doc.size()}, d, why))
+            return why = "«Сцена.scene.json» не читается " + why, false;
+        if (!read_file(as().abs("сцены/Сцена.luau"), code)) return why = "«Сцена.luau» не читается", false;
+        pixel::Scene s;
+        if (!s.load({reinterpret_cast<const char*>(code.data()), code.size()}, d, sc_files())) return why = s.error(), false;
+        if (!pixel::build_scene_gift(s, "Сцена", "сцены/Сцена.luau", sc_files(), gift, why)) return false;
+        out.clear();
+        for (const pixel::SceneGift::File& f : gift.files) out[f.path] = std::vector<u8>(f.bytes.begin(), f.bytes.end());
+        return true;
+    }
+    static std::string sd_paths(const SdFolder& f) {
+        std::string out;
+        for (const auto& [path, bytes] : f) out += (out.empty() ? "" : ", ") + path;
+        return out.empty() ? std::string("пусто") : out;
+    }
+    // The line «Отдано игре» the tab says of the gift.
+    static std::string sd_line(const pixel::SceneGift& g, const char* what) {
+        std::string out = std::string("Отдано игре: «Сцена», ") + what;
+        for (const std::string& n : g.notes) out += " " + n + ".";
+        return out;
+    }
+
+    // In an editor for «Движение А» after pixel-scene-c-again (--self-test pixel-scene-d).
+    bool pixel_scene_d_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "сцены/Сцена.scene.json", lua = "сцены/Сцена.luau";
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        const std::string given = "«Сцена»: отдана игре";
+        auto has_man = [&] {
+            for (const pixel::ActorPlay& p : rec->plays)
+                if (p.actor == "man") return true;
+            return false;
+        };
+        switch (sc_step_) {
+        // A folder «Сцена» of a scene of another file already in the game.
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            const std::vector<u8> was = tg_bytes(mo_root() / utf8_path("сцена в.luau"));
+            sd_base_.assign(was.begin(), was.end());
+            check(!sd_base_.empty() && file(lua) == was, "the scene as pixel-scene-c left it");
+            std::error_code ec;
+            check(!fs::exists(a / "game" / "scenes", ec), "no scenes in the game yet");
+            vector::SceneFile other;
+            other.name = "Сцена";
+            other.from = "другие/Сцена.luau";
+            other.width = other.height = 10;
+            other.length = 1;
+            const std::string text = vector::write_scene_file(other);
+            vector::SceneFile back;
+            std::string why;
+            check(vector::read_scene_file(text, back, why) && write_file_atomic(sd_dir() / "scene.json", bytes(text)),
+                  "game/scenes/Сцена/scene.json of «другие/Сцена.luau» " + why);
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        // Refused over the other scene's folder; that folder taken away, given; Ctrl+Z, Ctrl+Y.
+        case 3: {
+            if (hold(idle && rec && !px().stale() && px().code() == sd_base_ && shown("px-stop-2") && shown("px-give-game"), "the scene recorded")) return true;
+            check(!shown("px-give-screen"), "no «Отдать экрану» at a scene");
+            const SdFolder other = sd_folder();
+            const std::string before = step_label();
+            bool clicked = px_click("px-give-game");
+            check(clicked && px().note() == "В игре уже есть сцена «Сцена» из «другие/Сцена.luau»: переименуйте сцену или ту" && sd_folder() == other &&
+                      step_label() == before,
+                  "refused over the folder of another scene, nothing written, no step: «" + px().note() + "»");
+            std::error_code ec;
+            fs::remove_all(a / "game" / "scenes", ec);
+            check(!fs::exists(a / "game" / "scenes", ec), "that folder taken away");
+            pixel::SceneGift gift;
+            std::string why;
+            const bool built = sd_gift(gift, sd_first_, why);
+            check(built, "the folder as the library builds it of the files: " + why);
+            clicked = px_click("px-give-game");
+            check(clicked && step_label() == given, "«Отдать игре»: one step: " + step_label() + "; «" + px().note() + "»");
+            const SdFolder got = sd_folder();
+            check(got == sd_first_, "the folder as the library builds it: " + sd_paths(got) + " — " + sd_paths(sd_first_));
+            const std::vector<std::string> paths = {"actors/hop.air.svg", "actors/hop.motion.json", "actors/hop.svg", "actors/man.motion.json", "actors/man.svg",
+                                                    "pictures/coin.png", "scene.json", "stage.motion.json", "stage.svg"};
+            std::vector<std::string> have;
+            for (const auto& [path, b] : got) have.push_back(path);
+            check(have == paths, "its files: " + sd_paths(got));
+            check(got.count("pictures/coin.png") && got.at("pictures/coin.png") == file("картинки/монета.png"), "the coin's PNG byte for byte");
+            const vector::SceneFile& f = gift.motion.file;
+            check(f.name == "Сцена" && f.from == lua && f.width == 160 && f.height == 90 && f.background == "#203040" && std::fabs(f.length - 2.25) < 1e-9 &&
+                      f.actors.size() == 2 && f.actors[0].id == "hop" && f.actors[1].id == "man" && f.pictures.size() == 1 && f.music.size() == 3 &&
+                      f.stops.size() == 3 && f.transitions.size() == 2,
+                  "scene.json: «Сцена» of «сцены/Сцена.luau», 160 × 90, 2,25 s, hop and man, the coin, three music calls, three stops, in and out");
+            check(gift.motion.actors.size() == 2 && gift.motion.actors[0].clip("jump") && gift.motion.actors[0].clip("idle") &&
+                      gift.motion.actors[1].clip("stand") && gift.motion.actors[1].clips.size() == 1,
+                  "hop's clips jump and idle, man's stand");
+            sd_alone_ = sd_line(gift, "2 актёра, 1 картинка, 2,25 с.");
+            check(px().note() == sd_alone_, "the line under the player: «" + px().note() + "», not «" + sd_alone_ + "»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!fs::exists(a / "game" / "scenes", ec) && step_label() != given, "Ctrl+Z: no scenes in the game again, the folders it made gone");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(sd_folder() == got && step_label() == given, "Ctrl+Y: the folder again, byte for byte");
+            break;
+        }
+        // Again, as it is: «Уже отдано так». The man taken away from the code on disk: his line on the stage and his clip.
+        case 4: {
+            if (hold(idle, "«Ресурсы» have looked at the files")) return true;
+            const bool clicked = px_click("px-give-game");
+            check(clicked && px().note() == "Уже отдано так" && step_label() == given && sd_folder() == sd_first_,
+                  "again: «" + px().note() + "», no step (" + step_label() + "), the folder as it was");
+            std::string code = sd_base_, gone;
+            for (usize at = 0; (at = code.find("\"man\"", at)) != std::string::npos;) {
+                const usize from = code.rfind('\n', at) + 1, to = code.find('\n', at);
+                gone += code.substr(from, to - from) + "\n";
+                code.erase(from, to + 1 - from);
+                at = from;
+            }
+            check(gone.find("actor(\"man\", \"персонажи/Персонаж\"") != std::string::npos && gone.find("actor(\"man\"):loop(\"stand\")") != std::string::npos,
+                  "the man's lines: " + gone);
+            check(write_file_atomic(as().abs(lua), bytes(code)), "«Сцена.luau» without the man, on disk");
+            sc_seen_ = code;
+            break;
+        }
+        // Given: the folder anew, the man's files gone in that step; Ctrl+Z, Ctrl+Y.
+        case 5: {
+            if (hold(idle && rec && !px().stale() && px().code() == sc_seen_ && !has_man(), "the scene without the man recorded")) return true;
+            pixel::SceneGift gift;
+            std::string why;
+            const bool built = sd_gift(gift, sd_second_, why);
+            check(built, "the folder as the library builds it of the files: " + why);
+            check(!sd_second_.count("actors/man.svg") && !sd_second_.count("actors/man.motion.json") && sd_second_.size() == sd_first_.size() - 2,
+                  "built without the man's files: " + sd_paths(sd_second_));
+            const bool clicked = px_click("px-give-game");
+            const std::string line = sd_line(gift, "1 актёр, 1 картинка, 2,25 с.");
+            check(clicked && step_label() == given && px().note() == line, "given: one step (" + step_label() + "), «" + px().note() + "», not «" + line + "»");
+            check(sd_folder() == sd_second_, "the folder anew, the man's files gone: " + sd_paths(sd_folder()));
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(sd_folder() == sd_first_, "Ctrl+Z: the folder as before, byte for byte: " + sd_paths(sd_folder()));
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(sd_folder() == sd_second_ && step_label() == given, "Ctrl+Y: anew, byte for byte: " + sd_paths(sd_folder()));
+            check(write_file_atomic(as().abs(lua), bytes(sd_base_)), "«Сцена.luau» as it was, on disk");
+            break;
+        }
+        // The code back, given: the first folder again.
+        case 6: {
+            if (hold(idle && rec && !px().stale() && px().code() == sd_base_ && has_man(), "the scene with the man recorded")) return true;
+            const bool clicked = px_click("px-give-game");
+            check(clicked && step_label() == given && px().note() == sd_alone_, "given: one step (" + step_label() + "), «" + px().note() + "»");
+            check(sd_folder() == sd_first_, "the first folder again, byte for byte: " + sd_paths(sd_folder()));
+            check(file(lua) == bytes(sd_base_), "the code as pixel-scene-c left it");
+            const std::string list = tg_manifest(sd_folder());
+            check(write_file_atomic(mo_root() / utf8_path("сцена г.txt"), bytes(list)), "the folder's list, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-scene-d (--self-test pixel-scene-d-again).
+    bool pixel_scene_d_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "сцены/Сцена.scene.json";
+        const pixel::Recording* rec = px().recording();
+        switch (sc_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "«Движение А», from another working folder");
+            const std::vector<u8> was = tg_bytes(mo_root() / utf8_path("сцена г.txt"));
+            check(!was.empty() && tg_manifest(sd_folder()) == std::string(was.begin(), was.end()), "the folder as pixel-scene-d left it:\n" + tg_manifest(sd_folder()));
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        case 3: {
+            if (hold(!as().busy() && !as().looking() && rec && !px().stale() && shown("px-stop-2") && shown("px-give-game"), "the scene recorded")) return true;
+            pixel::SceneGift gift;
+            SdFolder built;
+            std::string why;
+            const bool ok = sd_gift(gift, built, why);
+            check(ok && built == sd_folder(), "the library builds the folder here as it is: " + why + sd_paths(built));
+            const std::string before = an().history().undo_label();
+            const bool clicked = px_click("px-give-game");
+            check(clicked && px().note() == "Уже отдано так" && an().history().undo_label() == before && built == sd_folder(),
+                  "«Отдать игре»: «" + px().note() + "», no step");
             return false;
         }
         default: break;
@@ -36302,7 +36551,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
                                          "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again",
-                                         "pixel-scene-c", "pixel-scene-c-again", "input", "input-a", "input-a-again",
+                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",
@@ -36320,7 +36569,7 @@ int main(int argc, char** argv) {
                     "pixel-motion-e-again, pixel-motion-f, pixel-motion-f-again, pixel-motion-g, pixel-motion-g-again, pixel-motion-h, "
                     "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
                     "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, pixel-scene, "
-                    "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, "
+                    "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, pixel-scene-d, pixel-scene-d-again, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "
