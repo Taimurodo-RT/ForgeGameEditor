@@ -10,7 +10,8 @@
 // the talks as stops of the scene's own flow, the actors' clips going on while the scene waits; the errors of all three.
 // Part 6г2: the scene's folder as the game reads it, its marks as the tab lists them, where the stage's picture in the
 // game puts each picture and actor against the tab's rig, a run drawing only its own, an actor's frame beyond its canvas,
-// and the scene on a game's screen: its layers, its marks frame by frame, its music, its end, skipped and dropped.
+// and the scene on a game's screen: its layers, its marks frame by frame, its music, its end, skipped and dropped; a
+// picture the camera turns drawn where it stands unturned (as the game draws it).
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -33,7 +34,9 @@
 #include "forge/vector/svg.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/ElementUtilities.h>
 #include <doctest/doctest.h>
+#include <thorvg.h>
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +44,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <numbers>
 #include <span>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
@@ -1229,6 +1233,109 @@ TEST_CASE("Сцена: матрица кадра через камеру") {
     // Fitted into a drawing twice the size: the same frame, each pixel twice.
     const assets::CookedTexture big = s.draw_frame(320, 240);
     CHECK(near(pixel_at(big, 21, 21), pixel_at(pic, 22, 4)));
+}
+
+TEST_CASE("Сцена: картинка, повёрнутая камерой, на своём месте") {
+    // ThorVG drew a turned picture half a pixel and half a texel up and left of its place (third_party/thorvg samples it
+    // at the pixels' centres): turned by 180°, the frame is the unturned one upside down, pixel for pixel, inside the
+    // picture «лес», at its own size and zoomed, the camera on its middle (28, 21).
+    Files files;
+    project(files);
+    for (const char* zoom : {"1", "3"}) {
+        CAPTURE(zoom);
+        Scene flat, turned;
+        const std::string on = std::string("    camera().x(-52, 0)\n    camera().y(-39, 0)\n    camera().zoom(") + zoom + ", 0)\n";
+        load(flat, files, on + "    wait(1)");
+        load(turned, files, on + "    camera().rot(180, 0)\n    wait(1)");
+        record(flat);
+        record(turned);
+        REQUIRE(flat.frame(0.5));
+        REQUIRE(turned.frame(0.5));
+        const assets::CookedTexture a = flat.draw_frame(160, 120, Affine{}), b = turned.draw_frame(160, 120, Affine{});
+        const f64 z = std::atof(zoom);
+        usize inside = 0, off = 0;
+        for (u32 y = 0; y < 120; ++y)
+            for (u32 x = 0; x < 160; ++x) {
+                // The pixel's centre on the stage: inside the picture (40 × 30 at 8, 6), a texel from its edges.
+                const f64 sx = (x + 0.5 - 80) / z + 28, sy = (y + 0.5 - 60) / z + 21;
+                if (sx < 9 || sx > 47 || sy < 7 || sy > 35) continue;
+                ++inside;
+                off += !near(pixel_at(b, 159 - x, 119 - y), pixel_at(a, x, y));
+            }
+        CHECK(inside > 1000);
+        CHECK(off == 0);
+
+        // A shape masked by the picture: the tab masks by an item's box, so the masked shape is the picture's box both
+        // ways.
+        const std::string stage = std::string(kStage) + "\n    rect(\"пятно\", { x = 0, y = 0, w = 160, h = 120, fill = \"#ff00ff\" })";
+        Scene flat_mask, turned_mask;
+        load(flat_mask, files, on + "    part(\"пятно\"):mask(\"лес\")\n    wait(1)", stage);
+        load(turned_mask, files, on + "    camera().rot(180, 0)\n    part(\"пятно\"):mask(\"лес\")\n    wait(1)", stage);
+        record(flat_mask);
+        record(turned_mask);
+        REQUIRE(flat_mask.frame(0.5));
+        REQUIRE(turned_mask.frame(0.5));
+        const assets::CookedTexture c = flat_mask.draw_frame(160, 120, Affine{}), d = turned_mask.draw_frame(160, 120, Affine{});
+        auto spot = [](Rgba8 p) { return p.r == 255 && p.g == 0 && p.b == 255; };
+        usize spots = 0, apart = 0;
+        for (u32 y = 0; y < 120; ++y)
+            for (u32 x = 0; x < 160; ++x) {
+                spots += spot(pixel_at(c, x, y));
+                apart += spot(pixel_at(d, 159 - x, 119 - y)) != spot(pixel_at(c, x, y));
+            }
+        CHECK(spots == static_cast<usize>(std::lround(40 * z) * std::lround(30 * z)));
+        CHECK(apart == 0);
+    }
+}
+
+TEST_CASE("ThorVG: маска картинкой, повёрнутой и приближенной, — тексель в центре пикселя") {
+    // A mask is drawn on a surface of one channel by ThorVG's own raster without smoothing (third_party/thorvg): a
+    // picture in a mask, turned (not by a right angle, which ThorVG draws as only scaled), takes the texel under each
+    // pixel's centre. A sieve of 4 × 3 texels, every other one clear, each 10 × 10 pixels at its own size and 30 × 30
+    // zoomed: half a texel off would move its cells by 5 and 15 pixels.
+    tvg::Initializer::init(0);
+    std::vector<u32> sieve(12);
+    for (u32 k = 0; k < 12; ++k) sieve[k] = (k % 4 + k / 4) % 2 ? 0u : 0xffffffffu;
+    for (const f64 z : {1.0, 3.0}) {
+        CAPTURE(z);
+        // The texel's place → the frame's: zoomed, turned by 30° round the sieve's middle, that on the frame's.
+        const f64 s = 10 * z, c = s * std::cos(std::numbers::pi / 6), n = s * std::sin(std::numbers::pi / 6);
+        std::vector<u32> buffer(160 * 120, 0);
+        {
+            tvg::SwCanvas* canvas = tvg::SwCanvas::gen();
+            canvas->target(buffer.data(), 160, 160, 120, tvg::ColorSpace::ABGR8888S);
+            tvg::Shape* spot = tvg::Shape::gen();
+            spot->appendRect(0, 0, 160, 120);
+            spot->fill(255, 0, 255);
+            tvg::Picture* pic = tvg::Picture::gen();
+            REQUIRE(pic->load(sieve.data(), 4, 3, tvg::ColorSpace::ARGB8888, true) == tvg::Result::Success);
+            pic->transform(tvg::Matrix{static_cast<f32>(c), static_cast<f32>(-n), static_cast<f32>(80 - 2 * c + 1.5 * n),
+                                       static_cast<f32>(n), static_cast<f32>(c), static_cast<f32>(60 - 2 * n - 1.5 * c), 0, 0, 1});
+            spot->mask(pic, tvg::MaskMethod::Alpha);
+            canvas->add(spot);
+            canvas->update();
+            canvas->draw(true);
+            canvas->sync();
+            delete canvas;
+        }
+        usize seen = 0, off = 0;
+        for (u32 y = 0; y < 120; ++y)
+            for (u32 x = 0; x < 160; ++x) {
+                // The pixel's centre in the sieve's texels; those a hair from a texel's edge are left out, and those
+                // a pixel and a half from the sieve's (where the edge of the turned box falls is the scan's, not the
+                // texel's).
+                const f64 dx = x + 0.5 - 80, dy = y + 0.5 - 60, edge = 1.5 / s;
+                const f64 u = (c * dx + n * dy) / (s * s) + 2, v = (-n * dx + c * dy) / (s * s) + 1.5;
+                if (u < edge || v < edge || u > 4 - edge || v > 3 - edge) continue;
+                if (std::fabs(u - std::round(u)) < 0.05 || std::fabs(v - std::round(v)) < 0.05) continue;
+                const bool hole = (static_cast<int>(u) + static_cast<int>(v)) % 2 == 0;
+                ++seen;
+                off += hole != ((buffer[y * 160 + x] & 0xffffffu) == 0xff00ffu && buffer[y * 160 + x] >> 24 == 255); // ABGR: r, g, b, a
+            }
+        CHECK(seen > static_cast<usize>(800 * z * z));
+        CHECK(off == 0);
+    }
+    tvg::Initializer::term();
 }
 
 TEST_CASE("Сцена: камера к цели и по пути") {
@@ -2881,6 +2988,32 @@ TEST_CASE("Сцена в игре: метки по файлам — те же, �
     CHECK(swaps == 4);
     // Out of a swap there are none.
     CHECK(vector::scene_pose(m, 0.1).actors[beetle].from_parts.empty());
+
+    // A mark at the end of «hop»: its second play, twice as fast, says it at half its moment, here the scene's very end.
+    vector::SceneMotion clicks = m;
+    std::vector<const vector::ScenePlay*> hops;
+    for (const vector::ScenePlay& p : clicks.file.plays)
+        if (p.actor == "жук" && p.kind == vector::ScenePlay::Kind::Play) hops.push_back(&p);
+    REQUIRE(hops.size() == 2);
+    CHECK(hops[1]->speed == 2);
+    const auto hop = std::find_if(clicks.actors[beetle].clips.begin(), clicks.actors[beetle].clips.end(),
+                                  [](const vector::MotionClip& c) { return c.name == "hop"; });
+    REQUIRE(hop != clicks.actors[beetle].clips.end());
+    REQUIRE(hops[0]->at + hop->length < hops[1]->at);
+    hop->marks.push_back({false, "щелчок", hop->length, 0});
+    // On the nanoseconds the moments of a scene's file are counted in.
+    auto ns = [](f64 t) { return std::round(t * 1e9) / 1e9; };
+    clicks.file.length = ns(ns(hops[1]->at) + hop->length / 2);
+    REQUIRE(vector::scene_marks(clicks, game, why));
+    std::vector<f64> clicked;
+    for (const vector::SceneMark& mk : game)
+        if (mk.name == "щелчок") {
+            CHECK(mk.actor == "жук");
+            clicked.push_back(mk.at);
+        }
+    REQUIRE(clicked.size() == 2);
+    CHECK(clicked[0] == doctest::Approx(hops[0]->at + hop->length));
+    CHECK(clicked[1] == clicks.file.length);
 }
 
 TEST_CASE("Сцена в игре: места картинок, копий и актёров в рисунке сцены, камера — как во вкладке; пробег рисует только своё") {
@@ -3226,6 +3359,16 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(frame->GetAbsoluteTop() == doctest::Approx(0));
         CHECK(frame->GetBox().GetSize().x == doctest::Approx(320));
         CHECK(frame->GetBox().GetSize().y == doctest::Approx(240));
+        // The bars over it, the background's colour to the frame's edges.
+        Rml::Element* bars = doc->GetElementById("bars");
+        REQUIRE(bars);
+        CHECK(bars->GetProperty<Rml::Colourb>("border-left-color") == Rml::Colourb(32, 48, 64, 255));
+        CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Left) == doctest::Approx(40));
+        CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Right) == doctest::Approx(40));
+        CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top) == 0);
+        CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Bottom) == 0);
+        CHECK(bars->GetBox().GetSize(Rml::BoxArea::Border).x == doctest::Approx(400));
+        CHECK(doc->GetChild(doc->GetNumChildren() - 1) == bars);
         const std::vector<std::string> first = {"run " + key("небо"),
                                                 "picture лес " + key("лес"),
                                                 "picture лес cлес[1]",
@@ -3255,8 +3398,28 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(sky->only == std::vector<std::string>{key("небо")});
         context->Update();
         context->Render();
+        // Its layers cut at the frame's edge, though a transform moves them (the layout sees no overflow).
+        Rml::Rectanglei cut;
+        REQUIRE(Rml::ElementUtilities::GetClippingRegion(hog, cut));
+        CHECK(cut.Position() == Rml::Vector2i(40, 0));
+        CHECK(cut.Size() == Rml::Vector2i(320, 240));
+        // At 0.35 s the beetle swaps to its flat drawing: its layer shows the swap, the parts of both drawings.
+        for (int k = 0; k < 6; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK(scene.time() == doctest::Approx(0.35));
+        const ui::SvgPose* bug = ui::svg_posed(camera->GetChild(7));
+        REQUIRE(bug);
+        CHECK(bug->picture == "жук.svg");
+        CHECK(bug->swap);
+        CHECK(bug->swap_from == vector::kMotionMainDrawing);
+        CHECK(bug->drawing == "flat");
+        CHECK(bug->swap_k > 0);
+        CHECK(bug->swap_k < 1);
+        CHECK(pose_of(bug->from_parts, "жук/shell"));
+        // Its clock read to the nanosecond: 90 frames of 1/60 are 1.5, the moment a clip may begin (summed, 1.4999999999999996).
+        for (int k = 0; k < 69; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK(scene.time() == 1.5);
         // The sky to the top at 1.5 s: the floor's run and the sky's are one.
-        for (int k = 0; k < 80; ++k) scene.update(1.0 / 60, 400, 240);
+        for (int k = 0; k < 5; ++k) scene.update(1.0 / 60, 400, 240);
         CHECK(scene.time() > 1.5);
         CHECK(scene.layers() == std::vector<std::string>{"picture лес " + key("лес"), "picture лес cлес[1]", "picture лес cлес[2]",
                                                          "run " + key("дорога"), "actor ёжик", "run " + key("тень"), "actor жук",
@@ -3297,4 +3460,76 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
     Rml::Shutdown();
     std::error_code ec;
     fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена в игре: прозрачность картинки и актёра — у их слоёв") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    part("лес").opacity(0.25, 0)
+    part("ёжик").opacity(0.5, 1, "linear")
+    wait(1))",
+         kPlaceStage);
+    const SceneGift gift = gift_of(s, files, "Туман");
+    const fs::path game_dir = empty_dir("forge_tests_сцена_прозрачность");
+    give(gift, game_dir, "Туман");
+
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("scene", {400, 240});
+    REQUIRE(context);
+    {
+        game::GameScene scene;
+        std::string why;
+        REQUIRE(scene.play(context, game_dir, "Туман", {}, why));
+        scene.update(0, 400, 240);
+        REQUIRE(scene.document());
+        Rml::Element* camera = scene.document()->GetElementById("camera");
+        REQUIRE(camera);
+        // A layer's opacity: its group's in the stage's picture at that moment, as the tab draws it.
+        auto opacity = [&](const std::string& layer) {
+            const std::vector<std::string> layers = scene.layers();
+            for (usize i = 0; i < layers.size(); ++i)
+                if (layers[i].rfind(layer, 0) == 0) {
+                    const Rml::Property* p = camera->GetChild(static_cast<int>(i))->GetLocalProperty("opacity");
+                    return p ? static_cast<f64>(p->Get<float>()) : -1.0;
+                }
+            return -2.0;
+        };
+        CHECK(opacity("picture лес") == doctest::Approx(0.25));
+        CHECK(opacity("actor ёжик") == doctest::Approx(1));
+        for (int k = 0; k < 30; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK(scene.time() == doctest::Approx(0.5));
+        CHECK(opacity("picture лес") == doctest::Approx(0.25));
+        CHECK(opacity("actor ёжик") == doctest::Approx(0.75));
+        CHECK(opacity("actor жук") == doctest::Approx(1));
+    }
+    Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена в игре: места — в единицах рамки рисунка, не его размера на экране") {
+    // A picture drawn twice its box's size, its box moved: a group stands where its own units put it.
+    ui::SvgPlaces places;
+    std::string why;
+    REQUIRE(places.load("/рамка/stage.svg",
+                        R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="10 0 100 50">)svg"
+                        R"svg(<g id="a" transform="translate(30 20)"><rect width="4" height="4"/></g></svg>)svg",
+                        why));
+    ui::SvgPose pose;
+    pose.picture = "stage.svg";
+    const std::vector<ui::SvgPlace>& top = places.place(pose);
+    REQUIRE(top.size() == 1);
+    CHECK(top[0].id == "a");
+    CHECK(top[0].m.a == doctest::Approx(1));
+    CHECK(top[0].m.b == doctest::Approx(0));
+    CHECK(top[0].m.c == doctest::Approx(0));
+    CHECK(top[0].m.d == doctest::Approx(1));
+    CHECK(top[0].m.e == doctest::Approx(30));
+    CHECK(top[0].m.f == doctest::Approx(20));
 }

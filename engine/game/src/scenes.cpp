@@ -53,7 +53,12 @@ std::string transform_of(const vector::MotionMatrix& m) {
 constexpr const char* kStyle = "body { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; pointer-events: none; }"
                                "div, img { display: block; position: absolute; left: 0px; top: 0px; pointer-events: none;"
                                " transform-origin: 0px 0px 0px; }"
-                               "#frame { overflow: hidden; }";
+                               // Always: its layers are moved by transforms, which the layout does not count as overflow (a scene
+                               // fitted larger than its canvas spilled over the bars).
+                               "#frame { overflow: hidden; clip: always; }"
+                               // The bars over it: the frame's edge on whole pixels of the window (the software Vulkan lets
+                               // a column of a scissor's edge through with MSAA).
+                               "#bars { width: 100%; height: 100%; box-sizing: border-box; border-width: 0px; }";
 
 // How long the scene's music goes out, and the game's comes back, after its end.
 constexpr f64 kMusicBack = 1.0;
@@ -141,7 +146,9 @@ struct GameScene::Impl {
     std::vector<std::vector<ui::SvgDrawing>> drawings; // each actor's other drawings, by scene.file.actors
     std::vector<vector::SceneMark> marks;
     usize next_mark = 0;
-    f64 t = 0;
+    // Its moment: the clock (the frames' steps summed) read to the nanosecond, so 90 steps of 1/60 are 1.5, where the tab's
+    // frame 90 has a clip begun, and not 1.4999999999999996, a hair before it.
+    f64 t = 0, clock = 0;
     bool going = false, fresh = false;
     u64 serial = 0, serials = 0;
     std::map<u64, bool> ends; // the plays over: skipped?
@@ -149,6 +156,7 @@ struct GameScene::Impl {
     Rml::ElementDocument* doc = nullptr;
     Rml::Element* frame = nullptr;
     Rml::Element* camera = nullptr;
+    Rml::Element* bars = nullptr;
     ui::SvgPlaces places;
     std::vector<Layer> layers;
     std::string structure;
@@ -180,7 +188,7 @@ struct GameScene::Impl {
     void close() {
         if (doc && context) context->UnloadDocument(doc);
         doc = nullptr;
-        frame = camera = nullptr;
+        frame = camera = bars = nullptr;
         layers.clear();
         structure.clear();
         camera_transform.clear();
@@ -265,6 +273,13 @@ struct GameScene::Impl {
         frame->SetProperty("top", px(f.top));
         frame->SetProperty("width", px(cw * f.sx));
         frame->SetProperty("height", px(ch * f.sy));
+        // The scissor's edges: the frame's, rounded to the window's pixels.
+        const f64 x0 = std::round(f64(f.left) * dp), y0 = std::round(f64(f.top) * dp), x1 = std::round((f.left + cw * f.sx) * dp),
+                  y1 = std::round((f.top + ch * f.sy) * dp);
+        bars->SetProperty("border-left-width", px(x0 / dp));
+        bars->SetProperty("border-top-width", px(y0 / dp));
+        bars->SetProperty("border-right-width", px(std::max(0.0, w - x1) / dp));
+        bars->SetProperty("border-bottom-width", px(std::max(0.0, h - y1) / dp));
         camera->SetProperty("width", px(cw));
         camera->SetProperty("height", px(ch));
         camera_transform.clear();
@@ -476,13 +491,19 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     std::replace(url.begin(), url.end(), '\\', '/');
     std::replace(url.begin(), url.end(), ':', '|');
     const std::string rml = std::string("<rml><head><title>Сцена</title><style>") + kStyle +
-                            "</style></head><body><div id=\"frame\"><div id=\"camera\"></div></div></body></rml>";
+                            "</style></head><body><div id=\"frame\"><div id=\"camera\"></div></div><div id=\"bars\"></div></body></rml>";
     im.context = context;
     im.doc = context ? context->LoadDocumentFromMemory(rml, url) : nullptr;
     if (!im.doc) return why = "сцена «" + n + "»: её документ не построился", false;
     im.frame = im.doc->GetElementById("frame");
     im.camera = im.doc->GetElementById("camera");
-    if (!scene.file.background.empty()) im.doc->SetProperty("background-color", scene.file.background);
+    im.bars = im.doc->GetElementById("bars");
+    if (!scene.file.background.empty()) {
+        im.doc->SetProperty("background-color", scene.file.background);
+        im.bars->SetProperty("border-color", scene.file.background);
+    } else {
+        im.bars->SetProperty("display", "none");
+    }
     im.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
 
     im.dir = dir;
@@ -493,7 +514,7 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     im.drawings = std::move(drawings);
     im.marks = std::move(marks);
     im.next_mark = 0;
-    im.t = 0;
+    im.t = im.clock = 0;
     im.going = true;
     im.fresh = true;
     im.serial = ++im.serials;
@@ -525,7 +546,9 @@ void GameScene::update(f64 dt, int width, int height) {
         im.fresh = false;
         dt = 0;
     }
-    im.t = std::min(im.t + dt, im.scene.file.length);
+    const f64 length = im.scene.file.length;
+    im.clock = std::min(im.clock + dt, length);
+    im.t = im.clock < length ? std::min(std::round(im.clock * 1e9) / 1e9, length) : length;
     const u64 me = im.serial;
     while (im.going && im.serial == me && im.next_mark < im.marks.size() && im.marks[im.next_mark].at <= im.t + 1e-9) {
         const vector::SceneMark mk = im.marks[im.next_mark++];

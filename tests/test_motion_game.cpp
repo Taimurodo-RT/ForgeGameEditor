@@ -733,6 +733,9 @@ TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for i
     CHECK(ended->kind == script::NodeKind::Event);
     CHECK(ended->event == "on_scene");
     CHECK(ended->title.get() == "Сцена кончилась");
+    REQUIRE(ended->inputs.size() == 1);
+    CHECK(ended->inputs[0].enum_type == "scene"); // the game's scenes, or none: any
+    CHECK(!ended->inputs[0].required);
     REQUIRE(ended->outputs.size() == 2);
     CHECK(ended->outputs[0].title.get() == "Сцена");
     CHECK(ended->outputs[1].title.get() == "Пропущена");

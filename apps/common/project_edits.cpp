@@ -197,6 +197,21 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("ms_tab", &forge::edits::ProjectEdits::ms_tab);
     t.field("ms_drawing_file", &forge::edits::ProjectEdits::ms_drawing_file);
     t.field("ms_drawing_svg", &forge::edits::ProjectEdits::ms_drawing_svg);
+    t.field("sg_scene", &forge::edits::ProjectEdits::sg_scene);
+    t.field("sg_thing", &forge::edits::ProjectEdits::sg_thing);
+    t.field("sg_after", &forge::edits::ProjectEdits::sg_after);
+    t.field("sg_name", &forge::edits::ProjectEdits::sg_name);
+    t.field("sg_skipped", &forge::edits::ProjectEdits::sg_skipped);
+    t.field("sg_ends", &forge::edits::ProjectEdits::sg_ends);
+    t.field("sg_music", &forge::edits::ProjectEdits::sg_music);
+    t.field("sg_scheme_error", &forge::edits::ProjectEdits::sg_scheme_error);
+    t.field("sg_canvas", &forge::edits::ProjectEdits::sg_canvas);
+    t.field("sg_background", &forge::edits::ProjectEdits::sg_background);
+    t.field("sg_length", &forge::edits::ProjectEdits::sg_length);
+    t.field("sg_fade", &forge::edits::ProjectEdits::sg_fade);
+    t.field("sg_frames", &forge::edits::ProjectEdits::sg_frames);
+    t.field("sg_frame_files", &forge::edits::ProjectEdits::sg_frame_files);
+    t.field("sg_heard", &forge::edits::ProjectEdits::sg_heard);
 }
 
 namespace forge::edits {

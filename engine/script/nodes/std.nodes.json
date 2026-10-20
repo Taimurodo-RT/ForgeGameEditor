@@ -37,7 +37,7 @@
     { "id": "std.event.scene", "kind": "event", "event": "on_scene", "category": "События", "icon": "movie",
       "title": { "ru": "Сцена кончилась", "en": "Scene ended" },
       "help": { "ru": "Сцена из «Векторной», показанная игре, кончилась. «Пропущена» — да, когда игрок её пропустил. Пустая сцена — любые." },
-      "inputs": [ { "id": "filter", "type": "string", "constant": true, "title": { "ru": "Сцена", "en": "Scene" } } ],
+      "inputs": [ { "id": "filter", "type": "string", "constant": true, "enum_type": "scene", "title": { "ru": "Сцена", "en": "Scene" } } ],
       "outputs": [
         { "id": "name", "type": "string", "title": { "ru": "Сцена", "en": "Scene" } },
         { "id": "skipped", "type": "bool", "title": { "ru": "Пропущена", "en": "Skipped" } } ],

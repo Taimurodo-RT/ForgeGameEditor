@@ -191,6 +191,8 @@ public:
     // its session and its variables stay as they were, and the player is told why.
     bool load(std::string_view slot_id);
     bool save(std::string_view slot_id, std::string title, bool autosave = false);
+    // How often the game saves itself while it is played (game.json's autosave_minutes), for tests.
+    void set_autosave_seconds(f64 seconds) { autosave_s_ = seconds; }
     bool continue_game();       // the newest slot
     void pause(bool on);
     void to_main_menu();
@@ -286,6 +288,7 @@ private:
     Screen back_ = Screen::Main; // where Esc on settings / slots returns
     f64 playtime_ = 0;
     f64 since_autosave_ = 0;
+    u64 scene_heard_ = 0; // the play of a scene whose end the game has had a frame to hear (the autosave waits for it)
     std::string slot_; // the slot this game was loaded from or last saved to
     bool quit_ = false;
     u32 width_ = 0, height_ = 0;

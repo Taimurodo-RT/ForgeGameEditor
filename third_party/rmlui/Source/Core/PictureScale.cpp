@@ -23,7 +23,7 @@ float PictureScale::Step(float scale)
 {
 	if (!(scale > 0.f))
 		return 1.f;
-	const float n = Math::Clamp(std::ceil(4.f * std::log2(scale) - 1e-3f), -12.f, 12.f);
+	const float n = Math::Clamp(std::ceil(4.f * std::log2(scale) - 1e-3f), -24.f, 24.f);
 	return std::exp2(n / 4.f);
 }
 

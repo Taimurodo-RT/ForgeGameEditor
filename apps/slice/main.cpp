@@ -88,6 +88,7 @@
 #include "forge/game/runner.h"
 #include "forge/game/game_module.h"
 #include "forge/game/saves.h"
+#include "forge/game/scenes.h"
 #include "forge/level/level.h"
 #include "forge/level/light.h"
 #include "forge/level/tiled_apply.h"
@@ -550,6 +551,8 @@ private:
         if (project_has_edits && project_edits_error.empty() && !project_edits.vl_screen.empty()) build_live_edits(s);
         // So do a character's clips on a screen: the author's code plays them at moments of the world's time.
         if (project_has_edits && project_edits_error.empty() && !project_edits.ms_screen.empty()) build_motion_edits(s);
+        // A scene of «Векторная» the logic shows at the start: looked at from the game's first frame.
+        if (project_has_edits && project_edits_error.empty() && !project_edits.sg_scene.empty()) build_scene_edits(s);
         steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
             if (f < 2) return false;
             std::error_code ec;
@@ -8420,14 +8423,15 @@ private:
     // falls lose the game: the window «при поражении», «Ещё раз» a new game, the save as it was.
     // continued (another process, another working folder): «Продолжить» on «Холмы», nothing given twice, the bot on
     // through «Вершина» to the flag: the window «при победе», «Ещё раз», the save still loads.
-    // A key of the keyboard as the window gives it: its place and the letter there.
-    static void key_event(Shell& s, SDL_Scancode sc, bool down) {
+    // A key of the keyboard as the window gives it: its place and the letter there. True when the shell kept it from
+    // the world.
+    static bool key_event(Shell& s, SDL_Scancode sc, bool down) {
         SDL_Event ev{};
         ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
         ev.key.scancode = sc;
         ev.key.key = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
         ev.key.down = down;
-        s.handle_event(ev);
+        return s.handle_event(ev);
     }
     std::string hero_at() const {
         char b[64];
@@ -9095,6 +9099,473 @@ private:
             check(errors.empty() && problems.empty(), "ни ошибок скриптов, ни непонятых частей картинки:" + lines);
             check(s.data_errors().empty(), "данные игры читаются без ошибок");
             return true;
+        }});
+    }
+
+    // The toasts the player sees now («Сохранено», «Во время сцены сохраниться нельзя»).
+    static void toasts_in(Rml::Element* e, std::vector<std::string>& out) {
+        if (!e) return;
+        if (e->IsClassSet("toast") && e->IsVisible(true)) out.push_back(text_of(e));
+        for (int i = 0; i < e->GetNumChildren(); ++i) toasts_in(e->GetChild(i), out);
+    }
+    static std::vector<std::string> toasts(Shell& s) {
+        std::vector<std::string> out;
+        if (Rml::Context* c = s.context())
+            for (int i = 0; i < c->GetNumDocuments(); ++i) toasts_in(c->GetDocument(i), out);
+        return out;
+    }
+    static bool toast_says(Shell& s, const std::string& text) {
+        for (const std::string& t : toasts(s))
+            if (t.find(text) != std::string::npos) return true;
+        return false;
+    }
+
+    // The player's frame against the tab's frame «Через камеру» of the same moment (part 6г2): the camera's frame fitted
+    // into the game's screen, the bars round it the scene's background within 1; where the tab's frame is solid (a
+    // pixel and its eight neighbours one colour, wholly covered or wholly clear) the game's within 4 of it, the
+    // background where it is clear. Empty when they agree; why not, and the game's frame kept beside the tab's, when
+    // not. `said`: what was compared.
+    std::string scene_frame_differs(Shell& s, const assets::CookedTexture& ref, const std::filesystem::path& keep, std::string& said) {
+        const ProjectEdits& e = project_edits;
+        std::vector<u8> px;
+        u32 W = 0, H = 0;
+        if (!frame_pixels(s, px, W, H) || W != 1920 || H != 1080) return "кадр игры 1920 × 1080 не снят";
+        const f64 cw = e.sg_canvas[0], ch = e.sg_canvas[1];
+        const f64 fit = std::min(W / cw, H / ch);
+        const int fw = static_cast<int>(std::lround(cw * fit)), fh = static_cast<int>(std::lround(ch * fit));
+        const int ox = (static_cast<int>(W) - fw) / 2, oy = (static_cast<int>(H) - fh) / 2;
+        if (static_cast<int>(ref.width) != fw || static_cast<int>(ref.height) != fh)
+            return "кадр вкладки " + std::to_string(ref.width) + " × " + std::to_string(ref.height) + " при рамке сцены " + std::to_string(fw) +
+                   " × " + std::to_string(fh);
+        const int bg[3] = {e.sg_background[0], e.sg_background[1], e.sg_background[2]};
+        auto game = [&](int x, int y, int c) { return int(px[(static_cast<usize>(y) * W + static_cast<usize>(x)) * 4 + static_cast<usize>(c)]); };
+        auto tab = [&](int x, int y, int c) {
+            return int(ref.rgba8[(static_cast<usize>(y) * static_cast<usize>(fw) + static_cast<usize>(x)) * 4 + static_cast<usize>(c)]);
+        };
+        std::string why;
+        int bars = 0, bars_off = 0;
+        for (int y = 0; y < static_cast<int>(H); ++y)
+            for (int x = 0; x < static_cast<int>(W); ++x) {
+                if (x >= ox && x < ox + fw && y >= oy && y < oy + fh) continue;
+                ++bars;
+                for (int c = 0; c < 3; ++c)
+                    if (std::abs(game(x, y, c) - bg[c]) > 1) {
+                        if (bars_off++ == 0)
+                            why = "полоса в " + std::to_string(x) + ", " + std::to_string(y) + ": " +
+                                  rgb_text({game(x, y, 0), game(x, y, 1), game(x, y, 2)}) + " при фоне " + rgb_text({bg[0], bg[1], bg[2]});
+                        break;
+                    }
+            }
+        int solid = 0, off = 0, worst = 0;
+        for (int j = 1; j + 1 < fh; ++j)
+            for (int i = 1; i + 1 < fw; ++i) {
+                const int a = tab(i, j, 3);
+                if (a != 0 && a != 255) continue;
+                bool one = true;
+                for (int dj = -1; dj <= 1 && one; ++dj)
+                    for (int di = -1; di <= 1 && one; ++di)
+                        for (int c = 0; c < 4 && one; ++c) one = std::abs(tab(i + di, j + dj, c) - tab(i, j, c)) <= 1;
+                if (!one) continue;
+                ++solid;
+                int d = 0;
+                for (int c = 0; c < 3; ++c) d = std::max(d, std::abs(game(ox + i, oy + j, c) - (a == 0 ? bg[c] : tab(i, j, c))));
+                worst = std::max(worst, d);
+                if (d > 4 && off++ == 0 && why.empty())
+                    why = "в " + std::to_string(i) + ", " + std::to_string(j) + " кадра " +
+                          rgb_text({game(ox + i, oy + j, 0), game(ox + i, oy + j, 1), game(ox + i, oy + j, 2)}) + " при " +
+                          (a == 0 ? "фоне " + rgb_text({bg[0], bg[1], bg[2]}) : rgb_text({tab(i, j, 0), tab(i, j, 1), tab(i, j, 2)})) + " у вкладки";
+            }
+        said = std::to_string(solid) + " сплошных пикселей из " + std::to_string(fw * fh) + ", расхождение до " + std::to_string(worst) + ", " +
+               std::to_string(bars) + " пикселей полос";
+        if (bars_off == 0 && off == 0 && solid >= fw * fh / 2) return {};
+        if (why.empty()) why = "сплошных пикселей только " + std::to_string(solid);
+        std::vector<u8> png;
+        assets::CookedTexture img;
+        img.width = W;
+        img.height = H;
+        img.rgba8 = std::move(px);
+        if (assets::encode_image(img, ".png", png) && write_file_atomic(keep, png)) FORGE_INFO("кадр игры записан: %s", path_to_utf8(keep).c_str());
+        return std::to_string(off) + " сплошных пикселей и " + std::to_string(bars_off) + " пикселей полос расходятся (" + why + ")";
+    }
+
+    // A scene of «Векторная» given to the game (--edits sg_*, the editor's self-test pixel-scene-e; part 6г2 of
+    // docs/models/сцены-модель.md). The scheme of the one sg_thing shows it at the start: it plays over the world on the screen of
+    // 1920 × 1080, the world standing and deaf to the player's keys; at the tab's moments the frame is the tab's frame
+    // «Через камеру» on its solid pixels, the bars round it the scene's background; its marks come to the logic and
+    // the sounds in the tab's order at their moments; its music is the tab's at each moment and the game's own goes out
+    // under it over its fade; a quicksave is refused in words and the autosave waits for its end and for the logic to
+    // hear it; «Сцена кончилась» and the node waiting on it say it was not skipped; the music comes back over a second.
+    // A new game shows it again: Esc stands it, «Пропустить сцену» in the pause menu ends it, what it had left to say
+    // said and its sounds not, «пропущена». Another: a load ends it without a word, the vars as the autosave kept them.
+    // Shown by the game without «Мир на паузе»: the world goes and the hero walks; a second one at the same time is
+    // refused. The time of a frame at 1920 × 1080 in the log.
+    // The scripts' errors but those ending with `planned`, each in brackets (for a check's message; empty when none).
+    std::string errors_but(const std::string& planned) const {
+        std::string said;
+        for (const std::string& l : g_.script_errors())
+            if (planned.empty() || !l.ends_with(planned)) said += " [" + l + "]";
+        return said;
+    }
+    void build_scene_edits(Shell& s) {
+        struct Want {
+            f64 at = 0;
+            std::string what; // "message середина", "sound шаг.wav"
+        };
+        struct Heard {
+            f64 at = 0;
+            std::string what;
+        };
+        struct Seen {
+            vector::SceneMotion scene;
+            std::vector<assets::CookedTexture> refs;
+            std::vector<Want> want;
+            std::vector<Heard> heard;
+            std::optional<game::SlotInfo> autosave;
+            usize slots = 0, next_frame = 0, heard_at_load = 0;
+            u64 serial = 0, last_ns = 0;
+            u32 began = 0, ended = 0, at = 0; // the frames it began and ended at, and one step's own moment
+            f64 world_t = 0, hero_x = 0, hero_y = 0, skip_at = -1, share = 0, ends = 0;
+            std::vector<f64> frame_ms;
+            std::map<u32, f64> tune_since; // by the call that began a tune: the place of its file the tab has at the frame it began
+            bool skip_ms = false, right = false, released = false, f5 = false, music_off = false;
+        };
+        auto st = std::make_shared<Seen>();
+        for (const std::string& line : project_edits.sg_heard) {
+            std::istringstream in(line);
+            Want w;
+            std::string kind, name;
+            in >> w.at >> kind;
+            std::getline(in >> std::ws, name);
+            w.what = kind + " " + name;
+            st->want.push_back(w);
+        }
+        auto var = [&s](const std::string& name) { return s.vars().get(name).number(); };
+        // What it said against what the tab says, in order; `timed`: each in the frame its moment came (from it to a
+        // 60th of a second after); empty when they agree.
+        auto heard_differs = [](const std::vector<Heard>& got, const std::vector<Want>& want, bool timed) -> std::string {
+            for (usize i = 0; i < std::max(got.size(), want.size()); ++i) {
+                if (i >= got.size()) return "не сказано «" + want[i].what + "» (" + std::to_string(want[i].at) + " с)";
+                if (i >= want.size()) return "лишнее «" + got[i].what + "» в " + std::to_string(got[i].at) + " с";
+                if (got[i].what != want[i].what) return "«" + got[i].what + "» при «" + want[i].what + "» у вкладки";
+                if (timed && (got[i].at < want[i].at - 1e-6 || got[i].at > want[i].at + 1.0 / 60 + 1e-6))
+                    return "«" + got[i].what + "» в " + std::to_string(got[i].at) + " с при " + std::to_string(want[i].at) + " с у вкладки";
+            }
+            return {};
+        };
+        // The scene's music at its moment as the game plays it: the tunes of the tab's music at t (their files, from
+        // when, how loud), each one playing, the game's own going out over the first call's fade.
+        auto music_differs = [this, &s, st](f64 t) -> std::string {
+            const ProjectEdits& e = project_edits;
+            audio::ScreenSounds& snd = g_.sounds().screens();
+            std::vector<audio::ScreenSounds::Tune> want;
+            // A tune that goes on keeps the place of its file it began from: the place the tab has at the frame it began.
+            for (const vector::SceneMusicVoice& v : vector::scene_music_at(st->scene.file, t))
+                want.push_back({v.call, game::scene_sound_file(snd.folder(), v.name), st->tune_since.try_emplace(v.call, v.since).first->second,
+                                static_cast<f32>(v.volume)});
+            if (want.empty() || want[0].name != e.sg_music) return "у вкладки в " + std::to_string(t) + " с нет музыки «" + e.sg_music + "»";
+            if (snd.tunes() != want)
+                return "в " + std::to_string(t) + " с играет " + std::to_string(snd.tunes().size()) + " мелодий, не те, что у вкладки" +
+                       (snd.tunes().empty() ? std::string() : ": «" + snd.tunes()[0].name + "» с " + std::to_string(snd.tunes()[0].since) +
+                                                                 " с, громкость " + std::to_string(snd.tunes()[0].volume));
+            for (const audio::ScreenSounds::Tune& tune : want)
+                if (!g_.sounds().mixer().playing(snd.tune_voice(tune.call))) return "«" + tune.name + "» не звучит";
+            const f32 game_share = static_cast<f32>(std::clamp(1 - t / e.sg_fade, 0.0, 1.0));
+            if (std::fabs(snd.share() - game_share) > 1e-6f)
+                return "музыка игры в " + std::to_string(t) + " с — " + std::to_string(snd.share()) + " при " + std::to_string(game_share);
+            (void)s;
+            return {};
+        };
+        auto keep = [this](const std::string& name) {
+            return project_edits.sg_frame_files.empty() ? std::filesystem::path(utf8_path(name))
+                                                        : utf8_path(project_edits.sg_frame_files[0]).parent_path() / utf8_path(name);
+        };
+        steps_.push_back({"сцена при старте игры", 400, [&s, this, st, var, heard_differs, music_differs, keep](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            audio::ScreenSounds& snd = g_.sounds().screens();
+            if (f == 0) {
+                if (!check_ok(e.sg_canvas.size() == 2 && e.sg_background.size() == 3 && e.sg_frames.size() == e.sg_frame_files.size() &&
+                                  !e.sg_frames.empty() && e.sg_fade > 0 && !e.sg_thing.empty() && !e.sg_scheme_error.empty(),
+                              "правки сцены полны"))
+                    return true;
+                check(g_.copies_of(e.sg_thing).size() == 1,
+                      "на стартовом уровне один «" + e.sg_thing + "» (сцена показывается раз): " + std::to_string(g_.copies_of(e.sg_thing).size()));
+                std::string why;
+                check(game::read_scene_folder(s.game_dir() / "scenes" / utf8_path(e.sg_scene), st->scene, why), "папка сцены читается: " + why);
+                check(std::fabs(st->scene.file.length - e.sg_length) < 1e-9 && !st->scene.file.music.empty() &&
+                          std::fabs(st->scene.file.music.front().fade - e.sg_fade) < 1e-9 && st->scene.file.music.front().at == 0,
+                      "в папке сцены её длина и музыка, как у вкладки");
+                for (const std::string& file : e.sg_frame_files) {
+                    std::vector<u8> bytes;
+                    assets::CookedTexture img;
+                    check(read_file(utf8_path(file), bytes) && assets::decode_image(bytes, img), "кадр вкладки читается: " + file);
+                    st->refs.push_back(std::move(img));
+                }
+                // What the scene says, caught on its way to the logic and to the sounds (the HUD's own clips go by the
+                // screens' way).
+                sc.on_message = [st, &sc, to = sc.on_message](const std::string& m) {
+                    st->heard.push_back({sc.time(), "message " + m});
+                    if (to) to(m);
+                };
+                sc.on_sound = [st, &sc, to = sc.on_sound](const std::string& file) {
+                    st->heard.push_back({sc.time(), "sound " + file});
+                    if (to) to(file);
+                };
+                s.set_autosave_seconds(1);
+                st->autosave = s.slots().info("autosave");
+                st->slots = s.slots().list().size();
+                return false;
+            }
+            const auto autosave_same = [&s, st] {
+                const std::optional<game::SlotInfo> now = s.slots().info("autosave");
+                return now.has_value() == st->autosave.has_value() &&
+                       (!now || (now->saved_at == st->autosave->saved_at && now->playtime_s == st->autosave->playtime_s));
+            };
+            if (!st->began) {
+                if (!sc.going()) {
+                    check(f < 30, "сцена «" + e.sg_scene + "» не началась при старте");
+                    return f >= 30;
+                }
+                st->began = f;
+                st->serial = sc.serial();
+                st->world_t = g_.script_time();
+                st->hero_x = g_.hero_x();
+                st->hero_y = g_.hero_y();
+                check(sc.name() == e.sg_scene && sc.how().pause && sc.how().skip, "идёт «" + sc.name() + "», мир на паузе, пропускается");
+                check(sc.time() == 0, "первый кадр сцены — её начало: " + std::to_string(sc.time()));
+                check(s.screen() == Screen::Playing && sc.document() != nullptr, "сцена на экране игры");
+                FORGE_INFO("self-test: сцена «%s» началась в кадре %u, слои: %zu", sc.name().c_str(), f, sc.layers().size());
+            }
+            if (!st->ended && sc.going()) {
+                const f64 t = sc.time();
+                const u64 now = time_now_ns();
+                if (st->last_ns && !st->skip_ms) st->frame_ms.push_back(static_cast<f64>(now - st->last_ns) * 1e-6);
+                st->skip_ms = false;
+                check(g_.script_time() == st->world_t && g_.hero_x() == st->hero_x && g_.hero_y() == st->hero_y && !s.world_hears(),
+                      "мир стоит, пока идёт сцена" + hero_at());
+                if (st->next_frame < e.sg_frames.size() && std::fabs(t - e.sg_frames[st->next_frame]) < 1e-6) {
+                    const usize k = st->next_frame++;
+                    std::string said;
+                    check(toasts(s).empty(), "над кадром сцены нет сообщений");
+                    const std::string why = scene_frame_differs(s, st->refs[k], keep("игра " + std::to_string(k) + ".png"), said);
+                    check(why.empty(), "кадр игры в " + std::to_string(t) + " с — кадр вкладки: " + why);
+                    FORGE_INFO("self-test: кадр сцены в %.4f с: %s", t, said.c_str());
+                    st->skip_ms = true;
+                } else if (st->next_frame < e.sg_frames.size() && t > e.sg_frames[st->next_frame] + 1e-6)
+                    check(false, "миг " + std::to_string(e.sg_frames[st->next_frame++]) + " с пройден без кадра");
+                if (std::string why = music_differs(t); !why.empty() && !st->music_off) {
+                    st->music_off = true;
+                    check(false, "музыка сцены: " + why);
+                }
+                // The hero's key does nothing while it plays, nor a click on the world: the shell keeps both.
+                if (!st->right && t >= 0.6 - 1e-9) {
+                    st->right = true;
+                    check(key_event(s, SDL_SCANCODE_RIGHT, true), "клавиша героя во время сцены — не миру");
+                    const Rml::Vector2i size = s.context()->GetDimensions();
+                    SDL_Event ev{};
+                    ev.type = SDL_EVENT_MOUSE_MOTION;
+                    ev.motion.x = size.x * 0.5f;
+                    ev.motion.y = size.y * 0.5f;
+                    s.handle_event(ev);
+                    check(s.over_world(), "мышь над миром под сценой");
+                    for (const SDL_EventType type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+                        ev = {};
+                        ev.type = type;
+                        ev.button.button = SDL_BUTTON_LEFT;
+                        ev.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                        ev.button.x = size.x * 0.5f;
+                        ev.button.y = size.y * 0.5f;
+                        const bool kept = s.handle_event(ev);
+                        if (type == SDL_EVENT_MOUSE_BUTTON_DOWN) check(kept, "щелчок по миру во время сцены — не миру");
+                    }
+                }
+                if (st->right && !st->released && t >= 1.0 - 1e-9) {
+                    st->released = true;
+                    key_event(s, SDL_SCANCODE_RIGHT, false);
+                }
+                // A quicksave: refused in words, no slot; the autosave not either.
+                if (st->f5) {
+                    st->f5 = false;
+                    check(toast_says(s, "Во время сцены сохраниться нельзя"), "быстрое сохранение во время сцены — отказ словами");
+                    check(s.slots().list().size() == st->slots, "быстрое сохранение во время сцены не сохранило");
+                }
+                if (st->at == 0 && t >= 1.6 - 1e-9) {
+                    st->at = f;
+                    st->f5 = true;
+                    key_event(s, SDL_SCANCODE_F5, true);
+                    key_event(s, SDL_SCANCODE_F5, false);
+                    check(!s.save("autosave", "Автосохранение", true), "автосохранение во время сцены отказано");
+                }
+                check(autosave_same(), "автосохранения нет, пока идёт сцена");
+                st->last_ns = now;
+                return false;
+            }
+            if (!st->ended) {
+                st->ended = f;
+                check(st->at != 0 && !st->f5, "быстрое сохранение проверено во время сцены");
+                check(st->next_frame == e.sg_frames.size(), "все кадры сцены сравнены: " + std::to_string(st->next_frame));
+                check(std::fabs(sc.time() - e.sg_length) < 1e-9, "сцена прошла до конца: " + std::to_string(sc.time()) + " с");
+                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() == nullptr, "сцена кончилась, не пропущена, её документа нет");
+                const std::string why = heard_differs(st->heard, st->want, true);
+                check(why.empty(), "сообщения и звуки сцены — как у вкладки: " + why);
+                for (const std::string& p : sc.problems())
+                    check(p.find("нет в звуках игры") == std::string::npos, "звук сцены есть в игре: " + p);
+                std::vector<f64> sorted = st->frame_ms;
+                std::sort(sorted.begin(), sorted.end());
+                f64 sum = 0;
+                for (f64 v : sorted) sum += v;
+                const f64 n = std::max<f64>(static_cast<f64>(sorted.size()), 1.0);
+                FORGE_INFO("self-test: сцена на экране 1920 × 1080: %zu кадров, в среднем %.2f мс, p99 %.2f мс, худший %.2f мс", sorted.size(),
+                           sum / n, sorted.empty() ? 0.0 : sorted[sorted.size() * 99 / 100], sorted.empty() ? 0.0 : sorted.back());
+                st->share = snd.share();
+                return false;
+            }
+            const u32 after = f - st->ended;
+            if (after == 1) {
+                // The logic heard it in the game's frame after it: «Сцена кончилась» and the node waiting on it.
+                check(s.vars().get(e.sg_name).text() == e.sg_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0 &&
+                          s.vars().has(e.sg_after),
+                      "«Сцена кончилась»: «" + s.vars().get(e.sg_name).text() + "», пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " +
+                          std::to_string(var(e.sg_ends)) + "; «Показать сцену» пошла дальше: " + std::to_string(var(e.sg_after)));
+                check(autosave_same(), "автосохранение ждёт, пока логика услышит конец сцены");
+                check(s.world_hears() && g_.script_time() > st->world_t, "мир идёт после сцены");
+                // Its actor's «приземлился» reached the other schemes too: the one planned error, «Табличка»'s.
+                usize planned = 0;
+                for (const std::string& l : g_.script_errors()) planned += !e.sg_scheme_error.empty() && l.ends_with(e.sg_scheme_error);
+                check(planned >= 1, "«приземлился» сцены услышала схема «Таблички»: её задуманная ошибка");
+            }
+            if (after == 2) {
+                const std::optional<game::SlotInfo> now = s.slots().info("autosave");
+                check(now && !autosave_same() && now->autosave && now->playtime_s >= e.sg_length, "автосохранение сразу после сцены");
+                check(toast_says(s, "Автосохранение"), "сообщение «Автосохранение»");
+                s.set_autosave_seconds(1e9);
+            }
+            // Its music goes out over a second while the game's comes back.
+            const f32 share = snd.share();
+            check(share >= st->share, "музыка игры возвращается: " + std::to_string(share) + " после " + std::to_string(st->share));
+            st->share = share;
+            if (after < 62) return false;
+            check(snd.tunes().empty() && share == 1, "музыка сцены отзвучала, музыка игры вернулась: " + std::to_string(share));
+            const std::string unplanned = errors_but(project_edits.sg_scheme_error);
+            check(unplanned.empty(), "скрипты без ошибок, кроме задуманной:" + unplanned);
+            return true;
+        }});
+        steps_.push_back({"новая игра: сцена, Esc и «Пропустить сцену»", 200, [&s, this, st, var, heard_differs](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                st->heard.clear();
+                st->at = 0;
+                st->skip_at = -1;
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (st->skip_at < 0) {
+                if (!sc.going() || sc.serial() != st->serial + 1) {
+                    check(f < 30, "сцена новой игры не началась");
+                    return f >= 30;
+                }
+                if (sc.time() < 0.75 - 1e-9) return false;
+                st->skip_at = sc.time();
+                st->at = f;
+                key_event(s, SDL_SCANCODE_ESCAPE, true);
+                key_event(s, SDL_SCANCODE_ESCAPE, false);
+                return false;
+            }
+            const u32 after = f - st->at;
+            if (after == 1) check(s.screen() == Screen::Paused && sc.going(), "Esc — меню паузы над сценой");
+            if (after == 3) {
+                check(sc.time() == st->skip_at && sc.going(), "сцена стоит, пока открыто меню паузы: " + std::to_string(sc.time()) + " с");
+                check(!g_.sounds().screens().tunes().empty(), "её музыка играет дальше");
+                Rml::Element* skip = s.find_element("pause-skip-scene");
+                check(skip && skip->IsVisible(true), "в меню паузы «Пропустить сцену»");
+                check(click(s, skip), "«Пропустить сцену» нажата");
+            }
+            if (after == 4) {
+                check(!sc.going() && sc.skipped(st->serial + 1) && s.screen() == Screen::Playing, "сцена пропущена, меню паузы закрыто");
+                std::vector<Want> want;
+                for (const Want& w : st->want)
+                    if (w.at <= st->skip_at + 1e-9) want.push_back(w);
+                for (const Want& w : st->want)
+                    if (w.at > st->skip_at + 1e-9 && w.what.rfind("message ", 0) == 0) want.push_back(w);
+                const std::string why = heard_differs(st->heard, want, false);
+                check(why.empty(), "до пропуска сказано своё, после — оставшиеся сообщения без звуков: " + why);
+            }
+            if (after == 5) {
+                check(s.vars().get(e.sg_name).text() == e.sg_scene && var(e.sg_skipped) == 1 && var(e.sg_ends) == 1 && var(e.sg_after) == 1,
+                      "«Сцена кончилась» — пропущена, «Показать сцену» пошла дальше: пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " +
+                          std::to_string(var(e.sg_ends)) + ", после " + std::to_string(var(e.sg_after)));
+                st->serial = sc.serial();
+                return true;
+            }
+            return false;
+        }});
+        steps_.push_back({"новая игра: загрузка кончает сцену без слов", 200, [&s, this, st, var](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            audio::ScreenSounds& snd = g_.sounds().screens();
+            if (f == 0) {
+                st->heard.clear();
+                st->at = 0;
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            if (st->at == 0) {
+                if (!sc.going() || sc.serial() != st->serial + 1) {
+                    check(f < 30, "сцена новой игры не началась");
+                    return f >= 30;
+                }
+                if (sc.time() < 0.3 - 1e-9) return false;
+                st->at = f;
+                st->heard_at_load = st->heard.size();
+                check(s.load("autosave"), "загружено автосохранение");
+                check(!sc.going() && snd.tunes().empty() && snd.share() == 1, "загрузка кончила сцену, её музыку, музыка игры как была");
+                return false;
+            }
+            const u32 after = f - st->at;
+            check(!sc.going() && st->heard.size() == st->heard_at_load, "после загрузки сцена молчит");
+            if (after == 2)
+                check(s.vars().get(e.sg_name).text() == e.sg_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0,
+                      "переменные — как в автосохранении после сцены: концов " + std::to_string(var(e.sg_ends)) + ", после " +
+                          std::to_string(var(e.sg_after)));
+            if (after < 70) return false;
+            check(var(e.sg_ends) == 1, "загрузка кончила сцену без «Сцена кончилась»: концов " + std::to_string(var(e.sg_ends)));
+            const std::string unplanned = errors_but(project_edits.sg_scheme_error);
+            check(unplanned.empty(), "скрипты без ошибок, кроме задуманной:" + unplanned);
+            return true;
+        }});
+        steps_.push_back({"сцена без «Мира на паузе»: мир идёт", 100, [&s, this, st, var](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                std::string why;
+                st->ends = var(e.sg_ends);
+                check(s.play_scene(e.sg_scene, {false, true}, why), "сцена без паузы мира: " + why);
+                st->serial = sc.serial();
+                why.clear();
+                check(!s.play_scene(e.sg_scene, {false, true}, why) && why.find("«" + e.sg_scene + "»") != std::string::npos,
+                      "вторая сцена, пока идёт первая, — отказ: «" + why + "»");
+                return false;
+            }
+            if (f == 2) {
+                st->world_t = g_.script_time();
+                st->hero_x = g_.hero_x();
+                key_event(s, SDL_SCANCODE_RIGHT, true);
+            }
+            if (f == 40) {
+                check(sc.going() && sc.serial() == st->serial && s.world_hears() && !s.scene_holds(), "сцена идёт, мир слышит игрока");
+                check(g_.script_time() > st->world_t, "время мира идёт под сценой");
+                check(g_.hero_x() > st->hero_x + 0.2, "герой идёт вправо под сценой: " + std::to_string(st->hero_x) + " → " + std::to_string(g_.hero_x()));
+                key_event(s, SDL_SCANCODE_RIGHT, false);
+                sc.skip();
+            }
+            if (f == 42) {
+                check(!sc.going() && var(e.sg_ends) == st->ends + 1 && var(e.sg_skipped) == 1, "её конец услышан: концов " + std::to_string(var(e.sg_ends)));
+                const std::string unplanned = errors_but(project_edits.sg_scheme_error);
+                check(unplanned.empty(), "скрипты без ошибок, кроме задуманной:" + unplanned);
+                return true;
+            }
+            return false;
         }});
     }
 

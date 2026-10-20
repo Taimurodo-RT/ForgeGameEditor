@@ -17,7 +17,8 @@ public:
 
 	/// The element's box on the window, under its transforms and its ancestors': the longer of its two axes; 1 without.
 	static float Of(const Element* element);
-	/// The step at or above the scale: 2^(n/4), from 1/8 to 8.
+	/// The step at or above the scale: 2^(n/4), from 1/64 to 64 (a scene of a small canvas on a big screen is drawn at 9 and
+	/// more; the raster's side stays within 4096 pixels).
 	static float Step(float scale);
 
 	/// Once each frame the pictures are drawn, with the element's scale now: true when the scale of their raster changed,

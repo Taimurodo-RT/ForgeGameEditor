@@ -705,13 +705,16 @@ void Shell::update(f64 dt) {
     if (playing) {
         playtime_ += dt;
         since_autosave_ += dt;
-        // Not in a dialogue nor while a scene plays: after it.
-        if (autosave_s_ > 0 && since_autosave_ >= autosave_s_ && !in_dialogue() && !scene_->going()) save("autosave", "Автосохранение", true);
+        // Not in a dialogue nor while a scene plays: after it, once the logic has heard its end («Сцена кончилась»
+        // and the node waiting on it go on in the next frame of the game).
+        if (autosave_s_ > 0 && since_autosave_ >= autosave_s_ && !in_dialogue() && !scene_->going() && scene_heard_ == scene_->serial())
+            save("autosave", "Автосохранение", true);
     }
     // A window of the game's may stop the world while it is open, a scene too.
     const bool stopped = playing && (screens_->pauses() || scene_holds());
     // A game that is not running draws its menu backdrop.
     game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
+    if (playing && !stopped && !scene_->going()) scene_heard_ = scene_->serial(); // its logic ran this frame
     input_.end_frame(); // what went down this frame was the game's to see
     const bool in_game = game_->running() && screen_ != Screen::Main && screen_ != Screen::Loading;
     sync_settings_vars();
