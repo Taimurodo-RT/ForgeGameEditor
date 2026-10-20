@@ -8,7 +8,12 @@ namespace forge::pixel {
 
 namespace {
 
-constexpr const char* kPropWords[] = {"x", "y", "rot", "scale", "sx", "sy", "opacity", "fill", "morph"};
+constexpr const char* kPropWords[] = {"x",           "y",         "rot",         "scale",       "sx",
+                                     "sy",          "skew_x",    "skew_y",      "opacity",     "fill",
+                                     "stroke",      "stroke_width", "dash",     "draw_from",   "draw_to",
+                                     "visible",     "tint",      "flash",       "flash_color", "blur",
+                                     "shadow",      "shadow_x",  "shadow_y",    "shadow_blur", "morph",
+                                     "маска",       "крепление",   "порядок",     "рисунок"};
 static_assert(std::size(kPropWords) == kPropCount);
 
 u8 mix8(u8 a, u8 b, f64 k) { return static_cast<u8>(std::clamp(std::round(a + (b - a) * k), 0.0, 255.0)); }
@@ -22,6 +27,142 @@ f64 curve_at(const std::vector<f64>& c, f64 s) {
 }
 
 bool before(const Block& a, const Block& b) { return a.start != b.start ? a.start < b.start : a.order < b.order; }
+
+bool along_ok(const Recording& rec, const Block& b) {
+    return b.ref < rec.alongs.size() && rec.alongs[b.ref].path < rec.paths.size() && rec.paths[rec.alongs[b.ref].path].points.size() >= 2;
+}
+
+// A block of along (part 4в) at share k of its timing: its x, y or rot.
+f64 along_at(const Recording& rec, const Block& b, f64 k) {
+    const Along& al = rec.alongs[b.ref];
+    const PathLine& path = rec.paths[al.path];
+    const f64 u = al.from + (al.to - al.from) * k;
+    f64 angle = 0;
+    const vector::Point p = path_point(path, u, &angle);
+    if (b.prop == Prop::X || b.prop == Prop::Y) {
+        const bool x = b.prop == Prop::X;
+        if (al.relative) {
+            const vector::Point p0 = path_point(path, al.from);
+            return b.from.v + (x ? p.x - p0.x : p.y - p0.y);
+        }
+        return x ? p.x - al.pivot.x : p.y - al.pivot.y;
+    }
+    // rot: the way it goes, within −180 … 180 where it starts.
+    f64 a0 = 0;
+    path_point(path, al.from, &a0);
+    if (al.to < al.from) angle += 180, a0 += 180;
+    return angle - (a0 - std::remainder(a0, 360.0));
+}
+
+// Where a part stands by its bones (part 4в): links' carries are made sure of first by `ensure`, while resolve
+// computes them in an order of its own.
+struct World {
+    const Recording& rec;
+    BindingEval* eval;
+    std::string& why;
+    bool (*ensure)(void* self, u32 block) = nullptr;
+    void* self = nullptr;
+
+    // C · W(parent) · M, M its own move round its pivot.
+    bool at(u32 bone, f64 t, Affine& out, u32 depth = 0) {
+        Affine frame;
+        if (!this->frame(bone, t, frame, depth)) return false;
+        const Bone& bn = rec.bones[bone];
+        PartPose pp;
+        const auto named = std::find(rec.parts.begin(), rec.parts.end(), bn.id);
+        if (named != rec.parts.end()) {
+            const auto part = static_cast<u32>(named - rec.parts.begin());
+            f64* fields[] = {&pp.x, &pp.y, &pp.rot, &pp.scale, &pp.sx, &pp.sy, &pp.skew_x, &pp.skew_y};
+            for (usize i = 0; i < std::size(fields); ++i) {
+                const i32 tr = rec.track(part, static_cast<Prop>(i));
+                if (tr < 0) continue;
+                PropValue v;
+                if (!sample(rec, static_cast<u32>(tr), t, eval, v, why)) return false;
+                *fields[i] = v.v;
+            }
+        }
+        out = frame * pose_matrix(pp, bn.pivot);
+        return true;
+    }
+
+    // C · W(parent): all but its own move.
+    bool frame(u32 bone, f64 t, Affine& out, u32 depth = 0) {
+        if (bone >= rec.bones.size()) return why = "у записи нет кости части", false;
+        if (depth > 64) return why = "крепления по кругу", false;
+        const Bone& bn = rec.bones[bone];
+        Affine parent;
+        if (bn.parent >= 0 && !at(static_cast<u32>(bn.parent), t, parent, depth + 1)) return false;
+        Affine c;
+        const auto named = std::find(rec.parts.begin(), rec.parts.end(), bn.id);
+        if (named != rec.parts.end()) {
+            const auto part = static_cast<u32>(named - rec.parts.begin());
+            const i32 lt = rec.track(part, Prop::Link);
+            const i32 d = lt < 0 ? -1 : deciding_block(rec, static_cast<u32>(lt), t);
+            if (d >= 0) {
+                if (ensure && !ensure(self, static_cast<u32>(d))) return false;
+                const Block& lb = rec.blocks[static_cast<usize>(d)];
+                c = lb.carry;
+                if (lb.value.v > 0) {
+                    const i32 tb = bone_of(rec, lb.value.target);
+                    Affine w;
+                    if (tb < 0) return why = "у записи нет кости части «" + lb.value.target + "»", false;
+                    if (!at(static_cast<u32>(tb), t, w, depth + 1)) return false;
+                    c = w * c;
+                }
+            }
+        }
+        out = c * parent;
+        return true;
+    }
+};
+
+// resolve()'s pass of links: each one's carry from where its target stood at its start, a link before the ones that
+// read it.
+struct LinkPass {
+    Recording& rec;
+    BindingEval* eval;
+    std::string& why;
+    std::vector<u8> state; // by block: 0 not yet, 1 under way, 2 done
+
+    static bool ensure_fn(void* self, u32 block) { return static_cast<LinkPass*>(self)->ensure(block); }
+
+    bool ensure(u32 i) {
+        if (state[i] == 2) return true;
+        if (state[i] == 1) return why = "крепления по кругу", false;
+        state[i] = 1;
+        Block& b = rec.blocks[i];
+        World w{rec, eval, why, &ensure_fn, this};
+        // Where the link before it had carried the part by now.
+        Affine before;
+        const i32 tr = rec.track(b.part, Prop::Link);
+        const std::vector<u32>& on = rec.tracks[static_cast<usize>(tr)].blocks;
+        const auto it = std::find(on.begin(), on.end(), i);
+        if (it != on.begin()) {
+            const u32 p = *(it - 1);
+            if (!ensure(p)) return false;
+            const Block& pb = rec.blocks[p];
+            before = pb.carry;
+            if (pb.value.v > 0) {
+                const i32 tb = bone_of(rec, pb.value.target);
+                Affine wt;
+                if (tb < 0) return why = "у записи нет кости части «" + pb.value.target + "»", false;
+                if (!w.at(static_cast<u32>(tb), b.start, wt)) return false;
+                before = wt * before;
+            }
+        }
+        if (b.value.v > 0) {
+            const i32 tb = bone_of(rec, b.value.target);
+            Affine wt;
+            if (tb < 0) return why = "у записи нет кости части «" + b.value.target + "»", false;
+            if (!w.at(static_cast<u32>(tb), b.start, wt)) return false;
+            b.carry = inverse(wt) * before;
+        } else {
+            b.carry = before;
+        }
+        state[i] = 2;
+        return true;
+    }
+};
 
 } // namespace
 
@@ -39,11 +180,23 @@ bool prop_from_word(std::string_view word, Prop& out) {
     return false;
 }
 
-bool prop_is_number(Prop p) { return p != Prop::Fill && p != Prop::Morph; }
+bool prop_is_number(Prop p) {
+    return !prop_is_color(p) && p != Prop::StrokeWidth && p != Prop::Visible && p != Prop::Morph && !prop_is_call(p) &&
+           p != Prop::Drawing;
+}
+
+bool prop_is_color(Prop p) {
+    return p == Prop::Fill || p == Prop::Stroke || p == Prop::Tint || p == Prop::FlashColor || p == Prop::Shadow;
+}
+
+bool prop_is_call(Prop p) { return p == Prop::Mask || p == Prop::Link || p == Prop::Order; }
 
 PropValue rest_value(Prop p) {
     PropValue v;
-    v.v = (p == Prop::Scale || p == Prop::Sx || p == Prop::Sy || p == Prop::Opacity) ? 1 : 0;
+    v.v = (p == Prop::Scale || p == Prop::Sx || p == Prop::Sy || p == Prop::Opacity || p == Prop::DrawTo ||
+           p == Prop::Visible)
+              ? 1
+              : 0;
     return v;
 }
 
@@ -55,11 +208,23 @@ PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k) {
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
+    if (p == Prop::Visible || p == Prop::Drawing || prop_is_call(p)) return k >= 1 ? b : a; // no values between
+    if (p == Prop::StrokeWidth && a.v == 1 && b.v == 1) {
+        r.v = 1;
+        r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
+        return r;
+    }
     k = std::clamp(k, 0.0, 1.0);
     if (k == 0) return a;
     if (k == 1) return b;
     if (a.v <= 0 && b.v <= 0) return a;
-    if (p == Prop::Fill) {
+    if (p == Prop::StrokeWidth) {
+        // Each shape's width is own · (1 − v) + n · v; mixed linearly for every own width at once.
+        r.v = a.v + (b.v - a.v) * k;
+        r.n = (std::max(a.v, 0.0) * a.n * (1 - k) + std::max(b.v, 0.0) * b.n * k) / r.v;
+        return r;
+    }
+    if (prop_is_color(p)) {
         if (a.v <= 0) {
             r.color = b.color;
             r.v = b.v * k;
@@ -99,12 +264,39 @@ i32 Recording::track(u32 part, Prop p) const {
     return i < track_of.size() ? track_of[i] : -1;
 }
 
+f64 block_share(const Recording& rec, const Block& b, f64 t) {
+    const f64 local = snap_time(t - b.start);
+    if (b.length <= 0) return local < 0 ? 0 : 1; // at once, as block_value
+    if (local <= 0) return 0;
+    if (local >= b.length) return 1;
+    const f64 s = local / b.length;
+    return b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
+                                                                           : vector::timing(b.timing, s);
+}
+
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why) {
     if (b.to == Block::To::Binding) {
         if (!eval) return why = "связь без скрипта", false;
         return eval->eval(rec, b.binding, b.prop, t, out, why);
     }
     const f64 local = snap_time(t - b.start); // on the recording's nanoseconds, so its end is its end
+    if (b.to == Block::To::Along) {
+        // On the path from its start: the part is at the path's point `from` at once, not where it was.
+        if (!along_ok(rec, b)) return why = "along: нет пути", false;
+        if (local < 0) {
+            out = b.from;
+            return true;
+        }
+        f64 k = 1;
+        if (b.length > 0 && local < b.length) {
+            const f64 s = local / b.length;
+            k = b.curve >= 0 && static_cast<usize>(b.curve) < rec.curves.size() ? curve_at(rec.curves[static_cast<usize>(b.curve)], s)
+                                                                               : vector::timing(b.timing, s);
+        }
+        out = {};
+        out.v = along_at(rec, b, k);
+        return true;
+    }
     if (b.length <= 0) {
         out = local < 0 ? b.from : b.end;
         return true;
@@ -124,6 +316,10 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
         const f64 p1 = i < b.steps.size() ? b.steps[i] : b.end.v;
         out = {};
         out.v = p0 + (p1 - p0) * (x - static_cast<f64>(i));
+        return true;
+    }
+    if (b.prop == Prop::Visible && b.frames.empty()) { // at its end, whatever its timing does on the way
+        out = b.from;
         return true;
     }
     const f64 s = std::min(local / b.length, 1.0);
@@ -207,6 +403,12 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
             break;
         case Block::To::Rest: b.end = rest_value(b.prop); break;
         case Block::To::Binding: b.end = {}; break;
+        case Block::To::Snap: b.end = b.value; break;
+        case Block::To::Along:
+            if (!along_ok(rec, b)) return why = "along: нет пути", false;
+            b.end = {};
+            b.end.v = along_at(rec, b, 1);
+            break;
         }
         if (b.spring) {
             const char* w = nullptr;
@@ -217,6 +419,10 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
         if (!b.frames.empty()) b.end = b.frames.back();
         last[static_cast<usize>(ti)] = static_cast<i32>(e.index);
     }
+    // Links (part 4в): their carries, once every value is known.
+    LinkPass pass{rec, eval, why, std::vector<u8>(rec.blocks.size(), 0)};
+    for (u32 i = 0; i < rec.blocks.size(); ++i)
+        if (rec.blocks[i].prop == Prop::Link && !pass.ensure(i)) return false;
     return true;
 }
 
@@ -258,8 +464,37 @@ bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue
 }
 
 bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std::string& why) {
+    const f64 at = snap_time(t);
+    // The copies born by t are drawn (part 4г); one not born yet has nothing in the frame.
+    std::vector<char> unborn(rec.parts.size(), 0);
+    for (const Copy& c : rec.copies) {
+        if (c.born <= at) {
+            out.copies.push_back({c.id, c.source, c.number});
+            continue;
+        }
+        for (usize p = 0; p < rec.parts.size(); ++p)
+            if (rec.parts[p] == c.id) unborn[p] = 1;
+    }
     for (u32 i = 0; i < rec.tracks.size(); ++i) {
         const Recording::Track& tr = rec.tracks[i];
+        if (tr.prop == Prop::Order) continue; // all calls of all parts up to t, below
+        if (tr.part < unborn.size() && unborn[tr.part]) continue;
+        if (tr.prop == Prop::Drawing) {
+            // The drawing shown, and in a swap's block the one before it and how far (part 4д); "draw" is the main one.
+            const i32 d = deciding_block(rec, i, t);
+            if (d < 0) continue;
+            const Block& b = rec.blocks[static_cast<usize>(d)];
+            auto name = [](const PropValue& v) { return v.target == "draw" ? std::string() : v.target; };
+            const f64 k = block_share(rec, b, at);
+            out.drawing = name(k >= 1 ? b.end : b.from);
+            if (k > 0 && k < 1 && name(b.from) != name(b.end)) {
+                out.drawing = name(b.end);
+                out.swap = true;
+                out.swap_from = name(b.from);
+                out.swap_k = k;
+            }
+            continue;
+        }
         PropValue v;
         if (!sample(rec, i, t, eval, v, why)) return false;
         const std::string& id = rec.parts[tr.part];
@@ -275,16 +510,129 @@ bool sample_pose(const Recording& rec, f64 t, BindingEval* eval, Pose& out, std:
         case Prop::Scale: pp.scale = v.v; break;
         case Prop::Sx: pp.sx = v.v; break;
         case Prop::Sy: pp.sy = v.v; break;
+        case Prop::SkewX: pp.skew_x = v.v; break;
+        case Prop::SkewY: pp.skew_y = v.v; break;
         case Prop::Opacity: pp.opacity = v.v; break;
         case Prop::Fill:
             pp.has_fill = v.v > 0;
             pp.fill = v.color;
             pp.fill_k = v.v;
             break;
-        case Prop::Morph: break;
+        case Prop::Stroke:
+            pp.has_stroke = v.v > 0;
+            pp.stroke = v.color;
+            pp.stroke_k = v.v;
+            break;
+        case Prop::StrokeWidth:
+            pp.has_stroke_width = v.v > 0;
+            pp.stroke_width = v.n;
+            pp.stroke_width_k = v.v;
+            break;
+        case Prop::Dash: pp.dash = v.v; break;
+        case Prop::DrawFrom: pp.draw_from = v.v; break;
+        case Prop::DrawTo: pp.draw_to = v.v; break;
+        case Prop::Visible: pp.visible = v.v > 0; break;
+        case Prop::Tint:
+            pp.has_tint = v.v > 0;
+            pp.tint = v.color;
+            pp.tint_k = v.v;
+            break;
+        case Prop::Flash: pp.flash = std::clamp(v.v, 0.0, 1.0); break; // back and springs overshoot: held in 0 … 1
+        case Prop::FlashColor:
+            pp.has_flash_color = v.v > 0;
+            pp.flash_color = v.color;
+            pp.flash_color_k = v.v;
+            break;
+        case Prop::Blur: pp.blur = std::max(v.v, 0.0); break;
+        case Prop::Shadow:
+            pp.has_shadow = v.v > 0;
+            pp.shadow = v.color;
+            pp.shadow_k = v.v;
+            break;
+        case Prop::ShadowX: pp.shadow_x = v.v; break;
+        case Prop::ShadowY: pp.shadow_y = v.v; break;
+        case Prop::ShadowBlur: pp.shadow_blur = std::max(v.v, 0.0); break;
+        case Prop::Mask:
+            pp.mask = v.v > 0 ? v.target : std::string();
+            pp.mask_invert = v.v > 1;
+            break;
+        case Prop::Link: {
+            const i32 d = deciding_block(rec, i, t);
+            if (d < 0) break;
+            const Block& lb = rec.blocks[static_cast<usize>(d)];
+            pp.carry_by = lb.value.v > 0 ? lb.value.target : std::string();
+            pp.carry = lb.carry;
+            break;
+        }
+        case Prop::Morph:
+        case Prop::Order:
+        case Prop::Drawing: break;
         }
     }
+    // The order: from the SVG's, every call up to t in the order of time (start, then order).
+    std::vector<u32> calls;
+    for (u32 i = 0; i < rec.blocks.size(); ++i)
+        if (rec.blocks[i].prop == Prop::Order && rec.blocks[i].start <= at && !(rec.blocks[i].part < unborn.size() && unborn[rec.blocks[i].part]))
+            calls.push_back(i);
+    std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) { return before(rec.blocks[a], rec.blocks[b]); });
+    for (u32 i : calls) {
+        const Block& b = rec.blocks[i];
+        OrderStep step;
+        step.part = rec.parts[b.part];
+        step.kind = static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(b.value.v), 0, 3));
+        step.other = b.value.target;
+        out.order.push_back(std::move(step));
+    }
     return true;
+}
+
+vector::Point path_point(const PathLine& path, f64 u, f64* angle) {
+    if (angle) *angle = 0;
+    const usize n = path.points.size();
+    if (n == 0) return {};
+    if (n < 2 || path.lengths.size() != n || path.angles.size() + 1 != n) return path.points[0];
+    f64 laps = 0;
+    if (!std::isfinite(u)) u = 0;
+    if (path.closed) {
+        laps = std::floor(u);
+        u -= laps;
+    } else {
+        u = std::clamp(u, 0.0, 1.0);
+    }
+    const f64 d = u * path.length();
+    const auto it = std::upper_bound(path.lengths.begin(), path.lengths.end(), d);
+    const usize i = std::min<usize>(static_cast<usize>(std::max<std::ptrdiff_t>(it - path.lengths.begin() - 1, 0)), n - 2);
+    const f64 seg = path.lengths[i + 1] - path.lengths[i];
+    const f64 f = seg > 0 ? std::clamp((d - path.lengths[i]) / seg, 0.0, 1.0) : 0;
+    const vector::Point a = path.points[i], b = path.points[i + 1];
+    if (angle) {
+        // Each time round a closed path its direction is on by the turn of one round.
+        const f64 lap = path.closed ? path.angles.back() + std::remainder(path.angles.front() - path.angles.back(), 360.0) - path.angles.front() : 0;
+        *angle = path.angles[i] + laps * lap;
+    }
+    return {a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f};
+}
+
+i32 bone_of(const Recording& rec, std::string_view id) {
+    for (usize i = 0; i < rec.bones.size(); ++i)
+        if (rec.bones[i].id == id) return static_cast<i32>(i);
+    return -1;
+}
+
+i32 copy_of(const Recording& rec, std::string_view id) {
+    for (usize i = 0; i < rec.copies.size(); ++i)
+        if (rec.copies[i].id == id) return static_cast<i32>(i);
+    return -1;
+}
+
+bool bone_world(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine& out, std::string& why) {
+    World w{rec, eval, why};
+    return w.at(bone, snap_time(t), out);
+}
+
+bool bone_frame(const Recording& rec, u32 bone, f64 t, BindingEval* eval, Affine& out, std::string& why) {
+    World w{rec, eval, why};
+    return w.frame(bone, snap_time(t), out);
 }
 
 void layer_pose(Pose& base, const Pose& over) {

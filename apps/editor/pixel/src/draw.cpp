@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 namespace forge::pixel {
 
@@ -62,7 +63,8 @@ bool own_field(Kind k, std::string_view f) {
 }
 
 bool common_field(std::string_view f) {
-    return f == "fill" || f == "stroke" || f == "stroke_width" || f == "opacity" || f == "hidden" || f == "pivot";
+    return f == "fill" || f == "stroke" || f == "stroke_width" || f == "dash" || f == "cap" || f == "join" || f == "opacity" ||
+           f == "hidden" || f == "pivot";
 }
 
 // A name as a part's id: letters (of any language), digits, _ and -, not first a digit or -; well-formed UTF-8.
@@ -143,6 +145,39 @@ struct Reader {
         out = hex;
         return true;
     }
+    // A word of a few: cap = "round".
+    bool word(const char* f, std::initializer_list<const char*> words, std::string& out) {
+        push(f);
+        const int type = lua_type(L, -1);
+        std::string text = type == LUA_TSTRING ? lua_tostring(L, -1) : "";
+        lua_pop(L, 1);
+        if (type == LUA_TNIL) return true;
+        std::string list;
+        for (const char* w : words) {
+            if (text == w) {
+                out = text;
+                return true;
+            }
+            list += (list.empty() ? "\"" : ", \"") + std::string(w) + "\"";
+        }
+        return fail(std::string(f) + " — " + list + (type == LUA_TSTRING ? ", а не «" + text + "»" : std::string()));
+    }
+    // Numbers not below 0, not all 0: dash = { 4, 2 }.
+    bool lengths(const char* f, std::vector<f64>& out) {
+        push(f);
+        const bool has = !lua_isnil(L, -1);
+        bool ok = !has || (lua_istable(L, -1) && lua_objlen(L, -1) > 0);
+        bool any = false;
+        for (int i = 1; ok && has && i <= lua_objlen(L, -1); ++i) {
+            lua_rawgeti(L, -1, i);
+            ok = lua_type(L, -1) == LUA_TNUMBER && std::isfinite(lua_tonumber(L, -1)) && lua_tonumber(L, -1) >= 0;
+            if (ok) out.push_back(lua_tonumber(L, -1)), any = any || lua_tonumber(L, -1) > 0;
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (!ok || (has && !any)) return fail(std::string(f) + " — длины штрихов и промежутков, числа не меньше 0 и не все 0: " + f + " = { 4, 2 }");
+        return true;
+    }
     // Two numbers, { x, y }.
     bool point(const char* f, bool& has, vector::Point& out) {
         push(f);
@@ -200,7 +235,7 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
             const std::string f = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : std::string("?");
             if (!own_field(kind, f) && !common_field(f)) {
                 lua_pop(L, 1);
-                return r.fail("поля «" + f + "» нет (есть " + fields_of(kind) + ", fill, stroke, stroke_width, opacity, hidden, pivot)");
+                return r.fail("поля «" + f + "» нет (есть " + fields_of(kind) + ", fill, stroke, stroke_width, dash, cap, join, opacity, hidden, pivot)");
             }
         }
     }
@@ -214,11 +249,16 @@ bool add_shape(lua_State* L, PoseScript::Impl& im, Kind kind, int& fn) {
     s.parent = im.groups.empty() ? -1 : im.groups.back();
     const SiteRef site = im.site_ref(im.site);
     if (const CallSite* c = im.call(site); c && site.file == 0) s.line = c->line;
+    if (site.file == 0) s.site = site.site;
+    s.module = site.file > 0;
     if (!r.color("fill", s.fill) || !r.color("stroke", s.stroke)) return false;
     r.push("stroke_width");
     const bool width = !lua_isnil(L, -1);
     lua_pop(L, 1);
     if (width && !r.number("stroke_width", false, 1, s.stroke_width, true)) return false;
+    if (!r.lengths("dash", s.dash) || !r.word("cap", {"butt", "round", "square"}, s.cap) ||
+        !r.word("join", {"miter", "round", "bevel"}, s.join))
+        return false;
     if (!r.number("opacity", false, 1, s.opacity)) return false;
     if (s.opacity < 0 || s.opacity > 1) return r.fail("opacity от 0 до 1");
     r.push("hidden");
@@ -325,6 +365,8 @@ int api_canvas(lua_State* L) {
     d.canvas = true;
     d.width = w;
     d.height = h;
+    const SiteRef site = im.site_ref(im.site);
+    if (const CallSite* c = im.call(site); c && site.file == 0) d.canvas_line = c->line;
     return 0;
 }
 
@@ -407,6 +449,13 @@ std::string drawing_svg(const Drawing& d, u32 w, u32 h) {
         if (!s.stroke.empty()) out += " stroke=\"" + s.stroke + "\"";
         else if (s.kind == Kind::Line) out += " stroke=\"#000000\"";
         if (s.stroke_width >= 0) attr("stroke-width", s.stroke_width);
+        if (!s.dash.empty()) {
+            out += " stroke-dasharray=\"";
+            for (usize k = 0; k < s.dash.size(); ++k) out += (k ? " " : "") + format_number(s.dash[k]);
+            out += "\"";
+        }
+        if (!s.cap.empty()) out += " stroke-linecap=\"" + s.cap + "\"";
+        if (!s.join.empty()) out += " stroke-linejoin=\"" + s.join + "\"";
         if (s.opacity != 1) attr("opacity", s.opacity);
         if (s.hidden) out += " display=\"none\"";
         if (s.kind == Kind::Group) {
@@ -430,23 +479,19 @@ bool drawn_pivot(const Drawing& d, const std::string& id, vector::Point& out) {
 }
 
 bool PoseScript::has_draw() const { return impl_->has_draw; }
+const std::vector<std::string>& PoseScript::drawings() const { return impl_->drawings; }
 
-bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
-    Impl& im = *impl_;
-    out = {};
-    im.error.clear();
-    im.error_line = 0;
-    if (!im.ok) {
-        im.error = "скрипт не загружен";
-        return false;
-    }
-    if (!im.has_draw) {
-        im.error = "в коде нет draw = function(p, rng) … end";
-        return false;
-    }
-    lua_State* T = im.module();
-    if (!T) return false;
-    lua_getfield(T, -1, "draw");
+namespace {
+
+// «draw», «angry»: the names a drawing goes by (part 4д).
+std::string drawing_names(const PoseScript::Impl& im) {
+    std::string out = "«draw»";
+    for (const std::string& n : im.drawings) out += ", «" + n + "»";
+    return out;
+}
+
+// Runs the drawing function on top of T's stack (the module under it) into out: what draw and draw_named share.
+bool run_drawing(PoseScript::Impl& im, lua_State* T, const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
     push_params(im, T, values);
     lua_getglobal(T, "rng");
     // The drawing's chance: from the seed alone, the same on every run.
@@ -456,7 +501,7 @@ bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawin
     im.drawn_ids.clear();
     im.groups.clear();
     const auto was = im.mode;
-    im.mode = Impl::Mode::Draw;
+    im.mode = PoseScript::Impl::Mode::Draw;
     im.begin_call();
     im.active = T;
     const int status = lua_pcall(T, 2, 0, 0);
@@ -476,6 +521,60 @@ bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawin
     lua_pop(im.L, 1);
     if (ok) out = std::move(d);
     return ok;
+}
+
+} // namespace
+
+bool PoseScript::draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!im.has_draw) {
+        im.error = "в коде нет draw = function(p, rng) … end";
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    lua_getfield(T, -1, "draw");
+    return run_drawing(im, T, values, seed, out);
+}
+
+bool PoseScript::draw_named(std::string_view name, const std::map<std::string, f64>& values, u64 seed, Drawing& out) {
+    if (name == "draw") return draw(values, seed, out);
+    Impl& im = *impl_;
+    out = {};
+    im.error.clear();
+    im.error_line = 0;
+    if (!im.ok) {
+        im.error = "скрипт не загружен";
+        return false;
+    }
+    if (!std::binary_search(im.drawings.begin(), im.drawings.end(), name)) {
+        im.error = "нет рисунка «" + std::string(name) + "»: есть " + drawing_names(im);
+        return false;
+    }
+    lua_State* T = im.module();
+    if (!T) return false;
+    lua_getfield(T, -1, "drawings");
+    lua_pushlstring(T, name.data(), name.size());
+    lua_gettable(T, -2);
+    lua_remove(T, -2);
+    if (run_drawing(im, T, values, seed, out)) return true;
+    // Its name before the line: «рисунок «angry», строка 12: …».
+    const std::string head = "рисунок «" + std::string(name) + "»";
+    if (im.error.rfind("draw ничего", 0) == 0) {
+        im.error = head + " ничего не нарисовал: rect, circle, ellipse, line, poly, path, group";
+        im.error_line = im.files[0].code.drawing_line(name);
+        if (im.error_line) im.error = "строка " + std::to_string(im.error_line) + ": " + im.error;
+    } else {
+        im.error = head + (im.error.rfind("строка ", 0) == 0 ? ", " : ": ") + im.error;
+    }
+    return false;
 }
 
 } // namespace forge::pixel

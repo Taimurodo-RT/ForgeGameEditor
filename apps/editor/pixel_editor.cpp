@@ -357,6 +357,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     bind_motion(model);
     bind_mouse(model);
     bind_view(model);
+    bind_shapes(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -621,6 +622,12 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             timeline_drag(e.motion.x * density);
             return true;
         }
+        // Part 4е: a shape dragged; the pen's line to the mouse follows it.
+        if (tooling_) {
+            shape_drag(e.motion.x * density, e.motion.y * density);
+            return true;
+        }
+        if (tool_ == Tool::Pen && !pen_.empty()) view_dirty_ = true;
         if (!dragging_ && !moving_) return false;
         drag(e.motion.x * density, e.motion.y * density);
         return true;
@@ -631,6 +638,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         }
         if (tl_drag_ != Drag::None) {
             timeline_release();
+            return true;
+        }
+        if (tooling_) {
+            shape_release();
             return true;
         }
         if (!dragging_ && !moving_) return false;
@@ -647,13 +658,25 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_SPACE: play(!playing_); return true;
     case SDLK_LEFT: shift ? to_start() : step(-1); return true;
     case SDLK_RIGHT: shift ? to_end() : step(1); return true;
-    case SDLK_L: set_loop_view(!loop_view_); return true;
+    // Part 4е: the tools; L and P are the tab's own without Shift.
+    case SDLK_V: set_tool(Tool::Select); return true;
+    case SDLK_R: set_tool(Tool::Rect); return true;
+    case SDLK_O: set_tool(Tool::Ellipse); return true;
+    case SDLK_L: shift ? set_tool(Tool::Line) : set_loop_view(!loop_view_); return true;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+        if (tool_ != Tool::Pen || pen_.empty()) return false;
+        finish_pen();
+        return true;
     case SDLK_F: center_playhead(); return true;
     case SDLK_B: range_start_here(); return true;
     case SDLK_N: range_end_here(); return true;
     case SDLK_ESCAPE:
-        if (giving_) open_give(false);
+        if (!pen_.empty()) drop_pen();
+        else if (tooling_) tooling_ = false, view_dirty_ = true;
+        else if (giving_) open_give(false);
         else if (picking_) set_picking(false);
+        else if (tool_ != Tool::Select) set_tool(Tool::Select);
         else return false;
         return true;
     // Part 3в: the vector's zoom, the grid, the point under the mouse, the eyedropper, the preview's sound.
@@ -665,7 +688,10 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_MINUS:
     case SDLK_KP_MINUS: zoom_view_by(-1); return true;
     case SDLK_APOSTROPHE: set_grid(!grid_); return true;
-    case SDLK_P: copy_coords(); return true;
+    case SDLK_P:
+        if (shift) set_tool(Tool::Pen);
+        else copy_coords();
+        return true;
     case SDLK_I: set_picking(!picking_); return true;
     case SDLK_M: set_sound(!sound_on_); return true;
     case SDLK_UP:
@@ -741,6 +767,8 @@ bool PixelEditor::open(const std::string& rel) {
 }
 
 void PixelEditor::forget_character() {
+    pen_.clear(); // part 4е: the pen and a shape dragged are the character's
+    tooling_ = false;
     t_ = play_clock_ = 0;
     frame_ = 0;
     playing_ = true;
@@ -927,12 +955,15 @@ void PixelEditor::reload() {
     std::string why;
     if (pixel::read_pixel_doc({reinterpret_cast<const char*>(bytes->data()), bytes->size()}, d, why)) doc_ = std::move(d);
     else doc_problem_ = "«" + path_to_utf8(file_.filename()) + "»: " + why;
+    const std::string script_was = script_text_;
     load_script();
+    if (script_text_ != script_was) drop_pen(), tooling_ = false; // part 4е: the code read again
     load_picture();
-    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr);
+    load_drawings();
+    pixel::apply_pivots(rig_, doc_, drawn_ ? &drawing_ : nullptr, &others_);
     if (std::none_of(doc_.clips.begin(), doc_.clips.end(), [&](const auto& c) { return c.state == clip_; }))
         clip_ = doc_.clips.empty() ? std::string() : doc_.clips.front().state;
-    if (!part_.empty() && rig_.part(part_) < 0) part_.clear();
+    if (!part_.empty() && rig_.holder(part_).part(part_) < 0) part_.clear();
     recount();
     if (block_ >= 0) select_block(block_); // its info and lines from the recording as it is now
     check_edited();
@@ -979,6 +1010,38 @@ void PixelEditor::load_picture() {
     svg_text_ = std::move(text);
     drawing_ = std::move(d);
     script_.forget(); // its recordings checked the parts of the picture before
+}
+
+void PixelEditor::load_drawings() {
+    std::vector<pixel::NamedDrawing> drawn;
+    std::string why;
+    u32 line = 0;
+    if (script_.loaded() && rig_.loaded() && !pixel::draw_drawings(script_, doc_, drawn, why, line)) {
+        // The rig keeps the drawings it had: the frame shows what was drawn before.
+        draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why +
+                        (others_.empty() ? "" : " (показан прежний)");
+        if (!draw_line_) draw_line_ = line;
+        return;
+    }
+    std::string key;
+    for (const pixel::NamedDrawing& d : drawn) key += d.name + '\n' + d.svg + '\n';
+    if (key == others_key_ && rig_.drawings().size() == drawn.size()) {
+        others_ = std::move(drawn);
+        return;
+    }
+    // A drawing gone from the code goes from the rig: the main picture again, the drawings on it.
+    pixel::Rig fresh;
+    if (!rig_.loaded() || !fresh.load(svg_text_, why)) return;
+    if (!pixel::add_drawings(fresh, drawn, why, line)) {
+        draw_problem_ = (draw_problem_.empty() ? "" : draw_problem_ + "\n") + "Рисунок «" + doc_.script + "»: " + why;
+        if (!draw_line_) draw_line_ = line;
+        return;
+    }
+    rig_ = std::move(fresh);
+    others_ = std::move(drawn);
+    others_key_ = std::move(key);
+    shown_rig_ = nullptr;
+    script_.forget(); // its recordings checked the parts of the drawings before
 }
 
 void PixelEditor::load_svg() {
@@ -1040,7 +1103,7 @@ void PixelEditor::load_script() {
 // --- parts and pivots --------------------------------------------------------------
 
 bool PixelEditor::select_part(const std::string& id) {
-    if (id == part_ || (!id.empty() && rig_.part(id) < 0)) return false;
+    if (id == part_ || (!id.empty() && rig_.holder(id).part(id) < 0)) return false; // a part of any drawing (part 4д)
     part_ = id;
     view_dirty_ = true;
     rebuild();
@@ -1048,7 +1111,7 @@ bool PixelEditor::select_part(const std::string& id) {
 }
 
 bool PixelEditor::set_pivot(const std::string& id, vector::Point at) {
-    if (!has_ || rig_.part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
+    if (!has_ || rig_.holder(id).part(id) < 0 || !std::isfinite(at.x) || !std::isfinite(at.y)) return false;
     at = {std::round(at.x * 100) / 100, std::round(at.y * 100) / 100};
     pixel::PixelDoc after = doc_;
     after.pivots[id] = at;
@@ -1070,12 +1133,16 @@ bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
 }
 
 vector::Point PixelEditor::posed_pivot(const std::string& id) const {
-    const i32 i = rig_.part(id);
-    return i < 0 ? vector::Point{} : rig_.carried(i).apply(rig_.pivot(i));
+    const pixel::Rig& r = rig_.shown();
+    const i32 i = r.part(id);
+    return i < 0 ? vector::Point{} : r.carried(i).apply(r.pivot(i));
 }
 
 void PixelEditor::press(f32 x, f32 y) {
     if (!rig_.loaded()) return;
+    if (tool_ != Tool::Select) return shape_press(x, y); // part 4е
+    // «Привязка»: the grid's step at the zoom of the press, for the drag that follows.
+    snap_step_ = snapping_ ? snap_step() : 0;
     if (!part_.empty()) {
         f32 px, py;
         if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, view_w_ / kViewPx)) {
@@ -1087,6 +1154,10 @@ void PixelEditor::press(f32 x, f32 y) {
         }
     }
     const std::string best = part_at(x, y);
+    if (rig_.shown().copy(best) >= 0) { // part 4г: a copy is the code's
+        refuse_edit("копия «" + best + "» правится в коде: copies(…)");
+        return;
+    }
     select_part(best);
     // Dragged on past a few points, the part moves: into the code on release.
     moving_ = !best.empty();
@@ -1096,20 +1167,24 @@ void PixelEditor::press(f32 x, f32 y) {
 }
 
 std::string PixelEditor::part_at(f32 x, f32 y) {
-    // The smallest part under the mouse, as it stands in the pose shown.
+    // The smallest part under the mouse, as it stands in the pose shown: a copy drawn too (part 4г), of the drawing
+    // shown (in a swap the one it goes to, part 4д).
+    pixel::Rig& r = rig_.shown();
     const pixel::Affine view = to_view();
     const vector::Point v = view.apply(view_to_picture(x, y));
     std::string best;
     f64 best_area = 1e300;
-    for (i32 i = 0; i < static_cast<i32>(rig_.parts().size()); ++i) {
+    auto take = [&](i32 i, const std::string& id) {
         f64 b[4];
-        rig_.bounds(i, view, b);
+        r.bounds(i, view, b);
         const f64 area = (b[2] - b[0]) * (b[3] - b[1]);
         if (v.x >= b[0] && v.x <= b[2] && v.y >= b[1] && v.y <= b[3] && area > 0 && area < best_area) {
             best_area = area;
-            best = rig_.parts()[static_cast<usize>(i)].id;
+            best = id;
         }
-    }
+    };
+    for (i32 i = 0; i < static_cast<i32>(r.parts().size()); ++i) take(i, r.parts()[static_cast<usize>(i)].id);
+    for (const pixel::DrawnCopy& c : r.drawn_copies()) take(c.index, c.id);
     return best;
 }
 
@@ -1117,9 +1192,11 @@ void PixelEditor::drag(f32 x, f32 y) {
     if (moving_) {
         if (!move_started_ && std::hypot(x - move_x_, y - move_y_) > kMoveStart * std::max(1.0f, dp_)) start_move();
         if (!move_started_) return;
-        // Back through what carries the part: the units of its own move, to tenths.
+        // Back through what carries the part: the units of its own move, to tenths (with «Привязка», whole steps of the
+        // grid, part 4е).
         const vector::Point a = move_inv_.apply(view_to_picture(x, y)), b = move_inv_.apply(move_from_);
-        const f64 dx = std::round((a.x - b.x) * 10) / 10, dy = std::round((a.y - b.y) * 10) / 10;
+        const f64 dx = snap_step_ > 0 ? pixel::snap_steps(a.x - b.x, snap_step_) : std::round((a.x - b.x) * 10) / 10,
+                  dy = snap_step_ > 0 ? pixel::snap_steps(a.y - b.y, snap_step_) : std::round((a.y - b.y) * 10) / 10;
         if (dx != move_dx_ || dy != move_dy_) {
             move_dx_ = dx, move_dy_ = dy;
             view_dirty_ = true;
@@ -1127,10 +1204,12 @@ void PixelEditor::drag(f32 x, f32 y) {
         return;
     }
     if (!dragging_) return;
-    const i32 i = rig_.part(part_);
+    const i32 i = rig_.shown().part(part_);
     if (i < 0) return;
-    // Back through what carries the pivot in the pose shown: it is kept in rest units.
-    const vector::Point at = pixel::inverse(rig_.carried(i)).apply(view_to_picture(x, y));
+    // Back through what carries the pivot in the pose shown: it is kept in rest units, one for every drawing; with
+    // «Привязка» on the grid's lines (part 4е).
+    vector::Point at = pixel::inverse(rig_.shown().carried(i)).apply(view_to_picture(x, y));
+    if (snap_step_ > 0) at = pixel::tool_point(at, snap_step_);
     rig_.set_pivot(part_, at);
     doc_.pivots[part_] = at; // shown at once; written on release
     drag_moved_ = true;
@@ -1255,6 +1334,7 @@ bool PixelEditor::select_clip(const std::string& state) {
     block_ = -1;
     tv_.scale = tv_.start = 0; // all of the clip in sight
     hush();
+    drop_pen(); // part 4е: another clip
     if (!note_.empty() && note_ == refused_) note_.clear(); // a mouse edit's refusal was about the clip left
     recount();
     select_block(-1);
@@ -1636,20 +1716,35 @@ void PixelEditor::redraw() {
     vector_ = vec[0];
     // The grid over the picture, under the marks: its cell 8 points or more.
     if (grid_) pixel::draw_grid(vec[0], texels, pixel::grid_step(to_view().a), static_cast<u32>(std::max<i64>(1, std::lround(dp_))));
-    if (const i32 pi = rig_.part(part_); pi >= 0) {
+    // Marks on the drawing shown (part 4д); the tree is of it too, made again when the frame shows another.
+    pixel::Rig& shown = rig_.shown();
+    if (const i32 pi = shown.part(part_); pi >= 0) {
         f64 box[4];
-        rig_.bounds(pi, texels, box);
-        const vector::Point at = texels.apply(rig_.carried(pi).apply(rig_.pivot(pi)));
+        shown.bounds(pi, texels, box);
+        const vector::Point at = texels.apply(shown.carried(pi).apply(shown.pivot(pi)));
         mark(vec[0], box, at.x, at.y, std::max<i64>(1, std::lround(dp_)));
     }
-    if (const i32 hi = rig_.part(hovered_); hi >= 0) {
+    if (const i32 hi = shown.part(hovered_); hi >= 0) {
         f64 box[4];
-        rig_.bounds(hi, texels, box);
+        shown.bounds(hi, texels, box);
         outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
     }
+    // The copy of the selected block, where it stands (part 4г).
+    if (rec_ok_ && block_ >= 0 && static_cast<usize>(block_) < rec_.blocks.size() && rec_.blocks[static_cast<usize>(block_)].part < rec_.parts.size())
+        for (const pixel::DrawnCopy& c : shown.drawn_copies())
+            if (c.id == rec_.parts[rec_.blocks[static_cast<usize>(block_)].part]) {
+                f64 box[4];
+                shown.bounds(c.index, texels, box);
+                outline(vec[0], box, std::max<i64>(1, std::lround(dp_)));
+            }
+    draw_tool(vec[0], texels); // the shape being drawn (part 4е)
     vector_shown_ = vec[0];
     show(vec[0], frame_px_);
     sync_problem();
+    if (&shown != shown_rig_) {
+        shown_rig_ = &shown;
+        rebuild();
+    }
     rebuild_part();
 }
 
@@ -1753,10 +1848,12 @@ void PixelEditor::rebuild() {
     m_name_ = has_ ? name() : std::string();
     m_note_ = note_;
     m_parts_.clear();
-    for (const pixel::Part& p : rig_.parts()) {
+    // The parts of the drawing the frame shows (part 4д).
+    const pixel::Rig& shown = rig_.shown();
+    for (const pixel::Part& p : shown.parts()) {
         int depth = 0;
-        for (i32 q = p.parent; q >= 0; q = rig_.parts()[static_cast<usize>(q)].parent) ++depth;
-        const vector::Point pv = rig_.pivot(rig_.part(p.id));
+        for (i32 q = p.parent; q >= 0; q = shown.parts()[static_cast<usize>(q)].parent) ++depth;
+        const vector::Point pv = shown.pivot(shown.part(p.id));
         m_parts_.push_back({p.id, number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10), depth, p.shape,
                             p.id == part_});
     }
@@ -1806,6 +1903,7 @@ void PixelEditor::rebuild() {
     rebuild_console();
     rebuild_gutter();
     rebuild_inspector();
+    rebuild_shape();
     m_total_ = "в картинке " + count_words(total, "кадр", "кадра", "кадров") + " из " + std::to_string(frame_limit());
     m_limit_ = std::to_string(frame_limit());
     m_fw_ = std::to_string(doc_.frame_w);

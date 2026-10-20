@@ -8,6 +8,15 @@ namespace forge::pixel {
 
 namespace {
 
+// The order of parts, the mask and the link have no value, length or start to drag: they are written in the code
+// (parts 4а, 4б and 4в).
+constexpr const char* kOrderInCode = "порядок частей правится в коде: to_top, to_bottom, above, below";
+constexpr const char* kMaskInCode = "маска правится в коде: mask(\"lid\"), mask(nil)";
+constexpr const char* kLinkInCode = "крепление правится в коде: attach(\"hand\"), detach()";
+const char* in_code(Prop p) { return p == Prop::Mask ? kMaskInCode : p == Prop::Link ? kLinkInCode : kOrderInCode; }
+// The drawing a swap goes to (part 4д): its length, timing and start are a transition's, its name is the code's.
+constexpr const char* kDrawingInCode = "рисунок правится в коде: swap(…)";
+
 // The call of s in the character's script; null with why for a module's call or none.
 const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& code, std::string& why) {
     if (s.site < 0) return why = "у блока нет вызова в коде", nullptr;
@@ -22,11 +31,11 @@ const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& co
 
 std::string value_text(Prop p, const PropValue& v) {
     if (prop_is_number(p)) return format_number(v.v);
-    if (!(v.v > 0)) return "nil"; // its own colour or shape
+    if (p == Prop::Visible) return v.v > 0 ? "true" : "false";
+    if (!(v.v > 0)) return "nil"; // its own colour, width or shape
+    if (p == Prop::StrokeWidth) return format_number(v.n);
     if (p == Prop::Morph) return quote_string(v.target);
-    char buf[8];
-    std::snprintf(buf, sizeof buf, "#%02x%02x%02x", v.color.r, v.color.g, v.color.b);
-    return quote_string(buf);
+    return quote_string(color_hex(v.color));
 }
 
 // Argument `index` of a call as the number `value` (it was `old`), added when it is one past the last.
@@ -39,9 +48,15 @@ bool number_arg(std::string_view source, const CallSite& c, i8 index, f64 old, f
     return why = "в вызове не хватает аргументов до этого", false;
 }
 
-bool has_value(const Block& b, std::string& why) {
+bool has_value(const Recording& rec, const Block& b, std::string& why) {
     switch (b.to) {
     case Block::To::Value: break;
+    case Block::To::Along: {
+        const std::string path = b.ref < rec.alongs.size() && rec.alongs[b.ref].path < rec.paths.size() ? rec.paths[rec.alongs[b.ref].path].id : "?";
+        return why = "путь правится в коде: along(\"" + path + "\", …)", false;
+    }
+    case Block::To::Snap:
+        return why = "место считается от «" + (b.ref < rec.snaps.size() ? rec.snaps[b.ref] : std::string("?")) + "»: правится в коде", false;
     case Block::To::Back: return why = "блок возвращает туда, откуда начался переход: его значения в коде нет", false;
     case Block::To::Saved: return why = "блок возвращает сохранённое save(): его значения в коде нет", false;
     case Block::To::Rest: return why = "блок возвращает в покой: его значения в коде нет", false;
@@ -53,8 +68,10 @@ bool has_value(const Block& b, std::string& why) {
 
 // The call whose argument holds block b's value; null with why.
 const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
+    if (b.prop == Prop::Drawing) return why = kDrawingInCode, nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
-    if (!c || !has_value(b, why)) return nullptr;
+    if (!c || !has_value(rec, b, why)) return nullptr;
     if (b.value_arg < 0 || static_cast<usize>(b.value_arg) >= c->args.size()) return why = "в вызове нет значения", nullptr;
     if (b.value_field && c->args[static_cast<usize>(b.value_arg)].kind != ArgKind::Table)
         return why = "значения вызова не в таблице { … }: правьте в коде", nullptr;
@@ -63,6 +80,7 @@ const CallSite* value_call(const Recording& rec, const Block& b, const CodeSites
 
 // The call whose argument holds block b's length or timing; null with why.
 const CallSite* timed_call(const Recording& rec, const Block& b, const CodeSites& code, bool timing, std::string& why) {
+    if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
     const CallSite* c = script_call(rec, b.site, code, why);
     if (!c) return nullptr;
     if (b.to == Block::To::Binding)
@@ -84,6 +102,7 @@ const CallSite* timed_call(const Recording& rec, const Block& b, const CodeSites
 
 // The at(…) or delay(…) whose number is block b's start; null with why.
 const CallSite* start_call(const Recording& rec, const Block& b, const CodeSites& code, std::string& why) {
+    if (prop_is_call(b.prop)) return why = in_code(b.prop), nullptr;
     if (b.start_site.site < 0)
         return why = "блок идёт за предыдущим, своего начала в коде у него нет: оно есть у at(с, …) и delay(с, …)",
                nullptr;
@@ -121,6 +140,8 @@ bool can_edit_pause(const Recording& rec, const Pause& pause, const CodeSites& c
 bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& value, const CodeSites& code,
                 std::string_view source, std::string& out, std::string& why) {
     out.clear();
+    if (prop_is_call(p)) return why = in_code(p), false;
+    if (p == Prop::Drawing || b.prop == Prop::Drawing) return why = kDrawingInCode, false;
     const CallSite* c = value_call(rec, b, code, why);
     if (!c) return false;
     const CodeArg& arg = c->args[static_cast<usize>(b.value_arg)];

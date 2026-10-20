@@ -15,9 +15,25 @@
 
 namespace forge::pixel {
 
-// The pivots of the file put on the rig, every other part's the one the code's drawing gives it (draw.h) or the middle
-// of its rest bounds again; the ids of the file it has no part for, in order.
-std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn = nullptr);
+// The other drawings of a character's code (drawings, part 4д of docs/models/движение-модель.md), each drawn, its line
+// in the script and its SVG (on the frame's size when it sets no canvas).
+struct NamedDrawing {
+    std::string name;
+    Drawing drawing;
+    u32 line = 0;
+    std::string svg;
+};
+// Draws every drawing of the script, by name: false with why and its line for the first that fails.
+bool draw_drawings(PoseScript& script, const PixelDoc& doc, std::vector<NamedDrawing>& out, std::string& why, u32& line);
+// Puts them on the rig, its main picture loaded: false with why and the line for one whose canvas is not the main
+// picture's.
+bool add_drawings(Rig& rig, const std::vector<NamedDrawing>& drawings, std::string& why, u32& line);
+
+// The pivots of the file put on the rig, every other part's the one the code's drawing gives it (draw.h; the main
+// drawing's, then the other drawings' by name) or the middle of its rest bounds again, in each drawing of the rig;
+// the ids of the file no picture has a part for, in order.
+std::vector<std::string> apply_pivots(Rig& rig, const PixelDoc& doc, const Drawing* drawn = nullptr,
+                                      const std::vector<NamedDrawing>* others = nullptr);
 
 // The pose of frame k of a clip. False with why: "клип «walk», кадр 3: строка 5: …".
 bool frame_pose(PoseScript& script, const Rig& rig, const PixelDoc& doc, const ClipSpec& clip, u32 k, Pose& out, std::string& why);

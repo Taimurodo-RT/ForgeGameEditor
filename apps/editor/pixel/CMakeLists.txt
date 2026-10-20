@@ -6,6 +6,7 @@ add_library(forge_editor_pixel STATIC
   src/script.cpp
   src/doc.cpp
   src/draw.cpp
+  src/draw_edit.cpp
   src/bake.cpp
   src/clip_cut.cpp
   src/timeline.cpp

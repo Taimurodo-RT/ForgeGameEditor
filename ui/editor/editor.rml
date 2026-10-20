@@ -1304,6 +1304,17 @@
             </div>
 
             <div class="an-stage px-stage column" data-if="px_has">
+                <div id="px-tools" class="px-tools row">
+                    <div id="px-tool-select" class="an-chip" data-class-selected="px_tool == 'select'" title="Выбор (V): щелчок выбирает часть, протяжка двигает её" data-event-click="px_tool('select')"><icon class="s" name="arrow_selector_tool"/></div>
+                    <div id="px-tool-rect" class="an-chip" data-class-selected="px_tool == 'rect'" title="Прямоугольник (R): протяните от угла до угла" data-event-click="px_tool('rect')"><icon class="s" name="crop_square"/></div>
+                    <div id="px-tool-ellipse" class="an-chip" data-class-selected="px_tool == 'ellipse'" title="Эллипс (O): протяните по описанному прямоугольнику" data-event-click="px_tool('ellipse')"><icon class="s" name="radio_button_unchecked"/></div>
+                    <div id="px-tool-line" class="an-chip" data-class-selected="px_tool == 'line'" title="Линия (Shift+L): протяните от конца до конца" data-event-click="px_tool('line')"><icon class="s" name="horizontal_rule"/></div>
+                    <div id="px-tool-pen" class="an-chip" data-class-selected="px_tool == 'pen'" title="Перо (Shift+P): щелчки ставят точки; Enter заканчивает, щелчок по первой замыкает, Esc отменяет" data-event-click="px_tool('pen')"><icon class="s" name="ink_pen"/></div>
+                    <div id="px-shape-swatch" class="px-swatch" data-attr-style="px_shape_swatch"/>
+                    <input id="px-shape-color" type="text" class="small" title="Цвет новых фигур: заливка прямоугольника, эллипса и замкнутого пера, обводка линии и открытого пера; щелчок пипетки ставит его" data-attr-value="px_shape_color" data-event-change="px_shape_color(ev.value, ev.linebreak)" data-event-blur="px_shape_color_commit"/>
+                    <div class="grow"/>
+                    <div id="px-snap" class="an-chip" data-class-selected="px_snapping" title="Привязка: точки фигур, протяжка части и опорная точка встают на линии сетки" data-event-click="px_snap_toggle">Привязка</div>
+                </div>
                 <div class="px-views row">
                     <div class="px-view column">
                         <span class="an-label">Вектор: щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью</span>
@@ -1359,6 +1370,15 @@
                         <span id="px-inspect-call" class="px-call grow">{{ px_part_code }}</span>
                         <div id="px-inspect-code" class="button outlined small" data-if="px_part_can_code" title="Выделить в панели вызов, который сейчас решает её движение" data-event-click="px_part_code"><span>К коду</span></div>
                     </div>
+                </div>
+                <div id="px-shape" class="px-inspector column" data-if="px_has_shape">
+                    <span class="an-label" title="Как часть нарисована: поля вызова в коде рисунка, во всех кадрах и клипах">Фигура</span>
+                    <span id="px-shape-count" class="an-hint" data-if="px_shape_count != ''">{{ px_shape_count }}</span>
+                    <div data-for="f : px_shape_fields" class="px-field row">
+                        <span class="grow">{{ f.name }}</span>
+                        <input type="text" class="small" data-attr-id="'px-shape-' + f.name" data-attr-value="f.value" data-event-change="px_shape_field(f.name, ev.value, ev.linebreak)" data-event-blur="px_shape_field_commit(f.name)"/>
+                    </div>
+                    <span id="px-shape-why" class="an-hint px-why" data-if="px_shape_why != ''">{{ px_shape_why }}</span>
                 </div>
 
                 <div class="lg-nav-title">Параметры скрипта</div>
@@ -1488,7 +1508,7 @@
                 </div>
                 <div id="px-tracks" class="px-tracks" data-if="px_has_rec">
                     <div class="px-tracks-in" data-attr-style="px_tracks_height">
-                        <div data-for="tr : px_tracks" class="px-track-name" data-attr-style="tr.style">{{ tr.label }}</div>
+                        <div data-for="tr : px_tracks" class="px-track-name" data-attr-id="'px-track-' + it_index" data-attr-style="tr.style">{{ tr.label }}</div>
                         <div class="px-blocks">
                             <div data-for="b : px_blocks" class="px-block" data-attr-id="'px-block-' + b.index" data-class-selected="b.selected" data-class-lit="b.lit" data-class-module="b.module" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_block(b.index)" data-event-dblclick="px_block_code(b.index)">{{ b.label }}</div>
                         </div>

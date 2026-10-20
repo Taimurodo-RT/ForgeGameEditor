@@ -16,6 +16,8 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <set>
+#include <tuple>
 
 namespace fs = std::filesystem;
 
@@ -568,13 +570,27 @@ void PixelEditor::lay_timeline() {
                                      "wait " + seconds_words(end - p.start),
                                      "wait(" + seconds_words(p.length) + ") с " + seconds_words(p.start) + " с: край тянет длину по кадрам"});
             }
-            // Tracks in the order of the picture's parts and of the properties.
+            // Tracks in the order of the picture's parts and of the properties; a copy's right after its part's, the
+            // copies by number (part 4г). The drawing's track first, the parts of the other drawings after the main
+            // one's (part 4д).
             std::vector<usize> order(r.tracks.size());
             for (usize i = 0; i < order.size(); ++i) order[i] = i;
+            auto index = [&](const std::string& id) {
+                if (const i32 i = rig_.part(id); i >= 0) return i;
+                const pixel::Rig& h = rig_.holder(id);
+                const i32 j = &h == &rig_ ? -1 : h.part(id);
+                return j < 0 ? std::numeric_limits<i32>::max() : static_cast<i32>(rig_.parts().size()) + j;
+            };
             auto rank = [&](usize i) {
                 const pixel::Recording::Track& t = r.tracks[i];
-                const i32 p = t.part < r.parts.size() ? rig_.part(r.parts[t.part]) : -1;
-                return std::pair{p < 0 ? std::numeric_limits<i32>::max() : p, static_cast<int>(t.prop)};
+                const std::string id = t.part < r.parts.size() ? r.parts[t.part] : std::string();
+                if (t.prop == pixel::Prop::Drawing) return std::tuple{-1, 0, 0};
+                i32 p = index(id), copy = 0;
+                if (const i32 c = pixel::copy_of(r, id); c >= 0) {
+                    p = index(r.copies[static_cast<usize>(c)].source);
+                    copy = static_cast<i32>(r.copies[static_cast<usize>(c)].number);
+                }
+                return std::tuple{p, copy, static_cast<int>(t.prop)};
             };
             std::stable_sort(order.begin(), order.end(), [&](usize a, usize b) { return rank(a) < rank(b); });
             usize shown = 0, more = 0;
@@ -582,12 +598,16 @@ void PixelEditor::lay_timeline() {
                 const pixel::Recording::Track& t = r.tracks[order[row]];
                 char top[48];
                 std::snprintf(top, sizeof top, "top: %.0fpx;", static_cast<f64>(row) * kRowPx);
-                m_tracks_.push_back({(t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop), top});
+                m_tracks_.push_back({t.prop == pixel::Prop::Drawing ? std::string(pixel::prop_word(t.prop))
+                                                                    : (t.part < r.parts.size() ? r.parts[t.part] : std::string("?")) + " · " + pixel::prop_word(t.prop),
+                                     top});
                 for (usize j = 0; j < t.blocks.size(); ++j) {
                     const pixel::Block& b = r.blocks[t.blocks[j]];
                     f64 start = b.start;
-                    f64 end = b.to == pixel::Block::To::Binding ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length)
-                                                                : b.start + b.length;
+                    // A binding and a call of the order, the mask or the link hold until the track's next block: the
+                    // calls have no length of their own.
+                    const bool holds = b.to == pixel::Block::To::Binding || pixel::prop_is_call(b.prop);
+                    f64 end = holds ? (j + 1 < t.blocks.size() ? r.blocks[t.blocks[j + 1]].start : r.length) : b.start + b.length;
                     // An edge being dragged: the end there, or all of the block from the start there.
                     if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockEnd) end = drag_edge_;
                     if (static_cast<i32>(t.blocks[j]) == drag_block_ && tl_drag_ == Drag::BlockStart) end += drag_edge_ - start, start = drag_edge_;
@@ -604,9 +624,16 @@ void PixelEditor::lay_timeline() {
                     std::string label = pixel::block_words(r, b);
                     if (b.site.file > 0 && b.site.file < r.files.size()) label += " · " + r.files[b.site.file];
                     std::string style = place(x0, x1 - x0) + " " + top;
-                    m_blocks_.push_back({bi, style, label,
-                                         label + ": с " + seconds_words(b.start) + " по " + seconds_words(b.to == pixel::Block::To::Binding ? end : b.start + b.length) +
-                                             " с; края тянут длину и начало по кадрам, двойной щелчок — к коду",
+                    const std::string title =
+                        b.prop == pixel::Prop::Order
+                            ? label + ": с " + seconds_words(b.start) + " с до следующего вызова порядка; правится в коде, двойной щелчок — к коду"
+                        : b.prop == pixel::Prop::Mask
+                            ? label + ": с " + seconds_words(b.start) + " с до следующего вызова маски; правится в коде, двойной щелчок — к коду"
+                        : b.prop == pixel::Prop::Link
+                            ? label + ": с " + seconds_words(b.start) + " с до следующего вызова крепления; правится в коде, двойной щелчок — к коду"
+                            : label + ": с " + seconds_words(b.start) + " по " + seconds_words(holds ? end : b.start + b.length) +
+                                  " с; края тянут длину и начало по кадрам, двойной щелчок — к коду";
+                    m_blocks_.push_back({bi, style, label, title,
                                          bi == block_, std::find(caret_blocks_.begin(), caret_blocks_.end(), bi) != caret_blocks_.end(), b.site.file > 0});
                 }
             }
@@ -793,13 +820,15 @@ bool PixelEditor::flag_to_code(usize event) {
 bool PixelEditor::select_block(i32 index) {
     if (!rec_ok_ || index < -1 || index >= static_cast<i32>(rec_.blocks.size())) return false;
     block_ = index;
+    view_dirty_ = true; // a copy's block outlines the copy
     lit_first_ = lit_last_ = 0;
     m_inspector_.clear();
     m_inspector_call_.clear();
     if (index >= 0) {
         const pixel::Block& b = rec_.blocks[static_cast<usize>(index)];
         const std::string part = b.part < rec_.parts.size() ? rec_.parts[b.part] : std::string("?");
-        std::string text = part + " · " + pixel::prop_word(b.prop) + "\n";
+        // The drawing's track is the character's, no part's (part 4д).
+        std::string text = (b.prop == pixel::Prop::Drawing ? std::string() : part + " · ") + pixel::prop_word(b.prop) + "\n";
         if (b.to == pixel::Block::To::Binding) text += "с " + seconds_words(b.start) + " с, пока на дорожке не начнётся другой блок\n";
         else text += "с " + seconds_words(b.start) + " по " + seconds_words(b.start + b.length) + " с (" + seconds_words(b.length) + " с)\n";
         if (b.to != pixel::Block::To::Binding)
@@ -807,6 +836,15 @@ bool PixelEditor::select_block(i32 index) {
         text += "как: " + timing_words(rec_, b);
         u32 repeats = 0;
         for (const pixel::Block& o : rec_.blocks) repeats += o.site == b.site && o.part == b.part && o.prop == b.prop;
+        // A copy's call is one for all the copies of its copies(…) (part 4г): an edit changes each.
+        if (const i32 c = pixel::copy_of(rec_, part); c >= 0) {
+            std::set<u32> copies;
+            for (const pixel::Block& o : rec_.blocks)
+                if (const i32 oc = o.site == b.site && o.prop == b.prop && o.part < rec_.parts.size() ? pixel::copy_of(rec_, rec_.parts[o.part]) : -1;
+                    oc >= 0 && rec_.copies[static_cast<usize>(oc)].source == rec_.copies[static_cast<usize>(c)].source)
+                    copies.insert(o.part);
+            text += "\nиз copies: " + count_words(static_cast<u32>(copies.size()), "копия", "копии", "копий");
+        }
         if (repeats > 1) text += "\nиз цикла: " + count_words(repeats, "повтор", "повтора", "повторов");
         if (b.site.file > 0 && b.site.file < rec_.files.size()) {
             text += "\nиз модуля «" + rec_.files[b.site.file] + "» (animations/" + rec_.files[b.site.file] + ".luau)";
@@ -1107,6 +1145,13 @@ void PixelEditor::rebuild_console() {
             lines.push_back({where + (line ? "строка " + std::to_string(line) + ": " : std::string()) + f->second.file.why, line, false, true});
         }
     }
+    // What the clip asks and the frame does not do, once a part (part 4а): a skew past 89°, a dash without a pattern.
+    if (rec_ok_)
+        for (const pixel::Note& n : rec_.notes) {
+            const bool here = n.site.file == 0;
+            const std::string where = !here && n.site.file < rec_.files.size() ? rec_.files[n.site.file] + ".luau: " : std::string();
+            lines.push_back({where + (n.line ? "строка " + std::to_string(n.line) + ": " : std::string()) + n.text, here ? n.line : 0, false, true});
+        }
     if (rec_ok_)
         for (const pixel::LogLine& l : rec_.log) {
             std::string where;

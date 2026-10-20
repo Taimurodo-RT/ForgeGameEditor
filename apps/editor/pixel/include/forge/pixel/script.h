@@ -73,6 +73,9 @@ public:
     bool has_pose() const;
     // Whether it has draw = function(p, rng) … end: the character's picture is the code's (draw.h).
     bool has_draw() const;
+    // The other drawings of the character (part 4д of docs/models/движение-модель.md): the names of its
+    // drawings = { angry = function(p, rng) … end }, sorted; "draw" is never one of them.
+    const std::vector<std::string>& drawings() const;
     // Every call of the loaded code and the clip functions: what SiteRef file 0 points into.
     const CodeSites& code() const;
     // The calls of a module a recording required (SiteRef files past 0, by Recording::files); null when not read.
@@ -92,6 +95,9 @@ public:
     // Runs draw: the declared parameters with `values` over them, rng from `seed` alone. False with error(), the line
     // of the call that failed in error_line().
     bool draw(const std::map<std::string, f64>& values, u64 seed, Drawing& out);
+    // Runs drawing `name` of drawings the same way ("draw" is draw itself). False with error(): «рисунок «angry»,
+    // строка 12: …», the line in error_line().
+    bool draw_named(std::string_view name, const std::map<std::string, f64>& values, u64 seed, Drawing& out);
 
     // The pose at t for clip `clip`: a clip of `clips` recorded (kept until the code, the values, the seed or its
     // lengths change) and read at t, pose(t, …) on top; or pose alone. Parts and shapes are checked against the rig.

@@ -40,17 +40,23 @@ struct DrawShape {
     std::string d;           // Path, as written
     std::string fill, stroke; // "#rrggbb" or "none"; empty: SVG's own (a black fill, a stroke on a line only)
     f64 stroke_width = -1;    // below 0: SVG's own (1)
+    std::vector<f64> dash;    // stroke-dasharray; empty: none
+    std::string cap, join;    // stroke-linecap ("butt", "round", "square"), stroke-linejoin ("miter", "round", "bevel"); empty: SVG's own
     f64 opacity = 1;
     bool hidden = false;      // display: none — a shape to morph into
     bool has_pivot = false;
     vector::Point pivot;      // in the picture's units
     u32 line = 0;             // the call's line in the script
+    // The call that drew it (part 4е): its place in the script's CodeSites::sites(), -1 when a module's code drew it.
+    i32 site = -1;
+    bool module = false;      // drawn by the code of a module the script requires
     bool operator==(const DrawShape&) const = default;
 };
 
 struct Drawing {
     bool canvas = false; // canvas(w, h) was called
     f64 width = 0, height = 0;
+    u32 canvas_line = 0; // its line in the script
     std::vector<DrawShape> shapes; // in the order drawn: a group before what is drawn in it
     bool operator==(const Drawing&) const = default;
 };

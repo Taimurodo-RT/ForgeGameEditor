@@ -139,6 +139,7 @@ void PixelEditor::set_grid(bool on) {
 }
 
 void PixelEditor::set_picking(bool on) {
+    if (on && tool_ != Tool::Select) set_tool(Tool::Select); // part 4е: the eyedropper and the tools turn each other off
     picking_ = m_picking_ = on;
     dirty("px_picking");
     if (!on) picked_.clear();
@@ -188,6 +189,7 @@ bool PixelEditor::pick_click(f32 x, f32 y) {
     // Nothing under it, or nothing drawn there: nothing copied.
     if (picked_.rfind('#', 0) != 0) return true;
     SDL_SetClipboardText(picked_.c_str());
+    set_shape_color(picked_); // part 4е: the colour of new shapes too
     note_ = "Скопирован цвет " + picked_;
     rebuild();
     return true;

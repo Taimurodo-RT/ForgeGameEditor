@@ -675,7 +675,7 @@ TEST_CASE("Motion tab: draw — errors with their line") {
     CHECK(draw_error(with_draw("    rect(\"a\", { x = 1, y = 2, w = 1, h = 1 })\n    circle(\"a\", { x = 1, y = 2, r = 1 })")) ==
           "строка 5: circle «a»: id «a» уже есть в рисунке");
     CHECK(draw_error(with_draw(R"(    rect("a", { x = 1, y = 2, widht = 1, h = 1 }))")) ==
-          "строка 4: rect «a»: поля «widht» нет (есть x, y, w, h, r, fill, stroke, stroke_width, opacity, hidden, pivot)");
+          "строка 4: rect «a»: поля «widht» нет (есть x, y, w, h, r, fill, stroke, stroke_width, dash, cap, join, opacity, hidden, pivot)");
     CHECK(draw_error(with_draw("    rect(\"a\", { x = 1, y = 2, w = 1, h = 1 })\n    canvas(8, 8)")) == "строка 5: canvas — до первой фигуры");
     CHECK(draw_error(with_draw("    canvas(8, 8)\n    canvas(8, 8)")) == "строка 5: canvas — один раз");
     CHECK(draw_error(with_draw("    canvas(0, 8)")) == "строка 4: canvas(w, h): w и h больше 0");

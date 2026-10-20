@@ -65,21 +65,30 @@ MotionLengths drag_flag(const Recording& rec, const MotionLengths& now, usize ev
     return out;
 }
 
-namespace {
-
-std::string hex(Rgba8 c) {
-    char buf[8];
-    std::snprintf(buf, sizeof buf, "#%02x%02x%02x", c.r, c.g, c.b);
-    return buf;
-}
-
-} // namespace
-
 std::string value_words(Prop p, const PropValue& v) {
-    if (p == Prop::Fill) {
-        if (v.v <= 0) return "свой цвет";
-        return hex(v.color) + (v.v < 1 ? " " + format_number(v.v) : std::string());
+    if (prop_is_color(p)) {
+        if (v.v <= 0) return p == Prop::Tint ? "без тона" : p == Prop::FlashColor ? "белый" : p == Prop::Shadow ? "без тени" : "свой цвет";
+        return color_hex(v.color) + (v.v < 1 ? " " + format_number(v.v) : std::string());
     }
+    if (p == Prop::StrokeWidth) {
+        if (v.v <= 0) return "своя толщина";
+        return format_number(v.n) + (v.v < 1 ? " " + format_number(v.v) : std::string());
+    }
+    if (p == Prop::Visible) return v.v > 0 ? "да" : "нет";
+    if (p == Prop::Mask) {
+        if (v.v <= 0) return "без маски";
+        return "маска " + v.target + (v.v > 1 ? ", наоборот" : "");
+    }
+    if (p == Prop::Link) return v.v > 0 ? "с " + v.target : "отпущена";
+    if (p == Prop::Order) {
+        switch (static_cast<OrderStep::Kind>(std::clamp(static_cast<int>(v.v), 0, 3))) {
+        case OrderStep::Kind::Top: return "наверх";
+        case OrderStep::Kind::Bottom: return "вниз";
+        case OrderStep::Kind::Above: return "над " + v.target;
+        case OrderStep::Kind::Below: return "под " + v.target;
+        }
+    }
+    if (p == Prop::Drawing) return v.target.empty() ? "draw" : v.target; // part 4д
     if (p == Prop::Morph) {
         if (v.v <= 0 || v.target.empty()) return "своя форма";
         return v.target + (v.v < 1 ? " " + format_number(v.v) : std::string());
@@ -87,17 +96,24 @@ std::string value_words(Prop p, const PropValue& v) {
     return format_number(v.v);
 }
 
-std::string block_words(const Recording&, const Block& b) {
+std::string block_words(const Recording& rec, const Block& b) {
     const std::string prop = prop_word(b.prop);
     switch (b.to) {
     case Block::To::Binding: return "связь";
     case Block::To::Back: return prop + " → назад";
     case Block::To::Saved: return prop + " → restore";
     case Block::To::Rest: return prop + " → покой";
+    case Block::To::Along: {
+        const std::string path = b.ref < rec.alongs.size() && rec.alongs[b.ref].path < rec.paths.size() ? rec.paths[rec.alongs[b.ref].path].id : "?";
+        return "по " + path + (b.prop == Prop::Rot ? ", поворот" : "");
+    }
+    case Block::To::Snap: return "к " + (b.ref < rec.snaps.size() ? rec.snaps[b.ref] : std::string("?"));
     case Block::To::Value: break;
     }
     if (!b.frames.empty()) return "tween";
     const std::string to = value_words(b.prop, b.value);
+    if (prop_is_call(b.prop)) return to; // «наверх», «маска lid», «с hand»: the track says what it is
+    if (b.prop == Prop::Drawing) return "→ " + to; // «→ angry» on the track «рисунок» (part 4д)
     return b.spring ? "пружина → " + to : prop + " → " + to;
 }
 
