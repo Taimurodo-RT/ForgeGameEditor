@@ -32,13 +32,22 @@
 // frame, a field of the other's table, or a line at(t, part("…"):to({ x, y }, 0)). Each edit is one step that writes
 // the script and the «.pixel.json»; unsaved text in the panel is saved first, a step of its own. The inspector shows
 // the selected part's values in the frame and «К коду»; the tree's row under the mouse outlines its part.
+//
+// Part 3в «Просмотр и звук»: the vector zooms in steps of ×1.25 to ×16 (0, =, −, the wheel round the mouse) and pans
+// with the middle button, the picture kept over the view; ' lays a grid over it; the line under the views has the
+// zoom, the picture's point under the mouse (P copies it) and, with the eyedropper (I), the colour under it (a click
+// copies it). sound("шаг") is the game's sounds/шаг, шаг.wav or шаг.ogg: a row of its waves on the timeline, red with
+// a console line when there is none; the preview sounds each mark in the frame it first shows its moment, while M is
+// on, and remembers what it sounded since it was started.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
 #include "forge/level/level.h"
 #include "forge/objects/library.h"
 #include "forge/pixel/bake.h"
+#include "forge/pixel/sound.h"
 #include "forge/pixel/timeline.h"
+#include "forge/pixel/view.h"
 #include "forge/ui/ui.h"
 
 #include "object_library.h"
@@ -235,6 +244,48 @@ public:
     // The timings' list of the inspector open.
     bool timings_open() const { return timings_open_; }
 
+    // --- the view and the sounds (part 3в, pixel_view.cpp) ---
+    // The vector's zoom and pan: step 0 … pixel::kZoomTop round a point of the screen (the context's pixels), = and −
+    // round the view's middle, 0 fitted; the middle button pans by the mouse's move. A new character starts fitted.
+    const pixel::PictureView& picture_view() const { return zoom_; }
+    void zoom_view(i32 step, f32 x, f32 y);
+    void zoom_view_by(int steps);
+    void fit_view();
+    void pan_view(f32 dx, f32 dy);
+    // The grid ('), the eyedropper (I), the preview's sound (M). None of them is written into files.
+    void set_grid(bool on);
+    bool grid() const { return grid_; }
+    void set_picking(bool on);
+    bool picking() const { return picking_; }
+    void set_sound(bool on);
+    bool sound() const { return sound_on_; }
+    // The line under the views: the picture's point under the mouse ("12.5, -3"; "" off the vector) and, picking, the
+    // colour under it ("#rrggbb", "пусто"; "" off both views). P copies the point; a click while picking the colour.
+    const std::string& coords() const { return coords_; }
+    const std::string& picked() const { return picked_; }
+    bool copy_coords();
+    // The rows of sounds on the timeline: one a name, in the order of their first marks, its file and its wave's
+    // columns (the loudest of each point of the timeline); none found or it does not read: why, at the line of its first
+    // call.
+    struct SoundRow {
+        std::string name, why;
+        std::filesystem::path file;
+        bool found = false;
+        u32 line = 0;
+        std::vector<f32> columns;
+    };
+    const std::vector<SoundRow>& sound_rows() const { return sound_rows_; }
+    // What the preview sounded since it was last started: the range's frame and the sound's name, in order.
+    struct Sounded {
+        u32 frame = 0;
+        std::string name;
+    };
+    const std::vector<Sounded>& sounded() const { return sounded_; }
+    const audio::Mixer& mixer() const { return mixer_; }
+    // The mode is not shown: the preview's sounds stop.
+    void away();
+    bool offscreen = false; // main: no sound device is opened
+
     // --- the code panel and the console (part 3а) ---
     // The panel's text: the script as a text field shows it (pixel::panel_text). Not saved while it is not the file's.
     const std::string& code() const { return code_; }
@@ -307,6 +358,8 @@ public:
     // under the mouse.
     const assets::CookedTexture& vector_shown() const { return vector_shown_; }
     const assets::CookedTexture& pixel_frame() const { return frame_px_; }
+    // The wave of a row of sounds as its image shows it (white where it sounds).
+    const assets::CookedTexture* wave_image(usize row) const { return row < waves_.size() ? &waves_[row] : nullptr; }
     const std::string& vector_image() const { return m_vector_; }
     const std::string& pixel_image() const { return m_pixel_; }
 
@@ -345,7 +398,7 @@ private:
     struct MarkRow {
         int index = 0;
         Rml::String style, title;
-        bool sound = false, span = false;
+        bool sound = false, span = false, missing = false;
     };
     struct PauseRow {
         int index = 0;
@@ -390,6 +443,14 @@ private:
     };
     struct PartValueRow {
         Rml::String name, value;
+    };
+    struct SoundView {
+        Rml::String name, wave, style, title;
+        bool missing = false;
+    };
+    struct SoundFound {
+        pixel::SoundFile file;
+        std::vector<i64> stamps; // of the files it may be, as they were when looked for
     };
 
     pixel::ClipSpec* selected_clip();
@@ -457,6 +518,18 @@ private:
     void start_move();
     void update_hover(Rml::Context* context);
     void make_curves();
+    // Part 3в (pixel_view.cpp).
+    void bind_view(Rml::DataModelConstructor& model);
+    pixel::Affine to_view() const;   // picture units to the view's points (kViewPx) at its zoom
+    pixel::Affine to_texels() const; // … to the vector's texels (view_px())
+    void fit_box();                  // the picture's box at ×1, the zoom kept within it
+    void track_mouse(Rml::Context* context); // the line under the views from the mouse
+    bool pick_click(f32 x, f32 y);   // a click while picking: the colour copied
+    void find_sounds();              // the files of the recording's sounds, by name
+    bool sounds_changed();           // one of them appeared, changed or went on disk
+    void lay_sounds();               // the rows of sounds from the view of the timeline
+    void sound_frames(i64 now, bool wrapped); // the preview showed range frame `now`: the marks it passed sound
+    void hush(); // another clip or character: the preview's sounds stop, what it sounded is forgotten
     std::string state_name(const std::string& id) const; // «Идёт» of "walk"; the id when no template plays it
     void dirty(const char* var) {
         if (model_) model_.DirtyVariable(var);
@@ -521,6 +594,21 @@ private:
     std::vector<PartValue> part_values_;
     i32 part_block_ = -1;
     bool timings_open_ = false, curves_made_ = false;
+    // Part 3в: the view, the line under it, the sounds.
+    pixel::PictureView zoom_;
+    bool grid_ = false, picking_ = false, sound_on_ = true, panning_ = false;
+    f32 mouse_x_ = -1e9f, mouse_y_ = -1e9f, pan_x_ = 0, pan_y_ = 0;
+    f32 pixel_x_ = 0, pixel_y_ = 0, pixel_w_ = 0, pixel_h_ = 0; // the pixel view on screen (context pixels)
+    std::string coords_, picked_;
+    std::map<std::string, SoundFound> sound_files_;
+    std::vector<SoundRow> sound_rows_;
+    std::vector<assets::CookedTexture> waves_;
+    std::vector<std::string> wave_images_[2]; // the waves' pictures shown now and before
+    std::string wave_key_;                    // what the waves were laid from: the same, they are not laid again
+    std::vector<Sounded> sounded_;
+    i64 sound_shown_ = -1; // the range's frame the playing preview showed last
+    audio::Mixer mixer_;
+    bool mixer_tried_ = false;
 
     // Part 3а: the player.
     f64 t_ = 0;          // the playhead
@@ -591,6 +679,9 @@ private:
     std::vector<SpeedChip> m_speeds_;
     std::vector<TimingRow> m_timings_;
     std::vector<PartValueRow> m_part_values_;
+    std::vector<SoundView> m_sounds_;
+    Rml::String m_zoom_words_, m_coords_, m_picked_, m_pick_swatch_;
+    bool m_grid_ = false, m_picking_ = false, m_sound_on_ = true;
     Rml::String m_block_value_, m_block_length_, m_block_timing_, m_timing_icon_, m_block_why_, m_part_name_, m_part_code_;
     bool m_can_value_ = false, m_can_length_ = false, m_can_timing_ = false, m_timings_open_ = false, m_has_part_ = false,
          m_part_can_code_ = false;

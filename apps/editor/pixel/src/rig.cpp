@@ -551,12 +551,14 @@ Affine Rig::to_pixels(u32 w, u32 h) const {
     return {s, 0, 0, s, (w - vb[2] * s) / 2 - vb[0] * s, (h - vb[3] * s) / 2 - vb[1] * s};
 }
 
-assets::CookedTexture Rig::draw(u32 w, u32 h) {
+assets::CookedTexture Rig::draw(u32 w, u32 h) { return draw(w, h, to_pixels(w, h)); }
+
+assets::CookedTexture Rig::draw(u32 w, u32 h, const Affine& px) {
     assets::CookedTexture out;
     Impl& m = *impl_;
     if (!m.pic || w == 0 || h == 0) return out;
     m.target(w, h);
-    m.render(to_pixels(w, h));
+    m.render(px);
     out.width = w, out.height = h;
     out.rgba8.assign(m.bytes(), m.bytes() + static_cast<usize>(w) * h * 4);
     return out;
@@ -634,11 +636,12 @@ assets::CookedTexture Rig::bake(u32 w, u32 h, const BakeOptions& options) {
     return out;
 }
 
-void Rig::bounds(i32 part, u32 w, u32 h, f64 out[4]) {
+void Rig::bounds(i32 part, u32 w, u32 h, f64 out[4]) { bounds(part, to_pixels(w, h), out); }
+
+void Rig::bounds(i32 part, const Affine& px, f64 out[4]) {
     out[0] = out[1] = out[2] = out[3] = 0;
     Impl& m = *impl_;
     if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return;
-    const Affine px = to_pixels(w, h);
     Box drawn, any;
     for (i32 li : m.recs[static_cast<usize>(part)].leaves) {
         const Leaf& l = m.leaves[static_cast<usize>(li)];

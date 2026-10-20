@@ -103,12 +103,16 @@ public:
     Affine to_pixels(u32 w, u32 h) const;
     // Smooth, as the vector looks: straight RGBA.
     assets::CookedTexture draw(u32 w, u32 h);
+    // The same with picture units going to the drawing's pixels by `px` (the view zoomed and moved).
+    assets::CookedTexture draw(u32 w, u32 h, const Affine& px);
     // Pixel art: each shape drawn alone, its fill and its stroke apart; a pixel takes the exact colour of the last one
     // (in the SVG's order) that covers at least half of it. No half-transparent pixels, no colours in between.
     assets::CookedTexture bake(u32 w, u32 h, const BakeOptions& options);
 
     // A part's pose bounds in the pixels of a w × h drawing (after the last pose()): x0, y0, x1, y1.
     void bounds(i32 part, u32 w, u32 h, f64 out[4]);
+    // The same in the pixels picture units go to by `px`.
+    void bounds(i32 part, const Affine& px, f64 out[4]);
     // How the last pose() carries a part's pivot, in picture units (identity at rest): by the parts it is inside and by
     // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
     // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).

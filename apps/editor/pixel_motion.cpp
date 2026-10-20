@@ -87,6 +87,7 @@ void PixelEditor::bind_motion(Rml::DataModelConstructor& model) {
         s.RegisterMember("title", &MarkRow::title);
         s.RegisterMember("sound", &MarkRow::sound);
         s.RegisterMember("span", &MarkRow::span);
+        s.RegisterMember("missing", &MarkRow::missing);
     }
     model.RegisterArray<std::vector<MarkRow>>();
     if (auto s = model.RegisterStruct<PauseRow>()) {
@@ -296,6 +297,7 @@ void PixelEditor::recount() {
     rec_error_ = rec_error;
     rec_error_line_ = rec_line;
     watch_modules();
+    find_sounds();
     sync_time();
 }
 
@@ -416,7 +418,16 @@ bool PixelEditor::timeline_x(f64 t, f32& x) const {
 }
 
 bool PixelEditor::wheel(const SDL_Event& e, f32 density, Rml::Context* context) {
-    if (e.type != SDL_EVENT_MOUSE_WHEEL || !context || !has_ || !selected_clip()) return false;
+    if (e.type != SDL_EVENT_MOUSE_WHEEL || !context || !has_) return false;
+    // Over the vector: its zoom a step round the mouse (part 3в), not the column of views scrolled.
+    bool vector = false;
+    for (const Rml::Element* el = context->GetHoverElement(); el && !vector; el = el->GetParentNode()) vector = el->GetId() == "px-vector";
+    if (vector) {
+        const f32 notches = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
+        if (notches != 0) zoom_view(zoom_.step + (notches > 0 ? 1 : -1), e.wheel.mouse_x * density, e.wheel.mouse_y * density);
+        return true;
+    }
+    if (!selected_clip()) return false;
     bool over = false;
     for (const Rml::Element* el = context->GetHoverElement(); el && !over; el = el->GetParentNode()) over = el->GetId() == "px-tl";
     if (!over) return false;
@@ -538,11 +549,15 @@ void PixelEditor::lay_timeline() {
                 const pixel::Mark& m = r.marks[i];
                 const f64 x = tv_.x(m.time);
                 if (x + tv_.per_second() * m.length < -4 || x > w + 4) continue;
-                const bool long_one = m.length > 0;
+                const bool long_one = m.length > 0, sound = m.kind == pixel::Mark::Kind::Sound;
+                // A sound without its file is red (part 3в).
+                const auto file = sound_files_.find(m.name);
+                const bool missing = sound && (file == sound_files_.end() || !file->second.file.clip);
                 m_marks_.push_back({static_cast<int>(i), long_one ? span(m.time, m.time + m.length) : place(x - 4 * dp, 8 * dp),
-                                    std::string(m.kind == pixel::Mark::Kind::Sound ? "sound" : "emit") + "(\"" + m.name + "\") в " + seconds_words(m.time) + " с" +
-                                        (long_one ? ", " + seconds_words(m.length) + " с" : std::string()),
-                                    m.kind == pixel::Mark::Kind::Sound, long_one});
+                                    std::string(sound ? "sound" : "emit") + "(\"" + m.name + "\") в " + seconds_words(m.time) + " с" +
+                                        (long_one ? ", " + seconds_words(m.length) + " с" : std::string()) +
+                                        (missing && file != sound_files_.end() ? ": " + file->second.file.why : std::string()),
+                                    sound, long_one, missing});
             }
             for (usize i = 0; i < r.pauses.size(); ++i) {
                 const pixel::Pause& p = r.pauses[i];
@@ -601,6 +616,7 @@ void PixelEditor::lay_timeline() {
     char height[48];
     std::snprintf(height, sizeof height, "height: %.0fpx;", static_cast<f64>(std::max<usize>(m_tracks_.size(), 1)) * kRowPx);
     m_tracks_height_ = height;
+    lay_sounds(); // part 3в
     tl_laid_w_ = tl_w_;
     place_head();
     for (const char* var : {"px_ticks", "px_frames", "px_flags", "px_marks", "px_pauses", "px_tracks", "px_blocks", "px_more_blocks", "px_range",
@@ -1074,6 +1090,23 @@ void PixelEditor::rebuild_console() {
     if (!rec_error_.empty()) lines.push_back({"Запись клипа «" + state_name(clip_) + "»: " + rec_error_, rec_error_line_, true, false});
     if (!pose_problem_.empty()) lines.push_back({pose_problem_, script_.error_line(), true, false});
     for (const std::string& w : warnings_) lines.push_back({w, 0, false, true});
+    // A sound without its file, once a name, at its first call (part 3в).
+    if (rec_ok_) {
+        std::vector<std::string> said;
+        for (const pixel::Mark& m : rec_.marks) {
+            if (m.kind != pixel::Mark::Kind::Sound || std::find(said.begin(), said.end(), m.name) != said.end()) continue;
+            said.push_back(m.name);
+            const auto f = sound_files_.find(m.name);
+            if (f == sound_files_.end() || f->second.file.clip) continue;
+            u32 line = 0;
+            std::string where;
+            if (m.site.file == 0 && m.site.site >= 0 && m.site.site < static_cast<i32>(script_.code().sites().size()))
+                line = script_.code().sites()[static_cast<usize>(m.site.site)].line;
+            else if (m.site.file > 0 && m.site.file < rec_.files.size())
+                where = rec_.files[m.site.file] + ".luau: ";
+            lines.push_back({where + (line ? "строка " + std::to_string(line) + ": " : std::string()) + f->second.file.why, line, false, true});
+        }
+    }
     if (rec_ok_)
         for (const pixel::LogLine& l : rec_.log) {
             std::string where;

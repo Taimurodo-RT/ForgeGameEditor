@@ -255,6 +255,16 @@
 .px-mark { position: absolute; top: 6px; height: 10px; border-radius: 5px; background-color: var(--secondary); }
 .px-mark.span { border-radius: 2px; opacity: 0.7; }
 .px-mark.sound { background-color: var(--tertiary); }
+.px-mark.missing { background-color: var(--error); }
+/* Part 3в: a row of a sound's waves (white in its picture, the colour of sound marks on screen); red without its file. */
+.px-sound-row { height: 24px; }
+.px-sound-row .px-tl-time { height: 24px; }
+.px-wave { position: absolute; left: 0px; top: 0px; image-color: var(--tertiary); }
+.px-sound-row.missing .px-tl-name { color: var(--error); }
+.px-sound-row.missing .px-tl-time { background-color: var(--error-container); }
+/* The line under the views: the zoom, the point under the mouse, the eyedropper's colour; the grid and the eyedropper. */
+.px-view-line { gap: var(--space-2); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
+.px-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px var(--outline-variant); }
 .px-pause { position: absolute; box-sizing: border-box; top: 3px; height: 16px; overflow: hidden; border-radius: 3px; font-size: 10px; line-height: 16px; padding-left: 3px; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
 .px-tracks { position: relative; height: 104px; overflow-y: auto; }
 .px-tracks-in { position: relative; }
