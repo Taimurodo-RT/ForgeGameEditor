@@ -1508,7 +1508,7 @@
           <div id="px-tl-panel" class="px-tl-panel column" data-if="px_has">
             <div class="px-player row">
                 <div id="px-back" class="icon-button small" title="Кадр назад (←), к началу диапазона (Shift+←)" data-event-click="px_step(-1)"><icon class="s" name="skip_previous"/></div>
-                <div id="px-play" class="icon-button small" title="Пауза и пуск (пробел)" data-event-click="px_play"><icon class="s" data-attr-name="px_playing ? 'pause' : 'play_arrow'"/></div>
+                <div id="px-play" class="icon-button small" title="Пауза и пуск (пробел); у флажка ожидания — дальше" data-event-click="px_play"><icon class="s" data-attr-name="px_playing ? 'pause' : 'play_arrow'"/></div>
                 <div id="px-forward" class="icon-button small" title="Кадр вперёд (→), к концу диапазона (Shift+→)" data-event-click="px_step(1)"><icon class="s" name="skip_next"/></div>
                 <span id="px-frame-label" class="muted">{{ px_clip_name }} · {{ px_frame_label }}</span>
                 <span id="px-time" class="px-num">{{ px_time }}</span>
@@ -1519,8 +1519,10 @@
                 </div>
                 <div id="px-loop-view" class="an-check row" title="Просмотр по кругу (L); в игре — «Повторять» клипа" data-event-click="px_loop_view"><icon class="s" data-attr-name="px_loop_view ? 'check_box' : 'check_box_outline_blank'"/><span>По кругу</span></div>
                 <div id="px-onion" class="an-check row" title="Соседние кадры бледно под текущим" data-event-click="px_onion"><icon class="s" data-attr-name="px_onion ? 'check_box' : 'check_box_outline_blank'"/><span>Калька</span></div>
-                <div id="px-sound" class="an-check row" title="Звуки отметок sound(…) при просмотре (M)" data-event-click="px_sound_toggle"><icon class="s" data-attr-name="px_sound_on ? 'volume_up' : 'volume_off'"/><span>Звук</span></div>
+                <div id="px-sound" class="an-check row" title="Звуки отметок sound(…) и музыка сцены при просмотре (M)" data-event-click="px_sound_toggle"><icon class="s" data-attr-name="px_sound_on ? 'volume_up' : 'volume_off'"/><span>Звук</span></div>
+                <div id="px-hold" class="an-check row" data-if="px_scene" title="Плеер стоит на флажках wait_action и talk, пока не нажата клавиша действия или ▶; клипы актёров и музыка идут" data-event-click="px_hold_toggle"><icon class="s" data-attr-name="px_hold ? 'check_box' : 'check_box_outline_blank'"/><span>Ждать, как в игре</span></div>
             </div>
+            <div id="px-held" class="px-held row" data-if="px_held_words != ''"><icon class="s" name="hourglass_pause"/><span>{{ px_held_words }}</span></div>
             <div class="px-clips row" data-if="!px_scene">
                 <span class="px-tl-name">Клипы</span>
                 <div data-for="c : px_states" class="an-chip" data-attr-id="'px-state-' + c.id" data-class-selected="c.selected" data-class-off="!c.on" data-attr-title="c.sub" data-event-click="px_state(c.id)" data-event-mousedown="px_state_button(c.id, ev.button)">{{ c.name }}</div>
@@ -1563,6 +1565,20 @@
                     <span class="px-tl-name">Паузы</span>
                     <div id="px-pauses" class="px-tl-time">
                         <div data-for="p : px_pauses" class="px-pause" data-attr-id="'px-pause-' + p.index" data-attr-style="p.style" data-attr-title="p.title">{{ p.label }}</div>
+                    </div>
+                </div>
+                <div class="px-tl-row px-music-row row" data-if="px_scene && px_music.size + px_music_marks.size > 0">
+                    <span class="px-tl-name">Музыка</span>
+                    <div id="px-music" class="px-tl-time">
+                        <img id="px-music-wave" class="px-wave" data-if="px_music_wave != ''" data-attr-src="px_music_wave" data-attr-style="px_music_wave_style"/>
+                        <div data-for="b : px_music" class="px-music" data-attr-id="'px-music-' + b.index" data-class-missing="b.missing" data-attr-style="b.style" data-attr-title="b.title" data-event-dblclick="px_music_code(b.index)"><div class="px-music-fade" data-attr-style="b.fade"/><span>{{ b.label }}</span></div>
+                        <div data-for="m : px_music_marks" class="px-music-mark" data-attr-id="'px-music-mark-' + m.index" data-attr-style="m.style" data-attr-title="m.title" data-event-dblclick="px_music_code(m.index)"/>
+                    </div>
+                </div>
+                <div class="px-tl-row row" data-if="px_scene && px_stops.size > 0">
+                    <span class="px-tl-name">Ожидания</span>
+                    <div id="px-stops" class="px-tl-time" data-attr-style="px_stops_height">
+                        <div data-for="f : px_stops" class="px-flag px-stop" data-attr-id="'px-stop-' + f.index" data-class-missing="f.missing" data-class-held="f.held" data-attr-style="f.style" data-attr-title="f.title" data-event-dblclick="px_stop_code(f.index)"><span>{{ f.label }}</span></div>
                     </div>
                 </div>
                 <div class="px-tl-row row" data-if="px_scene && px_transitions.size > 0">
