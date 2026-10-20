@@ -28,10 +28,17 @@ struct ScenePicture {
     bool operator==(const ScenePicture&) const = default;
 };
 
+// A box in a picture's units: its top left and size.
+struct SceneBox {
+    f64 x = 0, y = 0, w = 0, h = 0;
+    bool operator==(const SceneBox&) const = default;
+};
+
 // actor(id, character, …) of the stage: its picture and clips in the folder; its picture's top left in its own units and
 // its size there (the stage's group of it stands so that they fall where the actor is). An actor that plays no clip has
 // no file of clips: the parts of it the scene moves stand by the stage's records (stage.motion.json), in its main
-// drawing.
+// drawing. Part 6г2: where its drawing reaches in the scene beyond that box, when it does (the game draws it in this
+// box, not cut at its own); w 0: within its box.
 struct SceneActor {
     std::string id;
     std::string character; // its file in «Ресурсы», for messages: "персонажи/Ёжик"
@@ -39,6 +46,7 @@ struct SceneActor {
     std::string motion;    // "actors/ёжик.motion.json"; empty: none
     Point origin;
     f64 w = 0, h = 0;
+    SceneBox reach;
     bool operator==(const SceneActor&) const = default;
 };
 
@@ -165,6 +173,7 @@ struct SceneActorPose {
     std::vector<MotionCopy> copies;
     std::vector<MotionOrderStep> order;
     MotionShown shown;
+    std::vector<MotionPartPose> from_parts; // in a swap: the parts as they stand in the drawing it comes from (part 6г2)
 };
 // Everything at t: the stage's parts (shapes, pictures, the actors' groups: where they stand, their opacity, effects,
 // mask and link), its copies drawn and its order's steps; the camera's and the frames' values; the phase; each actor.
@@ -178,5 +187,24 @@ struct ScenePose {
     std::vector<SceneActorPose> actors; // by file.actors
 };
 ScenePose scene_pose(const SceneMotion& scene, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
+// The camera's matrix (part 6г2): the stage's units to the player's frame, a w × h canvas, q = (w/2, h/2) + zoom ·
+// R(−rot) · (p − c), c the middle of the canvas moved by its x, y; its zoom is its scale (forge::pixel::camera_matrix).
+MotionMatrix scene_camera_matrix(const MotionPartPose& camera, f64 w, f64 h);
+
+// A mark of the scene (part 6г2): its own (sound and emit of the stage's clip "scene") or of an actor's clip (rule 6 of
+// the actors' clips), its name, whether it is a sound, the actor whose clip made it ("" for the scene's) and its moment.
+struct SceneMark {
+    std::string name;
+    bool sound = false;
+    std::string actor;
+    f64 at = 0;
+    bool operator==(const SceneMark&) const = default;
+};
+// Every mark of the scene, as the tab lists them (forge::pixel::Scene::marks): by their moments, the scene's own before
+// the actors' at one moment, the actors' by actor, then by their plays. An actor's mark at moment m of its clip comes at
+// its play's start + m / speed, a loop's once each round, up to the actor's next play, loop or stop (not at it) or the
+// scene's end (at it too). The scene's time without waits (part 6г3 makes it wait). False with why when there are more
+// than 100 000 (a loop too short).
+bool scene_marks(const SceneMotion& scene, std::vector<SceneMark>& out, std::string& why);
 
 } // namespace forge::vector

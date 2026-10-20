@@ -457,6 +457,59 @@ int api_anim_going(lua_State* L) {
     return 1;
 }
 
+// forge.scene.play(name[, {pause = …, skip = …} or pause[, skip]]) (part 6г2 of docs/models/сцены-модель.md): the game
+// shows its scene and the handler waits for its end, as forge.wait waits; it returns whether the player skipped it.
+// The scheme's node «Показать сцену» gives pause and skip second and third.
+int api_scene_play(lua_State* L) {
+    size_t len = 0;
+    const char* name = luaL_checklstring(L, 1, &len);
+    if (len == 0) luaL_error(L, "scene.play: нужно имя сцены");
+    bool pause = true, skip = true;
+    auto flag = [&](int i, const char* where, bool& out) {
+        if (lua_isnil(L, i)) return;
+        if (!lua_isboolean(L, i)) luaL_error(L, "scene.play: %s: нужно true или false", where);
+        out = lua_toboolean(L, i);
+    };
+    if (lua_istable(L, 2)) {
+        lua_getfield(L, 2, "pause");
+        flag(-1, "pause", pause);
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "skip");
+        flag(-1, "skip", skip);
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        while (lua_next(L, 2)) {
+            lua_pop(L, 1);
+            const char* key = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
+            const std::string_view k = key ? key : "";
+            if (!key || (k != "pause" && k != "skip"))
+                luaL_error(L, "scene.play: в таблице только pause и skip, а не «%s»", key ? key : luaL_typename(L, -1));
+        }
+    } else {
+        if (!lua_isnone(L, 2)) flag(2, "2-е значение (мир на паузе)", pause);
+        if (!lua_isnone(L, 3)) flag(3, "3-е значение (можно пропустить)", skip);
+    }
+    if (!lua_isyieldable(L)) luaL_error(L, "scene.play: ждать сцену можно только внутри обработчика объекта");
+    GameBridge* b = bridge_of(L);
+    std::string why = "сцены показывает только игра";
+    u64 serial = 0;
+    if (!b || !b->scene_play(std::string_view(name, len), pause, skip, serial, why)) luaL_error(L, "scene.play: %s", why.c_str());
+    impl_of(L)->pending_scene = serial;
+    return lua_yield(L, 0); // the host resumes it with whether it was skipped
+}
+// forge.scene.stop(): the scene going ends as when the player skips it (its messages left go to the logic).
+int api_scene_stop(lua_State* L) {
+    if (GameBridge* b = bridge_of(L)) b->scene_stop();
+    return 0;
+}
+// forge.scene.going(): the name of the scene going, or nil.
+int api_scene_going(lua_State* L) {
+    std::string name;
+    if (GameBridge* b = bridge_of(L); b && b->scene_going(name)) lua_pushlstring(L, name.data(), name.size());
+    else lua_pushnil(L);
+    return 1;
+}
+
 int api_ui_show(lua_State* L) { return screen_call(L, "show"); }
 int api_ui_hide(lua_State* L) { return screen_call(L, "hide"); }
 int api_ui_toggle(lua_State* L) { return screen_call(L, "toggle"); }
@@ -853,6 +906,21 @@ void register_core_api(ScriptApi& api) {
         .help("Да, пока анимация вещи показывает кадр метки emit(\"удар\") из «Векторной» или любой кадр её окна: «удар бьёт, пока идёт окно».")
         .param("thing", V::Entity, "Вещь", "Thing").param("mark", V::String, "Метка", "Mark")
         .result("on", V::Bool, "Да", "On");
+
+    // Scenes of «Векторная» the game was given (part 6г2 of docs/models/сцены-модель.md).
+    api.add("scene.play", &api_scene_play).latent().category("Сцены").icon("movie").title("Показать сцену", "Play scene")
+        .help("Сцена из «Векторной», отданная игре («Отдать игре»): поверх мира и экранов игры. Нода ждёт её конца и идёт "
+              "дальше; «Пропущена» — да, когда игрок пропустил её в меню паузы. «Мир на паузе»: мир стоит и не слушает "
+              "игрока, пока она идёт.")
+        .param("name", V::String, "Сцена", "Scene").enum_type("scene")
+        .param("pause", V::Bool, "Мир на паузе", "Pause world", "true")
+        .param("skip", V::Bool, "Можно пропустить", "Can skip", "true")
+        .result("skipped", V::Bool, "Пропущена", "Skipped");
+    api.add("scene.stop", &api_scene_stop).action().category("Сцены").icon("stop").title("Кончить сцену", "Stop scene")
+        .help("Идущая сцена кончается, как когда игрок её пропускает: её оставшиеся сообщения уходят «Логике».");
+    api.add("scene.going", &api_scene_going).pure().category("Сцены").icon("movie").title("Идущая сцена", "Scene going")
+        .help("Имя идущей сцены; пусто (nil), когда сцены нет.")
+        .result("name", V::String, "Сцена", "Scene");
 
     api.add("compare", &api_compare).hidden().pure().category("Логика").title("Сравнить", "Compare")
         .param("a", V::Any, "A", "A").param("op", V::String, "Как", "Op").param("b", V::Any, "B", "B")

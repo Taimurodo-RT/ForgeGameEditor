@@ -567,7 +567,10 @@ TEST_CASE("SVG pictures under transforms: rasterized at their scale, as it is wh
     CHECK(PictureScale::Step(2) == 2);
     CHECK(PictureScale::Step(1.05f) == doctest::Approx(1.189207f));
     CHECK(PictureScale::Step(0.8f) == doctest::Approx(0.840896f));
-    CHECK(PictureScale::Step(100) == 8);
+    CHECK(PictureScale::Step(13.05f) == doctest::Approx(13.454343f)); // a scene of 160 × 120 on 1920 × 1080, zoomed
+    CHECK(PictureScale::Step(100) == 64);
+    CHECK(PictureScale::Step(1e5f) == 64);
+    CHECK(PictureScale::Step(1e-5f) == doctest::Approx(1.0f / 64));
 
     CpuRender render;
     MemoryFiles files;

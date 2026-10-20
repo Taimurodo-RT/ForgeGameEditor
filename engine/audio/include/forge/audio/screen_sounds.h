@@ -41,6 +41,23 @@ public:
     // The music the screens want now ("": none).
     void music(const std::string& name);
     void stop_music() { music({}); }
+    // A scene's music (part 6г2 of docs/models/сцены-модель.md): each tune by the call of the scene that began it, a
+    // file of the folder from `since` seconds in, looped on the music bus. What is not wanted any more stops, what
+    // goes on takes its volume, what is new begins.
+    struct Tune {
+        u32 call = 0;
+        std::string name;
+        f64 since = 0;
+        f32 volume = 0;
+        bool operator==(const Tune&) const = default;
+    };
+    void tunes(const std::vector<Tune>& want);
+    const std::vector<Tune>& tunes() const { return tunes_; }
+    // The voice of the tune a call began (none when its file is missing or it is not playing), for checks.
+    Voice tune_voice(u32 call) const;
+    // How loud the screens' music is under a scene's: 1 as it is, 0 silent.
+    void set_share(f32 share);
+    f32 share() const { return share_; }
     // A button was pressed: its sound once.
     void click(const std::string& name);
 
@@ -66,6 +83,9 @@ private:
     std::unordered_map<std::string, ClipPtr> clips_, put_;
     std::string music_, last_click_;
     Voice voice_;
+    std::vector<Tune> tunes_;
+    std::vector<Voice> tune_voices_; // by tunes_
+    f32 share_ = 1;
     u32 music_starts_ = 0, clicks_ = 0;
     std::vector<std::string> problems_;
 };

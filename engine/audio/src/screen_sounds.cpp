@@ -3,6 +3,8 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 
+#include <algorithm>
+
 namespace forge::audio {
 
 void ScreenSounds::attach(Mixer* mixer, std::filesystem::path folder) {
@@ -14,6 +16,7 @@ void ScreenSounds::attach(Mixer* mixer, std::filesystem::path folder) {
 
 void ScreenSounds::detach() {
     stop_music();
+    tunes({});
     mixer_ = nullptr;
 }
 
@@ -66,9 +69,44 @@ void ScreenSounds::music(const std::string& name) {
     music_ = name;
     if (name.empty() || !mixer_) return;
     if (ClipPtr c = clip(name)) {
-        voice_ = mixer_->play(c, {.loop = true, .bus = Bus::Music});
+        voice_ = mixer_->play(c, {.volume = share_, .loop = true, .bus = Bus::Music});
         ++music_starts_;
     }
+}
+
+void ScreenSounds::tunes(const std::vector<Tune>& want) {
+    for (usize i = tunes_.size(); i-- > 0;)
+        if (std::none_of(want.begin(), want.end(), [&](const Tune& t) { return t.call == tunes_[i].call && t.name == tunes_[i].name; })) {
+            if (mixer_) mixer_->stop(tune_voices_[i]);
+            tunes_.erase(tunes_.begin() + static_cast<std::ptrdiff_t>(i));
+            tune_voices_.erase(tune_voices_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    for (const Tune& t : want) {
+        const auto on = std::find_if(tunes_.begin(), tunes_.end(), [&](const Tune& o) { return o.call == t.call; });
+        if (on != tunes_.end()) {
+            if (on->volume != t.volume) {
+                on->volume = t.volume;
+                if (mixer_) mixer_->set(tune_voices_[static_cast<usize>(on - tunes_.begin())], t.volume, 0);
+            }
+            continue;
+        }
+        Voice v;
+        if (ClipPtr c = mixer_ ? clip(t.name) : nullptr) v = mixer_->play(c, {.volume = t.volume, .loop = true, .bus = Bus::Music, .from = t.since});
+        tunes_.push_back(t);
+        tune_voices_.push_back(v);
+    }
+}
+
+Voice ScreenSounds::tune_voice(u32 call) const {
+    for (usize i = 0; i < tunes_.size(); ++i)
+        if (tunes_[i].call == call) return tune_voices_[i];
+    return {};
+}
+
+void ScreenSounds::set_share(f32 share) {
+    if (share == share_) return;
+    share_ = share;
+    if (mixer_ && voice_) mixer_->set(voice_, share_, 0);
 }
 
 void ScreenSounds::click(const std::string& name) {

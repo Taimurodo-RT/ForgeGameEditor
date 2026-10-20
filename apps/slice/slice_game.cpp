@@ -416,6 +416,22 @@ public:
         return s_.screens().svg(c, why);
     }
     bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }
+    // The game's scenes (part 6г2 of docs/models/сцены-модель.md): the shell shows them.
+    bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) override {
+        if (!s_.play_scene(name, {pause, skip}, why)) return false;
+        serial = s_.scene().serial();
+        return true;
+    }
+    bool scene_over(u64 serial, bool& skipped) override {
+        skipped = s_.scene().skipped(serial);
+        return s_.scene().over(serial);
+    }
+    void scene_stop() override { s_.scene().skip(); }
+    bool scene_going(std::string& name) override {
+        if (!s_.scene().going()) return false;
+        name = s_.scene().name();
+        return true;
+    }
 
 private:
     SliceGame& g_;
@@ -1281,9 +1297,20 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     shell.screens().on_sound = [this](const std::string& name) { sounds_.screens().click(name); };
     logic_ = std::make_unique<SliceLogic>(*this);
     bridge_ = std::make_unique<ShellBridge>(*this, shell, level_screens_);
-    // A button's «Сообщение логике» goes to every scheme listening nearby.
+    // A button's «Сообщение логике» goes to every scheme listening nearby (a scene's emits too).
     shell.on_message = [this](const std::string& message) {
         if (level_ && level_->scripts) level_->scripts->send(0, message);
+    };
+    // A scene's music over the screens', and its end for the schemes' «Сцена кончилась».
+    shell.scene().on_music = [this](const std::vector<game::SceneTune>& tunes, f64 game_share) {
+        std::vector<audio::ScreenSounds::Tune> want;
+        want.reserve(tunes.size());
+        for (const game::SceneTune& t : tunes) want.push_back({t.call, t.file, t.since, static_cast<f32>(t.volume)});
+        sounds_.screens().tunes(want);
+        sounds_.screens().set_share(static_cast<f32>(game_share));
+    };
+    shell.scene().on_end = [this](const std::string& name, bool skipped, u64) {
+        if (level_ && level_->scripts) level_->scripts->scene_end(name, skipped);
     };
     things_.push_back(logic::hero_thing());
     for (const objects::Template& t : library_.templates()) things_.push_back(logic::thing_of(library_, t));

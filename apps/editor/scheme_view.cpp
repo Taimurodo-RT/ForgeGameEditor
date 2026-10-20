@@ -3,6 +3,7 @@
 #include "logic_editor.h"
 
 #include "forge/core/log.h"
+#include "forge/game/scenes.h"
 #include "forge/script/api.h"
 
 #include <RmlUi/Core/Elements/ElementFormControl.h>
@@ -651,6 +652,11 @@ void SchemeView::open_pick(u32 link, u32 node, const std::string& pin) {
         const script::GraphNode* n = g->find(node);
         const std::string* level = n ? n->value("level") : nullptr;
         m_choices_ = arrivals(level ? *level : std::string());
+    } else if (p->enum_type == "scene") {
+        // The scenes given to the game, as its folder has them now; an event's field may stay empty: any of them.
+        m_choices_.clear();
+        if (!p->required) m_choices_.push_back(OptionView{"", "любая"});
+        for (const std::string& name : game::scene_names(ed_.game_dir_)) m_choices_.push_back(OptionView{name, name});
     } else {
         m_choices_ = p->enum_type == "thing" ? m_things_ : p->enum_type == "action" ? m_actions_ : p->enum_type == "level" ? m_levels_ : m_cues_;
     }
@@ -876,6 +882,7 @@ std::string SchemeView::option_name(const std::string& list, const std::string& 
         const logic::Thing* t = ed_.thing(id);
         return t ? "зона «" + t->name + "»" : id;
     }
+    if (list == "scene") return id.empty() ? "любая" : id;
     const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : list == "level" ? m_levels_ : m_cues_;
     for (const OptionView& o : opts)
         if (o.id == id) return o.name;
@@ -925,7 +932,7 @@ SchemeView::NodeBox SchemeView::box_of(u32 link, const script::Graph& g, const s
             p.value = val ? *val : pd.value;
             if (!p.wired) {
                 if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue" || pd.enum_type == "level" ||
-                    pd.enum_type == "arrival") {
+                    pd.enum_type == "arrival" || pd.enum_type == "scene") {
                     p.field = "pick";
                     p.list = pd.enum_type;
                     p.title = (p.title.empty() ? "" : p.title + ": ") + option_name(pd.enum_type, p.value);

@@ -34,6 +34,14 @@
       "inputs": [ { "id": "filter", "type": "string", "constant": true, "title": { "ru": "Метка", "en": "Mark" } } ],
       "outputs": [ { "id": "name", "type": "string", "title": { "ru": "Метка", "en": "Mark" } } ],
       "lua": "if {in:filter} == \"\" or {out:name} == {in:filter} then\n    {body}\nend" },
+    { "id": "std.event.scene", "kind": "event", "event": "on_scene", "category": "События", "icon": "movie",
+      "title": { "ru": "Сцена кончилась", "en": "Scene ended" },
+      "help": { "ru": "Сцена из «Векторной», показанная игре, кончилась. «Пропущена» — да, когда игрок её пропустил. Пустая сцена — любые." },
+      "inputs": [ { "id": "filter", "type": "string", "constant": true, "enum_type": "scene", "title": { "ru": "Сцена", "en": "Scene" } } ],
+      "outputs": [
+        { "id": "name", "type": "string", "title": { "ru": "Сцена", "en": "Scene" } },
+        { "id": "skipped", "type": "bool", "title": { "ru": "Пропущена", "en": "Skipped" } } ],
+      "lua": "if {in:filter} == \"\" or {out:name} == {in:filter} then\n    {body}\nend" },
 
     { "id": "std.flow.if", "kind": "flow", "category": "Поток", "icon": "call_split",
       "title": { "ru": "Если", "en": "If" },

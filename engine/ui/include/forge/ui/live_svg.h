@@ -76,6 +76,7 @@ struct SvgDrawing {
     std::string name;    // "angry"
     std::string picture; // "Ёжик.angry.svg"
     std::shared_ptr<const std::string> text;
+    bool operator==(const SvgDrawing&) const = default;
 };
 
 // What a clip shows at a moment on an element's picture `picture` (its file name, "Ёжик.svg"): motion_pose's parts.
@@ -92,6 +93,12 @@ struct SvgPose {
     std::string swap_from;
     f64 swap_k = 0;
     std::vector<vector::MotionPartPose> from_parts;
+    // Part 6г2 of docs/models/сцены-модель.md: the elements of the picture's top level it draws, by SvgPlace::key (none:
+    // all); the others are display: none and still stand where they would for what hangs on them. A box of the
+    // picture's units it shows in place of its own (its viewBox, width and height; view_w 0: its own).
+    std::vector<std::string> only;
+    f64 view_x = 0, view_y = 0, view_w = 0, view_h = 0;
+    bool operator==(const SvgPose&) const = default;
 };
 // What a clip of a character's file shows on its picture `picture` at a moment (a game's screen poses each frame of a
 // clip so): its parts, its copies drawn, its order's steps (part 5г); the drawing shown with the others' texts, in a swap
@@ -120,6 +127,39 @@ std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::stri
 // The text of the stage a pose draws the picture from, for checks: "" when it draws the file itself. `over`: the
 // stage (or the drawing's text) of the document over it in a swap.
 std::string posed_stage(std::string_view svg, const SvgPose& pose, bool over = false);
+
+// An element of a picture's top level as a pose draws it (part 6г2): where it stands and how. A scene of a game draws
+// its stage's shapes, pictures and actors as layers of their own, each where the stage's picture in that pose puts it.
+struct SvgPlace {
+    // SvgPose::only's name of it: "e<n>" the n-th element of the file (scan_svg's), "c<id>" the copy `id` of a part
+    // (part 5г); "" what a stage adds (masks, gradients), which a run never hides.
+    std::string key;
+    std::string id;
+    vector::MotionMatrix m; // its units to the picture's (the root's viewBox's)
+    f64 opacity = 1;        // its own
+    bool shown = true;      // its display is not none
+    bool draws = true;      // a group, a <use>, a shape, an image or a text, not <defs>, <style>, …
+};
+
+// A picture posed as a live element poses it, to read where its top level stands: the same code draws it on the screen.
+class SvgPlaces {
+public:
+    SvgPlaces();
+    ~SvgPlaces();
+    SvgPlaces(const SvgPlaces&) = delete;
+    SvgPlaces& operator=(const SvgPlaces&) = delete;
+    // The picture at `path` (the path an element showing it has) and its text; false with why when it is not SVG.
+    bool load(std::string path, std::string text, std::string& why);
+    // Its top level in the order it draws it, in the pose (its `only` and view are not looked at); empty before load.
+    const std::vector<SvgPlace>& place(const SvgPose& pose);
+    // The pose a run of its top level draws (`only` the elements `keys` names): the parts inside them and the parts
+    // their links and masks name, and theirs; the copies and the order whole, as every run has them.
+    SvgPose run_pose(const SvgPose& pose, std::vector<std::string> keys);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
 // Ui::init calls it: the SVG plugin asks this file what a live element's pictures are.
 void install_live_svg();

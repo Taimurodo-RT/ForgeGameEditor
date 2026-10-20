@@ -198,6 +198,9 @@ file(GLOB thorvg_sources
   ${thorvg_dir}/renderer/cpu_engine/*.cpp
   ${thorvg_dir}/loaders/raw/*.cpp
   ${thorvg_dir}/loaders/svg/*.cpp)
+# Its raster of pictures, from third_party/thorvg: a turned picture sampled at the centres of pixels and texels.
+list(REMOVE_ITEM thorvg_sources ${thorvg_dir}/renderer/cpu_engine/tvgSwRaster.cpp)
+list(APPEND thorvg_sources ${CMAKE_SOURCE_DIR}/third_party/thorvg/tvgSwRaster.cpp)
 add_library(thorvg STATIC ${thorvg_sources})
 # Written only when it changes, so a new configure does not rebuild ThorVG.
 file(CONFIGURE OUTPUT ${CMAKE_BINARY_DIR}/thorvg_config/config.h CONTENT

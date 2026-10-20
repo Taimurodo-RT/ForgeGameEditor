@@ -1102,6 +1102,12 @@ const Rig* Scene::actor_rig(std::string_view id) const {
     return a ? &a->rig : nullptr;
 }
 
+bool Scene::actor_reach(std::string_view id, f64 out[4]) {
+    Impl::Actor* a = impl_->actor(id);
+    if (!a) return out[0] = out[1] = out[2] = out[3] = 0, false;
+    return a->rig.reach({}, out);
+}
+
 const SceneCharacter* Scene::character(std::string_view actor) const {
     const Impl::Actor* a = impl_->actor(actor);
     return a ? a->character : nullptr;

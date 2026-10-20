@@ -373,6 +373,20 @@ bool shape_tag(const std::string& tag) { return stage_shape_tag(tag); }
 
 bool drawable_tag(const std::string& tag) { return tag == "g" || tag == "use" || shape_tag(tag); }
 
+// An element of the top level that draws something where it stands (SvgPlace::draws).
+bool draws_tag(const std::string& tag) { return drawable_tag(tag) || tag == "image" || tag == "text" || tag == "a" || tag == "svg"; }
+
+// SvgPlace::key of element i of the top level of the file drawn (a stage's, or the picture's own).
+std::string top_key(const File& f, i32 i) {
+    if (const Stage* st = f.stage.get()) {
+        const std::string& copy = st->copy_of[static_cast<usize>(i)];
+        if (!copy.empty()) return "c" + copy;
+        const i32 own = st->file_of[static_cast<usize>(i)];
+        return own >= 0 ? "e" + std::to_string(own) : std::string();
+    }
+    return "e" + std::to_string(i);
+}
+
 // The shapes a part draws (stage_leaves). On a stage, a part of the file does not draw its group's copies: the tab's
 // fill, stroke and width of a group leave the copies in it as they are (forge::pixel::Rig::Impl::add_copy).
 const std::vector<i32>& leaves_of(File& f, i32 index) {
@@ -678,6 +692,8 @@ SvgPose for_drawing(const SvgPose& pose, const std::vector<vector::MotionPartPos
     using vector::MotionProp;
     SvgPose out;
     out.picture = pose.picture;
+    out.only = pose.only;
+    out.view_x = pose.view_x, out.view_y = pose.view_y, out.view_w = pose.view_w, out.view_h = pose.view_h;
     if (!fam.others()) {
         out.parts = parts;
         out.copies = pose.copies;
@@ -1203,6 +1219,19 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
             w.set(leaf, "opacity", num(own * k));
         }
     }
+
+    // Part 6г2: a run of a scene's stage draws its own elements of the top level only; the box of the picture shown.
+    if (!pose.only.empty())
+        for (i32 i = 1; i < static_cast<i32>(o.elements.size()); ++i) {
+            if (parent_of(i) != 0 || !draws_tag(o.elements[static_cast<usize>(i)].tag)) continue;
+            const std::string key = top_key(f, i);
+            if (!key.empty() && std::find(pose.only.begin(), pose.only.end(), key) == pose.only.end()) w.set(i, "display", "none");
+        }
+    if (pose.view_w > 0 && pose.view_h > 0) {
+        w.set(0, "viewBox", num(pose.view_x) + " " + num(pose.view_y) + " " + num(pose.view_w) + " " + num(pose.view_h));
+        w.set(0, "width", num(pose.view_w));
+        w.set(0, "height", num(pose.view_h));
+    }
     return write_all(f, doc, w);
 }
 
@@ -1698,6 +1727,116 @@ std::string posed_stage(std::string_view svg, const SvgPose& pose, bool over) {
     Posed p;
     posed_documents(svg, pose, p, why);
     return over ? p.over_stage : p.stage;
+}
+
+struct SvgPlaces::Impl {
+    std::string path, text;
+    bool loaded = false;
+    Slot base, top;
+    Rml::UniquePtr<lunasvg::Document> doc, over;
+    std::vector<SvgPlace> places;
+};
+
+SvgPlaces::SvgPlaces() : impl_(std::make_unique<Impl>()) {}
+
+SvgPlaces::~SvgPlaces() {
+    // Its stages go with it.
+    const std::string key = stage_key(this);
+    auto& fs = files();
+    for (auto f = fs.lower_bound(key); f != fs.end() && f->first.rfind(key, 0) == 0;) f = fs.erase(f);
+}
+
+bool SvgPlaces::load(std::string path, std::string text, std::string& why) {
+    Impl& im = *impl_;
+    im = {};
+    const File& f = file(path, text);
+    if (!f.outline.error.empty()) return why = f.outline.error, false;
+    if (!f.rest) return why = "картинка не читается как SVG", false;
+    im.path = std::move(path);
+    im.text = std::move(text);
+    im.loaded = true;
+    return true;
+}
+
+const std::vector<SvgPlace>& SvgPlaces::place(const SvgPose& pose) {
+    Impl& im = *impl_;
+    im.places.clear();
+    if (!im.loaded) return im.places;
+    File& f = file(im.path, im.text);
+    SvgPose all = pose;
+    all.only.clear();
+    all.view_w = all.view_h = 0;
+    compose(f, im.path, "\x05" + dir_of(im.path), stage_key(this), all, nullptr, im.base, im.top, im.doc, im.over);
+    const File* drawn = im.base.stage ? im.base.stage : im.base.source;
+    if (!im.doc || !drawn) return im.places;
+    const vector::SvgOutline& o = drawn->outline;
+    auto matrix = [](const lunasvg::Matrix& m) {
+        return vector::MotionMatrix{m.a, m.b, m.c, m.d, m.e, m.f};
+    };
+    const vector::MotionMatrix up = vector::inverse(matrix(im.doc->documentElement().getLocalMatrix()));
+    // What the pose wrote, else the file's.
+    auto value = [&](i32 i, lunasvg::Element& e, const char* name) {
+        if (im.base.wrote && im.base.written.file == drawn->serial)
+            for (const auto& [index, n] : im.base.written.attributes)
+                if (index == i && n == name) return e.getAttribute(name);
+        return o.elements[static_cast<usize>(i)].property(name);
+    };
+    for (i32 i = 1; i < static_cast<i32>(o.elements.size()); ++i) {
+        const vector::SvgElement& el = o.elements[static_cast<usize>(i)];
+        if (el.parent != 0) continue;
+        lunasvg::Element e = element_at(*drawn, *im.doc, i);
+        if (!e) continue;
+        SvgPlace p;
+        p.key = top_key(*drawn, i);
+        p.id = el.id;
+        p.m = up * matrix(e.getGlobalMatrix());
+        p.opacity = std::clamp(vector::svg_number(value(i, e, "opacity"), 1.0), 0.0, 1.0);
+        p.shown = value(i, e, "display") != "none";
+        p.draws = draws_tag(el.tag);
+        im.places.push_back(std::move(p));
+    }
+    return im.places;
+}
+
+SvgPose SvgPlaces::run_pose(const SvgPose& pose, std::vector<std::string> keys) {
+    Impl& im = *impl_;
+    SvgPose out = pose;
+    out.parts.clear();
+    out.only = std::move(keys);
+    if (!im.loaded) return out;
+    const vector::SvgOutline& o = file(im.path, im.text).outline;
+    // The element of the top level a part is in, by its key.
+    auto top_of = [&](const std::string& id) {
+        std::string copy, source = id;
+        for (const vector::MotionCopy& c : pose.copies)
+            if (c.id == id) {
+                copy = c.id;
+                source = c.source;
+                break;
+            }
+        i32 e = stage_part(o, source);
+        if (e <= 0) return std::string();
+        if (o.elements[static_cast<usize>(e)].parent == 0 && !copy.empty()) return "c" + copy;
+        while (o.elements[static_cast<usize>(e)].parent > 0) e = o.elements[static_cast<usize>(e)].parent;
+        return "e" + std::to_string(e);
+    };
+    std::set<std::string> want;
+    for (const vector::MotionPartPose& pp : pose.parts)
+        if (std::find(out.only.begin(), out.only.end(), top_of(pp.id)) != out.only.end()) want.insert(pp.id);
+    using vector::MotionProp;
+    for (bool more = true; more;) {
+        more = false;
+        for (const vector::MotionPartPose& pp : pose.parts) {
+            if (!want.count(pp.id)) continue;
+            for (const MotionProp p : {MotionProp::Link, MotionProp::Mask}) {
+                const usize i = static_cast<usize>(p);
+                if (pp.has[i] && !pp.values[i].target.empty() && want.insert(pp.values[i].target).second) more = true;
+            }
+        }
+    }
+    for (const vector::MotionPartPose& pp : pose.parts)
+        if (want.count(pp.id)) out.parts.push_back(pp);
+    return out;
 }
 
 void install_live_svg() { Rml::SVG::SetLiveApply(&apply); }

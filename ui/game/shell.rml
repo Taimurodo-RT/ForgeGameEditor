@@ -37,6 +37,7 @@
             <div class="panel-header"><icon name="pause" class="s"/><span class="title">Пауза</span><span class="muted mono body-small">{{ playtime }}</span></div>
             <div class="menu-list">
                 <div id="pause-resume" class="menu-item" data-event-click="resume"><icon name="play_arrow"/><span class="label">Продолжить</span><span class="trailing">{{ key_pause }}</span></div>
+                <div id="pause-skip-scene" class="menu-item" data-if="scene_skip" data-event-click="skip_scene"><icon name="skip_next"/><span class="label">Пропустить сцену</span></div>
                 <div id="pause-save" class="menu-item" data-event-click="open_slots('save')"><icon name="save"/><span class="label">Сохранить</span><span class="trailing">{{ key_quicksave }}</span></div>
                 <div class="menu-item" data-event-click="open_slots('load')"><icon name="folder_open"/><span class="label">Загрузить</span><span class="trailing">{{ key_quickload }}</span></div>
                 <div class="menu-item" data-event-click="open_journal"><icon name="menu_book"/><span class="label">Журнал</span><span class="trailing">{{ key_journal }}</span></div>

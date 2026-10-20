@@ -3,10 +3,12 @@
 #include "forge/pixel/screen.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <set>
+#include <span>
 
 namespace forge::pixel {
 
@@ -160,6 +162,55 @@ bool near(f64 a, f64 b) { return std::abs(a - b) <= 1e-9 * std::max({1.0, std::a
 } // namespace
 
 namespace {
+
+// Where each actor's drawing reaches beyond its canvas (part 6г2 of docs/models/сцены-модель.md): its pictures posed as
+// the tab poses them at every 1/30 s and at each start and end of a clip, a stop and a transition, with no waits and
+// with 0.5 s at each stop; in its picture's units, whole and outward, its canvas within. w 0: within its canvas.
+bool measure_reach(Scene& scene, const Recording& rec, std::vector<vector::SceneActor>& actors, std::string& why) {
+    std::set<i64> moments;
+    auto add = [&](f64 t) {
+        if (t >= 0 && t <= rec.length) moments.insert(ns_of(t));
+    };
+    for (i64 k = 0; static_cast<f64>(k) / kCheckRate <= rec.length; ++k) add(static_cast<f64>(k) / kCheckRate);
+    add(rec.length);
+    for (const ActorPlay& p : rec.plays) {
+        add(p.start);
+        add(p.start + p.length);
+    }
+    for (const SceneStop& s : rec.stops) add(s.time);
+    for (const SceneTransition& t : rec.transitions) {
+        add(t.start);
+        add(t.start + t.length);
+    }
+    std::vector<std::array<f64, 4>> box(actors.size());
+    for (usize a = 0; a < actors.size(); ++a) box[a] = {1e300, 1e300, -1e300, -1e300};
+    auto at = [&](f64 t, std::span<const f64> held) {
+        if (!scene.frame(t, held)) return why = scene.error(), false;
+        for (usize a = 0; a < actors.size(); ++a) {
+            f64 r[4];
+            if (!scene.actor_reach(actors[a].id, r)) continue;
+            box[a] = {std::min(box[a][0], r[0]), std::min(box[a][1], r[1]), std::max(box[a][2], r[2]), std::max(box[a][3], r[3])};
+        }
+        return true;
+    };
+    const std::vector<f64> waited(rec.stops.size(), kCheckWait);
+    for (const i64 n : moments) {
+        const f64 t = static_cast<f64>(n) / 1e9;
+        if (!at(t, {})) return false;
+        if (!rec.stops.empty() && !at(t, waited)) return false;
+    }
+    for (usize a = 0; a < actors.size(); ++a) {
+        vector::SceneActor& it = actors[a];
+        const f64 cx0 = it.origin.x, cy0 = it.origin.y, cx1 = it.origin.x + it.w, cy1 = it.origin.y + it.h;
+        const std::array<f64, 4>& b = box[a];
+        constexpr f64 kEps = 1e-6;
+        if (b[0] > b[2] || (b[0] >= cx0 - kEps && b[1] >= cy0 - kEps && b[2] <= cx1 + kEps && b[3] <= cy1 + kEps)) continue;
+        const f64 x0 = std::floor(std::min(b[0], cx0)), y0 = std::floor(std::min(b[1], cy0));
+        const f64 x1 = std::ceil(std::max(b[2], cx1)), y1 = std::ceil(std::max(b[3], cy1));
+        it.reach = {x0, y0, x1 - x0, y1 - y0};
+    }
+    return true;
+}
 
 bool build(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, SceneGift& out, std::string& why) {
     if (!scene.loaded()) return why = scene.error().empty() ? "сцена не загружена" : scene.error(), false;
@@ -359,7 +410,7 @@ bool build(Scene& scene, std::string_view name, std::string_view from, const Sce
         // An actor that plays no clip has no file of clips (a file of none does not read) nor its other drawings (only a
         // clip shows them): the scene's moves of its parts stand by stage.motion.json's records.
         if (af.clips.empty()) {
-            file.actors.push_back({it.id, it.file, "actors/" + af.picture, "", it.origin, it.w, it.h});
+            file.actors.push_back({it.id, it.file, "actors/" + af.picture, "", it.origin, it.w, it.h, {}});
             continue;
         }
         std::vector<const NamedDrawing*> named;
@@ -380,7 +431,7 @@ bool build(Scene& scene, std::string_view name, std::string_view from, const Sce
         }
         if (!take("actors/" + it.id + ".motion.json", whose)) return false;
         put("actors/" + it.id + ".motion.json", vector::write_motion_file(af));
-        file.actors.push_back({it.id, it.file, "actors/" + af.picture, "actors/" + it.id + ".motion.json", it.origin, it.w, it.h});
+        file.actors.push_back({it.id, it.file, "actors/" + af.picture, "actors/" + it.id + ".motion.json", it.origin, it.w, it.h, {}});
     }
 
     // The pictures: each file of «Ресурсы» once, by the first picture of it.
@@ -429,6 +480,7 @@ bool build(Scene& scene, std::string_view name, std::string_view from, const Sce
         left += (left.empty() ? "" : ", ") + std::string("маска по актёру или картинке");
     }
     if (!left.empty()) out.notes.push_back("В игре не будет: " + left);
+    if (!measure_reach(scene, rec, file.actors, why)) return false;
     take("scene.json", "сцена");
     put("scene.json", vector::write_scene_file(file));
     std::sort(out.files.begin(), out.files.end(), [](const SceneGift::File& x, const SceneGift::File& y) { return x.path < y.path; });

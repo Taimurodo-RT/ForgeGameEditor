@@ -433,7 +433,7 @@ void write_module(Writer& w, const std::string& thing, const Built& b, const Fin
             if (h.event == event) return true;
         return false;
     };
-    for (const char* event : {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message", "on_anim"}) {
+    for (const char* event : {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message", "on_anim", "on_scene"}) {
         const std::string ev = event;
         const std::map<std::string, std::vector<Plan>>* links = ev == "on_start" ? &b.always : ev == "on_enter" ? &b.touch : nullptr;
         const auto it = links ? links->find(thing) : std::map<std::string, std::vector<Plan>>::const_iterator{};

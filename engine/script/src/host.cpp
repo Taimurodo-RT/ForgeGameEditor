@@ -34,7 +34,7 @@ FORGE_REFLECT(forge::script::ScriptVars, 1) { t.field("vars", &forge::script::Sc
 
 namespace forge::script {
 
-const char* const kHandlerNames[kHandlerCount] = {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message", "on_anim"};
+const char* const kHandlerNames[kHandlerCount] = {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message", "on_anim", "on_scene"};
 
 const ScriptVar* ScriptVars::find(std::string_view name) const {
     for (const ScriptVar& v : vars)
@@ -384,6 +384,10 @@ void ScriptHost::anim(flecs::entity_t thing, std::string_view mark) {
     impl_->outbox.push_back({thing, 0, std::string(mark), 0, true});
 }
 
+void ScriptHost::scene_end(std::string_view name, bool skipped) {
+    impl_->outbox.push_back({0, 0, std::string(name), skipped ? 1.0 : 0.0, false, true});
+}
+
 namespace {
 
 // Runs a handler (or resumes a paused one) on a pooled thread and deals with
@@ -417,13 +421,14 @@ struct Caller {
             im.release(T, true);
         } else if (status == LUA_YIELD) {
             const f64 wait = im.pending_wait < 0 ? 0 : im.pending_wait;
-            im.waits.push_back({T, e, wait, im.pending_real, module, h});
+            im.waits.push_back({T, e, wait, im.pending_real, module, h, im.pending_scene});
         } else {
             report(module, h, e, lua_isstring(T, -1) ? lua_tostring(T, -1) : "ошибка");
             im.release(T, false);
         }
         im.pending_wait = -1;
         im.pending_real = false;
+        im.pending_scene = 0;
     }
 
     int resume(lua_State* T, int nargs, const ScriptHost::Impl::Module* m, flecs::entity_t e) {
@@ -580,6 +585,18 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
             }
             continue;
         }
+        if (msg.scene) { // everyone listening hears which one ended
+            for (const auto& [e, dt] : im.due)
+                if (const Impl::Module* m = module_of(e); m && !m->fn[OnScene].empty()) {
+                    ++stats_.messages;
+                    c.call(*m, OnScene, e, [&](lua_State* T) {
+                        lua_pushlstring(T, msg.name.data(), msg.name.size());
+                        lua_pushboolean(T, msg.value != 0);
+                        return 2;
+                    });
+                }
+            continue;
+        }
         if (msg.to == 0) { // to everyone listening
             for (const auto& [e, dt] : im.due)
                 if (const Impl::Module* m = module_of(e); m && !m->fn[OnMessage].empty()) {
@@ -612,6 +629,19 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
     for (Impl::Wait& w : waiting) {
         if (w.entity != 0 && !ok(w.entity)) {
             im.release(w.thread, false);
+            continue;
+        }
+        if (w.scene) { // the scene's end, whatever the time: its node goes on with whether it was skipped
+            auto* bridge = static_cast<GameBridge*>(user(kGameBridge));
+            bool skipped = false;
+            if (bridge && !bridge->scene_over(w.scene, skipped)) {
+                im.waits.push_back(w);
+                continue;
+            }
+            auto m = im.modules.find(w.module);
+            lua_pushboolean(w.thread, skipped);
+            c.finish(w.thread, c.resume(w.thread, 1, m == im.modules.end() ? nullptr : &m->second, w.entity), w.module,
+                     w.handler, w.entity);
             continue;
         }
         f64 dt;

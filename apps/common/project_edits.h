@@ -216,6 +216,21 @@ struct ProjectEdits {
     forge::u32 ms_layer = 0;
     std::vector<int> ms_layer_box;
     std::vector<std::string> ms_tab;
+    // A scene of «Векторная» given to the game (part 6г2 of docs/models/сцены-модель.md; the editor's self-test
+    // pixel-scene-e), for the module slice's scene project. The own scheme of the thing sg_thing (one copy at the start)
+    // shows the scene sg_scene at the start («При старте» → «Показать сцену» → «Задать переменную» sg_after to its
+    // «Пропущена»); «Сцена кончилась» of it sets sg_name to its «Сцена», sg_skipped to its «Пропущена» and adds 1 to
+    // sg_ends. sg_scheme_error: the one error of the scripts the game may have (another scheme's, on a message of the
+    // scene's actor: pixel-motion-m-again's «Табличка» on «приземлился», ms_scheme_error). sg_canvas: its canvas (w, h);
+    // sg_background its colour (r, g, b); sg_length its length. sg_frames: moments whose frames «Через камеру» drew,
+    // sg_frame_files their PNG at the size the player's frame has fitted into the game's screen. sg_heard: what it says,
+    // as the tab lists its marks: "moment message name" or "moment sound file". sg_music: the file its music plays and
+    // sg_fade the fade of its first call.
+    std::string sg_scene, sg_thing, sg_after, sg_name, sg_skipped, sg_ends, sg_music, sg_scheme_error;
+    std::vector<int> sg_canvas, sg_background;
+    double sg_length = 0, sg_fade = 0;
+    std::vector<double> sg_frames;
+    std::vector<std::string> sg_frame_files, sg_heard;
 };
 
 // False (error says why) when the file cannot be read.
