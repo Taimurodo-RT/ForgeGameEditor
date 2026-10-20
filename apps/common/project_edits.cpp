@@ -180,6 +180,21 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("vlc_said", &forge::edits::ProjectEdits::vlc_said);
     t.field("vlc_again", &forge::edits::ProjectEdits::vlc_again);
     t.field("vlc_parts", &forge::edits::ProjectEdits::vlc_parts);
+    t.field("ms_screen", &forge::edits::ProjectEdits::ms_screen);
+    t.field("ms_layer_name", &forge::edits::ProjectEdits::ms_layer_name);
+    t.field("ms_other_name", &forge::edits::ProjectEdits::ms_other_name);
+    t.field("ms_file", &forge::edits::ProjectEdits::ms_file);
+    t.field("ms_svg", &forge::edits::ProjectEdits::ms_svg);
+    t.field("ms_sound", &forge::edits::ProjectEdits::ms_sound);
+    t.field("ms_scheme_error", &forge::edits::ProjectEdits::ms_scheme_error);
+    t.field("ms_code", &forge::edits::ProjectEdits::ms_code);
+    t.field("ms_code_error", &forge::edits::ProjectEdits::ms_code_error);
+    t.field("ms_not_drawn", &forge::edits::ProjectEdits::ms_not_drawn);
+    t.field("ms_rename_from", &forge::edits::ProjectEdits::ms_rename_from);
+    t.field("ms_rename_to", &forge::edits::ProjectEdits::ms_rename_to);
+    t.field("ms_layer", &forge::edits::ProjectEdits::ms_layer);
+    t.field("ms_layer_box", &forge::edits::ProjectEdits::ms_layer_box);
+    t.field("ms_tab", &forge::edits::ProjectEdits::ms_tab);
 }
 
 namespace forge::edits {

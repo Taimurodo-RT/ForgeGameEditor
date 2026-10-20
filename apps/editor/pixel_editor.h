@@ -422,6 +422,11 @@ public:
     void open_give(bool on);
     bool giving() const { return giving_; }
     bool give(u64 key);
+    // «Отдать экрану» (part 5в of docs/models/движение-модель.md): «Имя.svg» and «Имя.motion.json» into the game's
+    // pictures, one step, for a layer of a screen to play the clips of the code. Refused, note() saying why, outside an
+    // open game, over a pair another character gave, when a clip fails or there is none; false with «Уже отдано так»
+    // when the game has these bytes already.
+    bool give_screen();
 
     // What the views show now (for the self-test): the vector, the pixel frame at its size, both as the UI names them.
     const assets::CookedTexture& vector_view() const { return vector_; }

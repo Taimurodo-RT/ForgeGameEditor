@@ -113,10 +113,19 @@ std::string screen_fit_transform(const ScreenFit& f);
 // of a part, by its id in the file, of the picture a layer shows, by the layer's name in «Интерфейс».
 struct ScreenSvg {
     std::string what;  // "move" (x, y), "turn" (x: degrees), "color" (text), "fade" (x: 0 … 1),
-                       // "morph" (text: the shape's id, x: k), "reset" (the layer's pictures as their files have them)
+                       // "morph" (text: the shape's id, x: k), "reset" (the layer's pictures as their files have them),
+                       // "play" (part: a clip, x: loop 1, 0, or below 0 as the clip says; y: speed), "stop"
     std::string screen, layer, part;
     f64 x = 0, y = 0;
     std::string text;
+};
+
+// A clip of a character a layer's picture plays (part 5в of docs/models/движение-модель.md): the clip, where it is
+// (seconds of the clip) and whether it goes on.
+struct ScreenClip {
+    std::string clip;
+    f64 time = 0;
+    bool going = false;
 };
 
 struct ScreenAction {
@@ -220,10 +229,20 @@ public:
     // A live SVG picture: the change goes to every layer of that name. False with why when the page, the layer or
     // the colour is not there; what the picture's file lacks (a part, a shape to morph into) is said once in the log
     // when the picture is drawn, and kept in svg_problems().
+    //
+    // "play": the layer's SVG picture (its fill picture or <img>) plays a clip of Ёжик.motion.json beside it, the file
+    // «Отдать экрану» of «Векторная» writes, by the screens' clock (set_clock: it goes on while the world is paused).
+    // The same clip while it goes keeps going (its loop and speed as said now); another, or one that ended, starts
+    // from 0. False with why when the layer shows no SVG picture, the file is not there or does not read, or has no
+    // such clip. Each update() the picture shows the clip's moment; its marks sound (name, name.wav or name.ogg of
+    // the game's sounds, to on_sound) and send their messages (on_action "message") as the clip passes them.
+    // "stop": it stands at the moment shown; "reset" stops it too.
     bool svg(const ScreenSvg& change, std::string* why = nullptr);
+    // The clip the first layer of that name plays; false when none does (never played, reset, or the page went).
+    bool svg_clip(std::string_view screen, std::string_view layer, ScreenClip& out) const;
     const std::vector<std::string>& svg_problems() const;
-    // A game begins (new, loaded, continued): every live picture of the pages shows its file again. What scripts said
-    // of them was the game that ended; saves do not keep it, and the pages are not made again.
+    // A game begins (new, loaded, continued): every live picture of the pages shows its file again and plays no clip.
+    // What scripts said of them was the game that ended; saves do not keep it, and the pages are not made again.
     void reset_pictures();
 
     // The lists' data: the names and pictures of the things inv.<id> counts
@@ -240,6 +259,8 @@ private:
     struct Page;
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    bool play(const ScreenSvg& change, const std::vector<Rml::Element*>& layers, std::string* why);
 };
 
 // Parses forge-click's JSON list.

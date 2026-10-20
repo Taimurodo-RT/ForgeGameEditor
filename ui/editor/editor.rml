@@ -1304,7 +1304,7 @@
                 </div>
             </div>
 
-            <div class="an-stage px-stage column" data-if="px_has">
+            <div id="px-stage" class="an-stage px-stage column" data-if="px_has">
                 <div id="px-tools" class="px-tools row">
                     <div id="px-tool-select" class="an-chip" data-class-selected="px_tool == 'select'" title="Выбор (V): щелчок выбирает часть, протяжка двигает её" data-event-click="px_tool('select')"><icon class="s" name="arrow_selector_tool"/></div>
                     <div id="px-tool-rect" class="an-chip" data-class-selected="px_tool == 'rect'" title="Прямоугольник (R): протяните от угла до угла" data-event-click="px_tool('rect')"><icon class="s" name="crop_square"/></div>
@@ -1336,11 +1336,11 @@
                     <div id="px-grid" class="an-chip" data-class-selected="px_grid" title="Сетка в единицах рисунка (')" data-event-click="px_grid_toggle">Сетка</div>
                     <div id="px-picking" class="an-chip" data-class-selected="px_picking" title="Пипетка (I): щелчок копирует цвет под мышью; I или Esc выключает" data-event-click="px_picking_toggle"><icon class="s" name="colorize"/></div>
                 </div>
-                <div id="px-problem" class="an-problem px-problem" data-if="px_problem != ''">{{ px_problem }}</div>
-                <div id="px-note" class="an-sel-note" data-if="px_note != ''">{{ px_note }}</div>
+                <div class="px-said row" data-if="px_problem != ''"><div id="px-problem" class="an-problem px-problem">{{ px_problem }}</div></div>
+                <div class="px-said row" data-if="px_note != ''"><div id="px-note" class="an-sel-note">{{ px_note }}</div></div>
             </div>
 
-            <div class="an-side column" data-if="px_has">
+            <div id="px-side" class="an-side column" data-if="px_has">
                 <div class="lg-nav-title">Блок</div>
                 <div id="px-inspector" class="px-inspector column" data-if="px_has_block">
                     <span id="px-inspector-text" class="px-inspector-text">{{ px_inspector }}</span>
@@ -1450,6 +1450,7 @@
                     <div id="px-bake" class="button filled small" title="Все клипы, каждый по своему диапазону, полосой кадров в картинку «Ресурсов» рядом с .pixel.json" data-event-click="px_bake"><icon class="s" name="grid_on"/><span>Запечь</span></div>
                     <div id="px-snapshot" class="button outlined small" title="Пиксельный кадр под бегунком, как запечётся, — PNG в «Ресурсы»" data-event-click="px_snapshot"><icon class="s" name="photo_camera"/><span>Снимок кадра</span></div>
                     <div id="px-give-open" class="button outlined small" data-class-disabled="!px_can_give" data-event-click="px_give_open"><icon class="s" name="person_add"/><span>Отдать шаблону…</span></div>
+                    <div id="px-give-screen" class="button outlined small" title="Клипы кода и рисунок — в картинки игры («Имя.svg» и «Имя.motion.json»): слой экрана играет их нодой «Проиграть анимацию картинки»" data-event-click="px_give_screen"><icon class="s" name="smart_display"/><span>Отдать экрану</span></div>
                 </div>
                 <div id="px-edited" class="px-warn column" data-if="px_edited">
                     <span>Картинку правили после запекания: новое запекание заменит правки (Ctrl+Z вернёт их).</span>

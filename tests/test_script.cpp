@@ -342,6 +342,93 @@ TEST_CASE("scripts change the parts of a screen's live SVG picture and ease a sh
     CHECK(morph->params[3].title_ru == std::string("В фигуру (id)"));
 }
 
+TEST_CASE("scripts play a character's clip on a screen's picture: the loop and the speed, and what they cannot be") {
+    PoolScope pool;
+    Room room;
+    struct Bridge final : GameBridge {
+        std::vector<std::string> said;
+        f64 var(std::string_view, std::string*) override { return 0; }
+        void set_var(std::string_view, f64) override {}
+        void set_text(std::string_view, std::string_view) override {}
+        void screen(std::string_view, std::string_view) override {}
+        bool svg(std::string_view what, std::string_view screen, std::string_view layer, std::string_view part, f64 x, f64 y,
+                 std::string_view, std::string* why) override {
+            if (part == "fly") {
+                *why = "в «Скакун.motion.json» нет клипа «fly»: есть «idle», «jump»";
+                return false;
+            }
+            char numbers[64];
+            std::snprintf(numbers, sizeof(numbers), "%g %g", x, y);
+            said.push_back(std::string(what) + " " + std::string(screen) + "/" + std::string(layer) + "/" + std::string(part) + " " + numbers);
+            return true;
+        }
+    } bridge;
+    room.scripts.set_user(kGameBridge, &bridge);
+    // x: the loop (1, 0, below 0 for the clip's own), y: the speed.
+    REQUIRE(room.scripts.load("clips", R"(
+        local S = {}
+        function S.on_start(self)
+            forge.ui.svg_play("hud", "Скакун", "idle")
+            forge.ui.svg_play("hud", "Скакун", "jump", true)
+            forge.ui.svg_play("hud", "Скакун", "jump", false)
+            forge.ui.svg_play("hud", "Скакун", "jump", nil)
+            forge.ui.svg_play("hud", "Скакун", "idle", { speed = 2 })
+            forge.ui.svg_play("hud", "Скакун", "idle", { loop = true, speed = 0.5 })
+            forge.ui.svg_play("hud", "Скакун", "idle", { loop = false })
+            forge.ui.svg_play("hud", "Скакун", "idle", {})
+            forge.ui.svg_stop("hud", "Скакун")
+        end
+        return S
+    )"));
+    room.thing(4, 5, "clips");
+    room.run(2);
+    CHECK(room.scripts.errors().empty());
+    CHECK(bridge.said == std::vector<std::string>{"play hud/Скакун/idle -1 1", "play hud/Скакун/jump 1 1", "play hud/Скакун/jump 0 1",
+                                                  "play hud/Скакун/jump -1 1", "play hud/Скакун/idle -1 2", "play hud/Скакун/idle 1 0.5",
+                                                  "play hud/Скакун/idle 0 1", "play hud/Скакун/idle -1 1", "stop hud/Скакун/ 0 0"});
+    // Each wrong call is the script's error at its line, and the game is not asked: one script each, as a script stops
+    // at its first error.
+    const char* wrong[][2] = {
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", "да"))", "ui.svg_play: 4-е значение (повторять): нужно true или false"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { loop = 1 }))", "ui.svg_play: loop: нужно true или false"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = "быстро" }))", "ui.svg_play: speed: нужно число больше 0"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 0 }))", "ui.svg_play: speed: нужно число больше 0"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = -1 }))", "ui.svg_play: speed: нужно число больше 0"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 0/0 }))", "ui.svg_play: speed: нужно число больше 0"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { speed = 1/0 }))", "ui.svg_play: speed: нужно число больше 0"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { fast = true }))", "ui.svg_play: в таблице только loop и speed, а не «fast»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "jump", { true }))", "ui.svg_play: в таблице только loop и speed, а не «number»"},
+        {R"(forge.ui.svg_play("hud", "Скакун", "fly"))", "ui.svg_play: в «Скакун.motion.json» нет клипа «fly»: есть «idle», «jump»"},
+        {R"(forge.ui.svg_play("hud", "Скакун"))", "missing argument #3 to 'ui.svg_play'"},
+        {R"(forge.ui.svg_stop("hud"))", "missing argument #2 to 'ui.svg_stop'"},
+    };
+    bridge.said.clear();
+    for (usize i = 0; i < std::size(wrong); ++i) {
+        const std::string name = "wrong" + std::to_string(i);
+        REQUIRE(room.scripts.load(name, "local S = {}\nfunction S.on_start(self)\n  " + std::string(wrong[i][0]) + "\nend\nreturn S\n"));
+        room.thing(6 + static_cast<i32>(i), 5, name.c_str());
+    }
+    room.run(2);
+    REQUIRE(room.scripts.errors().size() == std::size(wrong));
+    for (usize i = 0; i < std::size(wrong); ++i) {
+        const ScriptError* e = nullptr;
+        for (const ScriptError& x : room.scripts.errors())
+            if (x.script == "wrong" + std::to_string(i)) e = &x;
+        REQUIRE_MESSAGE(e, wrong[i][0]);
+        CHECK_MESSAGE(e->message.find(wrong[i][1]) != std::string::npos, e->message);
+        CHECK(e->line == 3);
+    }
+    CHECK(bridge.said.empty());
+    const ApiFunction* play = room.scripts.api().find("ui.svg_play");
+    REQUIRE(play);
+    CHECK(play->kind == ApiKind::Action);
+    CHECK(play->params.size() == 4);
+    CHECK(play->params[3].title_ru == std::string("Повторять"));
+    const ApiFunction* stop = room.scripts.api().find("ui.svg_stop");
+    REQUIRE(stop);
+    CHECK(stop->params.size() == 2);
+}
+
 TEST_CASE("every engine function has a description for the node palette") {
     PoolScope pool;
     Room room;

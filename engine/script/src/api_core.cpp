@@ -357,6 +357,54 @@ int api_ui_svg_color(lua_State* L) { return svg_call(L, "color"); }
 int api_ui_svg_fade(lua_State* L) { return svg_call(L, "fade"); }
 int api_ui_svg_morph(lua_State* L) { return svg_call(L, "morph"); }
 int api_ui_svg_reset(lua_State* L) { return svg_call(L, "reset"); }
+// forge.ui.svg_play(screen, layer, clip[, loop or {loop = …, speed = …}]): x the loop (1, 0, or below 0 for the
+// clip's own), y the speed.
+int api_ui_svg_play(lua_State* L) {
+    auto text_at = [&](int i) {
+        size_t len = 0;
+        const char* s = luaL_checklstring(L, i, &len);
+        return std::string_view(s, len);
+    };
+    const std::string_view screen = text_at(1), layer = text_at(2), clip = text_at(3);
+    f64 loop = -1, speed = 1;
+    auto loop_of = [&](int i, const char* where) {
+        if (lua_isnil(L, i)) return;
+        if (!lua_isboolean(L, i)) luaL_error(L, "ui.svg_play: %s: нужно true или false", where);
+        loop = lua_toboolean(L, i) ? 1 : 0;
+    };
+    if (lua_istable(L, 4)) {
+        lua_getfield(L, 4, "loop");
+        loop_of(-1, "loop");
+        lua_pop(L, 1);
+        lua_getfield(L, 4, "speed");
+        if (!lua_isnil(L, -1)) {
+            speed = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : 0;
+            if (!(speed > 0) || !std::isfinite(speed)) luaL_error(L, "ui.svg_play: speed: нужно число больше 0");
+        }
+        lua_pop(L, 1);
+        lua_pushnil(L);
+        while (lua_next(L, 4)) {
+            lua_pop(L, 1);
+            const char* key = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
+            if (!key || (std::string_view(key) != "loop" && std::string_view(key) != "speed"))
+                luaL_error(L, "ui.svg_play: в таблице только loop и speed, а не «%s»", key ? key : luaL_typename(L, -1));
+        }
+    } else if (!lua_isnone(L, 4)) loop_of(4, "4-е значение (повторять)");
+    GameBridge* b = bridge_of(L);
+    std::string why;
+    if (b && !b->svg("play", screen, layer, clip, loop, speed, {}, &why)) luaL_error(L, "ui.svg_play: %s", why.c_str());
+    return 0;
+}
+int api_ui_svg_stop(lua_State* L) {
+    size_t a = 0, c = 0;
+    const char* screen = luaL_checklstring(L, 1, &a);
+    const char* layer = luaL_checklstring(L, 2, &c);
+    GameBridge* b = bridge_of(L);
+    std::string why;
+    if (b && !b->svg("stop", std::string_view(screen, a), std::string_view(layer, c), {}, 0, 0, {}, &why))
+        luaL_error(L, "ui.svg_stop: %s", why.c_str());
+    return 0;
+}
 
 // forge.ease(how, t): the share of a change at t (0 … 1), as the interface's movement and the pose scripts ease it.
 int api_ease(lua_State* L) {
@@ -754,6 +802,17 @@ void register_core_api(ScriptApi& api) {
         .param("target", V::String, "В фигуру (id)", "Into (id)").param("k", V::Number, "Доля", "Share", "0");
     api.add("ui.svg_reset", &api_ui_svg_reset).action().category("Экраны").icon("restart_alt")
         .title("Картинка слоя как в файле", "Picture as its file")
+        .param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer");
+    // Clips a character of «Векторная» gave the screen (part 5в of docs/models/движение-модель.md).
+    api.add("ui.svg_play", &api_ui_svg_play).action().category("Экраны").icon("play_circle")
+        .title("Проиграть анимацию картинки", "Play picture animation")
+        .help("Клип персонажа из «Векторной» на SVG-картинке слоя: «Отдать экрану» кладёт клипы рядом с картинкой. "
+              "Тот же клип, пока идёт, не начинается заново.")
+        .param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer")
+        .param("clip", V::String, "Клип", "Clip").param("loop", V::Bool, "Повторять", "Loop", "true");
+    api.add("ui.svg_stop", &api_ui_svg_stop).action().category("Экраны").icon("stop_circle")
+        .title("Остановить анимацию картинки", "Stop picture animation")
+        .help("Картинка стоит на показанном кадре.")
         .param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer");
     api.add("ease", &api_ease).pure().category("Математика").icon("show_chart").title("Плавность", "Ease")
         .help("Доля изменения в момент t (0 … 1): smooth, linear, in, out, back, bounce, elastic — как у движения в «Интерфейсе».")

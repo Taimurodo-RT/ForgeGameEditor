@@ -229,6 +229,11 @@ public:
     Affine carried(i32 part) const;
     // A part's own matrix as the last pose() left it (from its parent's coordinates, as SVG's transform).
     Affine matrix(i32 part) const;
+    // A part at rest (part 5в of the motion model, what a game's screen moves it by): where its parent stands in
+    // picture units, the frame its move, turn and scale are taken in, and its own transform in the file. The pose's
+    // matrix() is rest_frame⁻¹ · pose_matrix · rest_frame · rest_local when nothing carries it.
+    Affine rest_frame(i32 part) const;
+    Affine rest_local(i32 part) const;
     // The copies the last pose() drew (part 4г), by index.
     std::vector<DrawnCopy> drawn_copies() const;
     // A copy's index once a pose made it, drawn or not; -1 for none.
