@@ -3662,6 +3662,14 @@ TEST_CASE("Сцена в игре: метки по прожитому време
         CAPTURE(i);
         CHECK(got[i].at == doctest::Approx(lived_at[i]));
     }
+    // A step of the walk at the very moment the landing begins (0.75 s at the first wait): the landing's time, not the walk's.
+    const std::vector<f64> exact = {0.75, 0.3, 0.4, 0.5};
+    REQUIRE(vector::scene_marks_between(m, nullptr, at_lived(f, exact, 3.95), got, why));
+    CHECK(said(got) == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "середина", "шаг ёжик", "ответ", "земля ёжик", "земля ёжик",
+                                                "земля ёжик", "тишина", "земля ёжик"});
+    REQUIRE(got.size() == 12);
+    CHECK(got[6].at == doctest::Approx(1.75));
+    CHECK(got[7].at == doctest::Approx(2.25));
     // Standing at the first wait 0.3 s: what was made after it has not begun, the steps go on.
     const vector::SceneAt first = at_lived(f, wait, 1.3);
     CHECK(first.waiting == 0);
@@ -3729,7 +3737,8 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
     const fs::path game_dir = empty_dir("forge_tests_сцена_ждёт");
     give(gift, game_dir, "Ожидание");
     Scene first;
-    load(first, files, R"(    wait_action()
+    load(first, files, R"(    music("тема", { fade = 1 })
+    wait_action()
     emit("сразу")
     talk("Нет")
     emit("потом")
@@ -3968,6 +3977,8 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
         frames(5);
         CHECK(scene.time() == 0);
         CHECK(scene.lived() == doctest::Approx(5 * dt));
+        // Its music began before the wait: the game's goes out under it by the time it lived, waiting.
+        CHECK(share == doctest::Approx(1 - 5 * dt));
         scene.go_on();
         frames(1);
         CHECK(heard == std::vector<std::string>{"сообщение сразу", "сообщение потом"});
