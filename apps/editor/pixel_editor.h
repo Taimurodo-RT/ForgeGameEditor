@@ -49,6 +49,12 @@
 // clip «scene» of the timeline), its actors and their parts in the tree. A part, a picture, an actor or an actor's
 // part dragged writes the scene's code as a character's part does; the actors' clips are a row each on the timeline,
 // a clip's start dragged by frames. A scene has no pixel view, no baking and no giving to a template.
+//
+// Part 6б «Камера и переходы»: the vector shows the whole scene with the camera's frame over it (what the player sees at
+// that moment), its edge dragged writing the camera's place as a part's drag writes; the small view is «Через камеру»,
+// the player's frame (Scene::draw_frame) with the transition in or out over it, and «Снимок кадра» takes that. The tree's
+// first row is «Камера», its fields x, y, zoom and rot; the timeline has the camera's tracks, its row «камера · следит»
+// and a row of the transitions, each chosen showing its kind, length and call.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -451,6 +457,15 @@ public:
     // actor's character opened.
     bool select_actor_clip(i32 index);
     i32 actor_clip() const { return play_; }
+    // Part 6б: the transitions in and out on their row of the timeline (the recording's transitions): one chosen (-1:
+    // none), its call in the panel. The camera's frame on the screen (its corners, the context's pixels, clockwise from
+    // the top left), false when no scene shows. The small view «Через камеру» is pixel_frame(), the player's frame
+    // through_size() big: the canvas's shape, its longer side the view's.
+    bool select_transition(i32 index);
+    i32 transition() const { return transition_; }
+    bool transition_to_code(i32 index);
+    bool camera_corners(f32 x[4], f32 y[4]) const;
+    bool through_size(u32& w, u32& h) const;
     bool set_actor_clip_start(i32 index, f64 to);
     bool actor_clip_to_code(i32 index);
     bool open_actor_character();
@@ -480,6 +495,8 @@ private:
         Rml::String id, label;
         int depth = 0;
         bool shape = false, selected = false;
+        Rml::String name; // as the tree shows it: its id, «Камера» for a scene's camera (part 6б)
+        bool camera = false;
     };
     struct ParamRow {
         Rml::String name, value;
@@ -596,6 +613,13 @@ private:
     void scene_rows();         // the tree of a scene: its parts, an actor's inside it
     void lay_actor_clips();    // the actors' rows of clips on the timeline
     void rebuild_actor_clip(); // the selected clip's inspector
+    // Part 6б: the camera chosen; whether a point of the screen is on its frame's edge; the frame over the vector; the
+    // row of transitions and the chosen one's inspector.
+    bool camera_chosen() const { return scene_mode_ && scene_ && part_ == pixel::kCameraPart; }
+    bool camera_edge(f32 x, f32 y) const;
+    void draw_camera_frame(assets::CookedTexture& t, const pixel::Affine& texels) const;
+    void lay_transitions();
+    void rebuild_transition();
     void redraw_scene();
     std::string scene_snapshot();
     pixel::ClipSpec* selected_clip();
@@ -738,6 +762,7 @@ private:
     std::string scene_problem_;
     i32 play_ = -1;          // the actor's clip selected on the timeline
     std::vector<i32> plays_; // the plays shown, by row of m_plays_
+    i32 transition_ = -1;    // the transition selected on the timeline (part 6б)
     // The character open.
     std::string rel_;
     std::filesystem::path file_;
@@ -880,9 +905,9 @@ private:
 
     std::vector<Row> m_list_, m_scenes_;
     std::vector<TrackRow> m_actor_rows_;
-    std::vector<PlayRow> m_plays_;
-    Rml::String m_play_info_, m_play_call_, m_play_why_, m_actor_rows_height_;
-    bool m_scene_ = false, m_has_play_ = false, m_play_can_code_ = false;
+    std::vector<PlayRow> m_plays_, m_transitions_;
+    Rml::String m_play_info_, m_play_call_, m_play_why_, m_actor_rows_height_, m_transition_info_, m_transition_call_;
+    bool m_scene_ = false, m_has_play_ = false, m_play_can_code_ = false, m_has_transition_ = false, m_transition_can_code_ = false;
     std::vector<SvgRow> m_svgs_;
     std::vector<PartRow> m_parts_;
     std::vector<ParamRow> m_params_;

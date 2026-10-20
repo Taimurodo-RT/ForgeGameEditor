@@ -1281,7 +1281,7 @@
                 <div class="lg-nav-title" data-if="px_has && !px_scene">Части рисунка</div>
                 <div class="lg-nav-title" data-if="px_has && px_scene">Что на сцене</div>
                 <div data-for="p : px_parts" class="px-part row" data-attr-id="'px-part-' + p.id" data-class-selected="p.selected" data-style-padding-left="(8 + p.depth * 14) + 'px'" data-event-click="px_part(p.id)">
-                    <icon class="s" data-attr-name="p.shape ? 'category' : 'folder'"/><span class="grow">{{ p.id }}</span><span class="sub">{{ p.label }}</span>
+                    <icon class="s" data-attr-name="p.camera ? 'videocam' : p.shape ? 'category' : 'folder'"/><span class="grow">{{ p.name }}</span><span class="sub">{{ p.label }}</span>
                 </div>
                 <div class="an-empty" data-if="px_has && !px_scene && px_parts.size == 0">В рисунке нет частей: дайте фигурам и группам id в draw кода или в редакторе SVG.</div>
                 <div class="an-empty" data-if="px_has && px_scene && px_parts.size == 0">На сцене пока ничего нет: поставьте актёров, картинки и фигуры в stage кода.</div>
@@ -1333,10 +1333,11 @@
                         <span class="an-label">Вектор: щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью</span>
                         <div id="px-vector" class="px-canvas" title="Колесо, = и − — масштаб, 0 — вписать, средняя кнопка — сдвиг"><img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector"/></div>
                     </div>
-                    <div class="px-view column" data-if="!px_scene">
-                        <span class="an-label">Пиксели {{ px_size }}, как запечётся</span>
+                    <div class="px-view column">
+                        <span class="an-label" data-if="!px_scene">Пиксели {{ px_size }}, как запечётся</span>
+                        <span id="px-through-label" class="an-label" data-if="px_scene">Через камеру: кадр игрока {{ px_size }}</span>
                         <div id="px-pixel" class="px-canvas"><img id="px-pixel-img" data-if="px_pixel != ''" data-attr-src="px_pixel"/></div>
-                        <div class="row px-one"><img id="px-one" data-if="px_one != ''" data-attr-src="px_one"/><span class="an-label">в настоящем размере</span></div>
+                        <div class="row px-one" data-if="!px_scene"><img id="px-one" data-if="px_one != ''" data-attr-src="px_one"/><span class="an-label">в настоящем размере</span></div>
                     </div>
                 </div>
                 <div id="px-view-line" class="px-view-line row">
@@ -1363,6 +1364,14 @@
                     <span id="px-play-why" class="an-hint px-why" data-if="px_play_why != ''">{{ px_play_why }}</span>
                     <div class="row an-actions">
                         <div id="px-play-character" class="button outlined small" title="Клип правится у персонажа: сцена его только ставит во времени" data-event-click="px_actor_character"><icon class="s" name="open_in_new"/><span>Открыть персонажа</span></div>
+                    </div>
+                </div>
+                <div class="lg-nav-title" data-if="px_has_transition">Переход</div>
+                <div id="px-inspect-transition" class="px-inspector column" data-if="px_has_transition">
+                    <span id="px-transition-info" class="px-inspector-text">{{ px_transition_info }}</span>
+                    <div class="row px-value" data-if="px_transition_call != ''">
+                        <span id="px-transition-call" class="px-call grow">{{ px_transition_call }}</span>
+                        <div id="px-transition-code" class="button outlined small" data-if="px_transition_can_code" title="Выделить в панели вызов transition или leave" data-event-click="px_transition_to_code"><span>К коду</span></div>
                     </div>
                 </div>
                 <div class="lg-nav-title">Блок</div>
@@ -1554,6 +1563,12 @@
                     <span class="px-tl-name">Паузы</span>
                     <div id="px-pauses" class="px-tl-time">
                         <div data-for="p : px_pauses" class="px-pause" data-attr-id="'px-pause-' + p.index" data-attr-style="p.style" data-attr-title="p.title">{{ p.label }}</div>
+                    </div>
+                </div>
+                <div class="px-tl-row row" data-if="px_scene && px_transitions.size > 0">
+                    <span class="px-tl-name">Переходы</span>
+                    <div id="px-transitions" class="px-tl-time">
+                        <div data-for="b : px_transitions" class="px-pause px-transition" data-attr-id="'px-transition-' + b.index" data-class-selected="b.selected" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_transition(b.index)" data-event-dblclick="px_transition_code(b.index)">{{ b.label }}</div>
                     </div>
                 </div>
                 <div id="px-tracks" class="px-tracks" data-if="px_has_rec">

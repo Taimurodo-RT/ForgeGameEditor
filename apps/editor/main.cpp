@@ -2091,7 +2091,9 @@ struct Options {
     // экрану», its two files as the library builds them, undone and done again, given again as it is, a pair not its own and a clip
     // that fails refused, by "pixel-motion-m", opened again by "pixel-motion-m-again"; part 6а of step 6, a scene: «Новая
     // сцена» with two characters and a picture typed into its code, its frames, the mouse on it, its actors' clips, by
-    // "pixel-scene", opened again by "pixel-scene-again"); "input" (the tab «Ввод»: the same, the keys of
+    // "pixel-scene", opened again by "pixel-scene-again"; part 6б, its camera and transitions: typed, «Через камеру», the frame's
+    // edge and the camera's fields, the transitions' row, by "pixel-scene-b", opened again by "pixel-scene-b-again"); "input"
+    // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
     // changed by "rpg-template-a-again"); "match3-template" (step 14.3c: the same for the catalog's «Три в ряд», by
@@ -2385,6 +2387,8 @@ public:
         if (part == "pixel-motion-m-again") return frame < 3 || pixel_motion_m_again_step();
         if (part == "pixel-scene") return frame < 3 || pixel_scene_step();
         if (part == "pixel-scene-again") return frame < 3 || pixel_scene_again_step();
+        if (part == "pixel-scene-b") return frame < 3 || pixel_scene_b_step();
+        if (part == "pixel-scene-b-again") return frame < 3 || pixel_scene_b_again_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19234,6 +19238,19 @@ return {
         const int staged_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-again"}, twenty_six);
         check(staged_again == 0, "opened from another working folder: the scene's files, its recording and every frame as pixel-scene left them "
                                  "(pixel-scene-again: exit " + std::to_string(staged_again) + ")");
+        // Part 6б: its camera and its transitions.
+        const fs::path twenty_seven = mo_root() / utf8_path("двадцать седьмая папка"), twenty_eight = mo_root() / utf8_path("двадцать восьмая папка");
+        fs::create_directories(twenty_seven, ec);
+        fs::create_directories(twenty_eight, ec);
+        const int filmed = pj_run({exe, "--project", project, "--self-test", "pixel-scene-b"}, twenty_seven);
+        check(filmed == 0, "«Сцена»: the camera's row and fields, its frame over the vector; transition, zoom, follow and leave typed into its code, "
+                           "the rows «камера · zoom», «камера · следит» and «Переходы»; «Через камеру» as the scene of the files draws the "
+                           "player's frame and by hand in the entrance, the follow and the leave, «Снимок кадра»; a transition chosen and its "
+                           "call; the frame's edge dragged, y and zoom typed, zoom 0 and a drag in the follow refused, undone and done again "
+                           "byte for byte (pixel-scene-b: exit " + std::to_string(filmed) + ")");
+        const int filmed_again = pj_run({exe, "--project", project, "--self-test", "pixel-scene-b-again"}, twenty_eight);
+        check(filmed_again == 0, "opened from another working folder: the scene's file, its recording and every frame through the camera as "
+                                 "pixel-scene-b left them (pixel-scene-b-again: exit " + std::to_string(filmed_again) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -27640,9 +27657,11 @@ return {
             check(px().scene()->stage().width() == 1920 && px().scene()->stage().height() == 1080 && px().scenes().size() == 1,
                   "a stage of 1920 × 1080, one scene listed");
             check(element_text("px-scene-0").find("1920 × 1080 · 1 с") != std::string::npos, "its row «1920 × 1080 · 1 с»: " + element_text("px-scene-0"));
-            check(shown("px-vector-img") && !shown("px-pixel") && !shown("px-tools") && !shown("px-bake") && !shown("px-give-open") && !shown("px-give-screen") &&
-                      !shown("px-state-scene") && shown("px-scene-snapshot"),
-                  "the vector alone: no pixels, tools, baking, giving or clips' chips; «Снимок кадра» of the scene");
+            check(shown("px-vector-img") && shown("px-pixel-img") && element_text("px-through-label") == "Через камеру: кадр игрока 1920 × 1080" && !shown("px-one") &&
+                      !shown("px-tools") && !shown("px-bake") && !shown("px-give-open") && !shown("px-give-screen") && !shown("px-state-scene") &&
+                      shown("px-scene-snapshot"),
+                  "the vector and the player's frame «Через камеру» (part 6б): no pixels as baked, tools, baking, giving or clips' chips; «Снимок кадра» "
+                  "of the scene: «" + element_text("px-through-label") + "»");
             // Typed key by key: the size, the stage's things, the actors' clips; then saved.
             const std::string code = pixel::new_scene_code("Сцена");
             check(mo_select(mo_char(code, "1920, 1080"), mo_char(code, "1920, 1080") + 10), "«1920, 1080» selected");
@@ -27913,7 +27932,7 @@ return {
             check(!png.empty() && assets::decode_image(png, shot) && shot.width == 160 && shot.height == 90, "«сцены/Сцена 16.png», 160 × 90");
             pixel::Scene s;
             std::string why;
-            check(sc_apart(s, 0.25, why) && px_same(shot, s.draw(160, 90)), "the snapshot as the scene of the files draws frame 16 " + why);
+            check(sc_apart(s, 0.25, why) && px_same(shot, s.draw_frame(160, 90)), "the snapshot as the scene of the files draws the player's frame 16 " + why);
             check(step_label() == "«Сцена»: снимок «Сцена 16.png»", "one step: " + step_label());
             key(SDLK_Z, SDL_KMOD_CTRL);
             std::error_code ec;
@@ -28000,6 +28019,417 @@ return {
             sc_seen_ = sc_recorded() + sc_seen_;
             const std::vector<u8> was = left("сцена.txt");
             check(sc_seen_ == std::string(was.begin(), was.end()), "the recording and every frame as pixel-scene left them:\n" + sc_seen_);
+            check(px().console().empty() && px().note().empty(), "nothing said");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // Part 6б of docs/models/сцены-модель.md, the camera and the transitions, on the scene pixel-scene left: the camera's
+    // row of the tree and its fields, its frame over the vector (chosen and not); transition, camera().zoom, follow and
+    // leave typed key by key; the timeline's rows «камера · zoom», «камера · следит» and «Переходы»; «Через камеру» as
+    // the scene of the files draws the player's frame apart from the tab in the entrance, the scene, the follow and the
+    // leave, and by hand; «Снимок кадра» of the leave; a transition chosen, its words and its call; the frame's edge
+    // dragged, its y and zoom typed, a zoom of 0 and a drag in the follow refused, each undone and done again byte for
+    // byte. pixel-scene-b-again, another process from another working folder: the files and the same frames.
+    std::string sb_base_, sb_typed_, sb_dragged_;
+    static constexpr const char* kSbIn = "\n    transition(\"растворение\", 0.25)\n    camera().zoom(2, 0)";
+    static constexpr const char* kSbOut = "\n    camera():follow(\"hop\", 0.2)\n    leave(\"сдвиг\", 0.25, { from = \"лево\" })";
+    static constexpr const char* kSbDrag = "    at(1, camera():to({ x = 8 }, 0))\n";
+    // The scene's code with the camera and the transitions typed into it.
+    static std::string sb_typed(std::string code) {
+        code.insert(code.find("scene = function(p)") + std::strlen("scene = function(p)"), kSbIn);
+        code.insert(code.find("wait(1.4)") + std::strlen("wait(1.4)"), kSbOut);
+        return code;
+    }
+    // The player's frame at t of the scene of the files apart from the tab, the size «Через камеру» shows it.
+    bool sb_through(f64 t, pixel::Scene& s, assets::CookedTexture& out, std::string& why) {
+        u32 w = 0, h = 0;
+        if (!px().through_size(w, h)) return why = "«Через камеру» без размера", false;
+        if (!sc_apart(s, t, why)) return false;
+        out = s.draw_frame(w, h);
+        return true;
+    }
+    // The camera's frame on the stage at the camera as the scene puts it: the canvas's corners back through it.
+    static void sb_corners(const pixel::Scene& s, vector::Point out[4]) {
+        const pixel::Affine back = pixel::inverse(s.camera_matrix());
+        const f64 w = s.stage().width(), h = s.stage().height();
+        const vector::Point c[4] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
+        for (int i = 0; i < 4; ++i) out[i] = back.apply(c[i]);
+    }
+    // A pixel of a texture, at a point of its picture.
+    static const u8* sb_pixel(const assets::CookedTexture& t, f64 x, f64 y) {
+        const i64 xi = static_cast<i64>(std::floor(x)), yi = static_cast<i64>(std::floor(y));
+        if (xi < 0 || yi < 0 || xi >= static_cast<i64>(t.width) || yi >= static_cast<i64>(t.height)) return nullptr;
+        return &t.rgba8[(static_cast<usize>(yi) * t.width + static_cast<usize>(xi)) * 4];
+    }
+    static bool sb_rgb(const u8* p, int r, int g, int b) { return p && std::abs(p[0] - r) <= 2 && std::abs(p[1] - g) <= 2 && std::abs(p[2] - b) <= 2; }
+    static std::string sb_words(const u8* p) {
+        return p ? std::to_string(p[0]) + ", " + std::to_string(p[1]) + ", " + std::to_string(p[2]) + ", " + std::to_string(p[3]) : std::string("за краем");
+    }
+    // The camera's frame on the vector shown: the texel of the middle of its top edge in a colour.
+    bool sb_frame_colour(const vector::Point& at, int r, int g, int b, std::string& seen) {
+        const vector::Point t = px().texel_of(at);
+        const u8* p = sb_pixel(px().vector_shown(), t.x, t.y);
+        seen = sb_words(p);
+        return sb_rgb(p, r, g, b);
+    }
+
+    // In an editor for «Движение А» after pixel-scene-again (--self-test pixel-scene-b).
+    bool pixel_scene_b_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const std::string doc = "сцены/Сцена.scene.json", lua = "сцены/Сцена.luau";
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        const std::string saved = "«Сцена»: код «Сцена.luau» сохранён", dragged = "«Сцена»: камера сдвинута на 8; 0";
+        // «Через камеру» at the ruler's frame k as the scene of the files draws the player's frame, the vector as it
+        // draws the stage; the camera where the scene puts it.
+        auto through_at = [&](u32 k, pixel::Scene& s) {
+            const f64 t = k / 60.0;
+            assets::CookedTexture want, view;
+            std::string why;
+            check(px().frame() == k, "frame " + std::to_string(k + 1) + " shown");
+            check(sb_through(t, s, want, why) && px_same(px().pixel_frame(), want),
+                  "frame " + std::to_string(k + 1) + ": «Через камеру» as the scene of the files draws the player's frame apart from the tab " + why);
+            check(sc_view(t, view, why) && px_same(px().vector_view(), view), "frame " + std::to_string(k + 1) + ": the vector the whole stage " + why);
+        };
+        // A point of the player's frame (the canvas's units) in «Через камеру».
+        auto frame_point = [&](f64 x, f64 y) {
+            const assets::CookedTexture& f = px().pixel_frame();
+            return sb_pixel(f, x * f.width / 160.0, y * f.height / 90.0);
+        };
+        switch (sc_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            const std::vector<u8> was = tg_bytes(mo_root() / utf8_path("сцена.luau"));
+            sb_base_.assign(was.begin(), was.end());
+            check(!sb_base_.empty() && file(lua) == was && sb_base_.find("camera") == std::string::npos, "the scene as pixel-scene left it, no camera in it");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(idle && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        // The camera's row of the tree, its fields, its frame over the vector: the whole canvas, chosen.
+        case 3: {
+            if (hold(rec && !px().stale() && px().code() == sb_base_ && shown("px-play-0"), "the scene recorded")) return true;
+            check(element_text("px-through-label") == "Через камеру: кадр игрока 160 × 90" && shown("px-pixel-img") && !shown("px-one"),
+                  "the small view «Через камеру»: «" + element_text("px-through-label") + "»");
+            // The canvas's shape, its longer side the vector's.
+            const assets::CookedTexture &through = px().pixel_frame(), &vec = px().vector_view();
+            check(through.width == vec.width && std::abs(static_cast<f64>(through.height) * 160 - static_cast<f64>(through.width) * 90) <= 160,
+                  "«Через камеру» 16 : 9 as wide as the vector: " + std::to_string(through.width) + " × " + std::to_string(through.height) + " for " +
+                      std::to_string(vec.width));
+            check(shown("px-part-camera") && element_text("px-part-camera").find("Камера") != std::string::npos &&
+                      element_text("px-part-camera").find("кадр игрока") != std::string::npos,
+                  "the tree's first row «Камера»: «" + element_text("px-part-camera") + "»");
+            check(px_click("px-part-camera") && px().part() == "camera", "the camera chosen in the tree: «" + px().part() + "»");
+            break;
+        }
+        case 4: {
+            if (wait(2)) return true;
+            check(ue_field("px-pf-x") == "0" && ue_field("px-pf-y") == "0" && ue_field("px-pf-zoom") == "1" && ue_field("px-pf-rot") == "0" &&
+                      element_text("px-pf-section-x") == "Камера" && !shown("px-pf-fill") && !shown("px-pf-scale"),
+                  "its fields x 0, y 0, zoom 1, rot 0 under «Камера», no others: x " + ue_field("px-pf-x") + ", zoom " + ue_field("px-pf-zoom"));
+            std::string seen;
+            check(sb_frame_colour({80, 0}, 40, 120, 255, seen), "its frame over the vector, the canvas's edge, in the colour of the chosen: " + seen);
+            check(mb_hold_point({8, 8}, 0, 0), "a press on the background");
+            mb_let_go();
+            check(px().part().empty(), "nothing chosen: «" + px().part() + "»");
+            break;
+        }
+        // Typed key by key: the entrance and the zoom at the top of scene, the follow and the leave at its end; saved.
+        case 5: {
+            if (wait(2)) return true;
+            std::string seen;
+            check(sb_frame_colour({80, 0}, 255, 255, 255, seen), "the frame white when the camera is not chosen: " + seen);
+            check(mo_caret(mo_char(sb_base_, "scene = function(p)") + mo_letters("scene = function(p)")), "the caret after «scene = function(p)»");
+            mo_type(kSbIn);
+            std::string half = sb_base_;
+            half.insert(half.find("scene = function(p)") + std::strlen("scene = function(p)"), kSbIn);
+            check(mo_caret(mo_char(half, "wait(1.4)") + mo_letters("wait(1.4)")), "the caret after «wait(1.4)»");
+            mo_type(kSbOut);
+            sb_typed_ = sb_typed(sb_base_);
+            check(px().code() == sb_typed_ && px().code_unsaved() && file(lua) == bytes(sb_base_), "typed key by key, not written yet:\n" + px().code());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_typed_) && step_label() == saved, "Ctrl+S: the file what was typed, byte for byte; one step: " + step_label());
+            break;
+        }
+        // Recorded: 2,25 s; the entrance from 0, the leave after the follow; the rows of the timeline.
+        case 6: {
+            if (hold(rec && !px().stale() && !px().code_unsaved() && rec->transitions.size() == 2, "the scene with its camera recorded")) return true;
+            // The timeline stays as near as it was for 1,8 s: the wheel over the ruler takes it out to all of 2,25 s.
+            f32 x = 0, y = 0;
+            check(element_center("px-ruler", x, y), "the ruler");
+            mo_wheel(x, y, -20);
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            const pixel::SceneTransition &in = rec->transitions[0], &out = rec->transitions[1];
+            check(std::fabs(rec->length - 2.25) < 1e-9 && px().console().empty(), "2,25 s: 1,8 s, the follow's 0,2 s, the leave's 0,25 s; the console empty: " +
+                                                                                       std::to_string(rec->length) + " s\n" + sc_recorded());
+            check(!in.leave && in.kind == "растворение" && in.start == 0 && in.length == 0.25 && out.leave && out.kind == "сдвиг" && out.from == "лево" &&
+                      std::fabs(out.start - 2) < 1e-9 && out.length == 0.25,
+                  "the entrance «растворение» from 0 for 0,25 s, the leave «сдвиг» from the left from 2 s for 0,25 s");
+            check(rec->follows.size() == 1 && rec->follows[0].target == "hop", "one follow, of «hop»");
+            check(element_text("px-track-0") == "камера · zoom" && element_text("px-track-1") == "камера · следит" && element_text("px-track-2") == "man · x" &&
+                      !shown("px-track-3"),
+                  "the rows «камера · zoom», «камера · следит», «man · x»: «" + element_text("px-track-0") + "», «" + element_text("px-track-1") + "», «" +
+                      element_text("px-track-2") + "»");
+            i32 fx = -1, fy = -1;
+            for (usize i = 0; i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].to == pixel::Block::To::Follow) (rec->blocks[i].prop == pixel::Prop::X ? fx : fy) = static_cast<i32>(i);
+            check(fx >= 0 && fy >= 0 && element_text(("px-block-" + std::to_string(fx)).c_str()) == "за «hop»" && !shown("px-block-" + std::to_string(fy)),
+                  "the follow one block «за «hop»» on its row, not on x and y: «" + element_text(("px-block-" + std::to_string(fx)).c_str()) + "»");
+            check(element_text("px-transition-0") == "вход: растворение" && element_text("px-transition-1") == "уход: сдвиг",
+                  "the row «Переходы»: «" + element_text("px-transition-0") + "», «" + element_text("px-transition-1") + "»");
+            check(away(), "out of the panel");
+            sc_frame(6);
+            break;
+        }
+        // The entrance: the scene dissolving in over the grey of what was, 0,4 of it at 0,1 s.
+        case 8: {
+            if (wait(2)) return true;
+            pixel::Scene s;
+            through_at(6, s);
+            check(s.camera() == pixel::SceneCamera{0, 0, 2, 0}, "the camera zoomed 2 times from 0");
+            // The point 10; 10 of the frame is 45; 27,5 of the stage, its background #203040: 0,4 of it over #808080.
+            const u8* p = frame_point(10, 10);
+            check(sb_rgb(p, 90, 96, 102), "the background 0,4 over the grey: " + sb_words(p));
+            sc_frame(60);
+            break;
+        }
+        case 9: {
+            if (wait(2)) return true;
+            pixel::Scene s;
+            through_at(60, s);
+            const u8* p = frame_point(20, 10);
+            check(s.camera() == pixel::SceneCamera{0, 0, 2, 0} && sb_rgb(p, 0x20, 0x30, 0x40), "the scene alone, 20; 10 of the frame the background: " + sb_words(p));
+            sc_frame(114);
+            break;
+        }
+        // The follow on its way to «hop», then on it: the middle of the frame at its pivot 40; 78.
+        case 10: {
+            if (wait(2)) return true;
+            pixel::Scene s;
+            through_at(114, s);
+            check(s.camera().x < 0 && s.camera().x > -40 && s.camera().y > 0 && s.camera().y < 33, "the camera on its way to «hop»: " +
+                                                                                                   std::to_string(s.camera().x) + "; " + std::to_string(s.camera().y));
+            sc_frame(126);
+            break;
+        }
+        // The leave: the grey of the game slides in from the left over the scene, in_out_cubic of 0,4 at 2,1 s: its right
+        // edge at −160 · (1 − 0,256) + 160 = 40,96 of the frame.
+        case 11: {
+            if (wait(2)) return true;
+            pixel::Scene s;
+            through_at(126, s);
+            check(std::fabs(s.camera().x + 40) < 1e-6 && std::fabs(s.camera().y - 33) < 1e-6 && s.camera().zoom == 2,
+                  "the camera on «hop»: " + std::to_string(s.camera().x) + "; " + std::to_string(s.camera().y));
+            const u8 *grey = frame_point(20, 45), *scene = frame_point(100, 10);
+            check(sb_rgb(grey, 128, 128, 128) && scene && !sb_rgb(scene, 128, 128, 128), "the game's grey left of 40,96, the scene right of it: " + sb_words(grey) + " / " +
+                                                                                                sb_words(scene));
+            // «Снимок кадра»: the player's frame at the scene's size.
+            check(px_click("px-scene-snapshot"), "«Снимок кадра»");
+            assets::CookedTexture shot;
+            const std::vector<u8> png = file("сцены/Сцена 127.png");
+            check(!png.empty() && assets::decode_image(png, shot) && shot.width == 160 && shot.height == 90, "«сцены/Сцена 127.png», 160 × 90");
+            pixel::Scene apart;
+            std::string why;
+            check(sc_apart(apart, 2.1, why) && px_same(shot, apart.draw_frame(160, 90)), "the snapshot the player's frame of the leave " + why);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            std::error_code ec;
+            check(!fs::exists(as().abs("сцены/Сцена 127.png"), ec) && file(lua) == bytes(sb_typed_), "Ctrl+Z: no snapshot");
+            check(px_click("px-transition-1") && px().transition() == 1 && px().block() < 0 && px().actor_clip() < 0, "the leave chosen on its row");
+            break;
+        }
+        // The leave's words and call, «К коду»; one thing of the timeline in the inspector.
+        case 12: {
+            if (wait(2)) return true;
+            const std::string info = element_text("px-transition-info");
+            check(shown("px-inspect-transition") && info.find("уход: сдвиг, с края «лево»") != std::string::npos &&
+                      info.find("с 2 по 2,25 с, длина 0,25 с") != std::string::npos && info.find("после него сцена кончается: дальше игра") != std::string::npos,
+                  "its words: «" + info + "»");
+            check(element_text("px-transition-call") == "строка 20: leave(&quot;сдвиг&quot;, 0.25, { from = &quot;лево&quot; })",
+                  "its call: «" + element_text("px-transition-call") + "»");
+            check(px_click("px-transition-code") && mo_panel_keys(), "«К коду»: the panel");
+            u32 from = 0, to = 0;
+            const std::string call = "leave(\"сдвиг\", 0.25, { from = \"лево\" })";
+            check(px().code_selection(from, to) && from == mo_char(sb_typed_, call) && to == from + mo_letters(call), "its call selected in the panel");
+            check(away(), "out of the panel");
+            i32 fx = -1;
+            for (usize i = 0; i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].to == pixel::Block::To::Follow && rec->blocks[i].prop == pixel::Prop::X) fx = static_cast<i32>(i);
+            check(fx >= 0 && click_id(("px-block-" + std::to_string(fx)).c_str()) && px().block() == fx && px().transition() < 0,
+                  "the follow chosen, the leave not: block " + std::to_string(px().block()) + ", transition " + std::to_string(px().transition()));
+            break;
+        }
+        case 13: {
+            if (wait(2)) return true;
+            const std::string text = element_text("px-inspector-text");
+            check(text.rfind("камера · следит за «hop»\nс 1,8 с, пока на дорожке не начнётся другой блок\nдогоняет цель за 0,2 с\n", 0) == 0 &&
+                      text.find("откуда") == std::string::npos,
+                  "the follow's words: «" + text + "»");
+            check(px_click("px-transition-0") && px().transition() == 0 && px().block() < 0, "the entrance chosen, the follow not");
+            sc_frame(60);
+            break;
+        }
+        // The frame's left edge at 1 s (zoom 2: 40; 45 of the stage) dragged by 8: the camera chosen, a line at(1, …).
+        case 14: {
+            if (wait(2)) return true;
+            check(mb_hold_point({8, 8}, 0, 0), "a press outside the frame");
+            mb_let_go();
+            pixel::Scene s;
+            std::string why;
+            vector::Point c[4];
+            check(sc_apart(s, 1, why), "the scene of the files at 1 s " + why);
+            sb_corners(s, c);
+            check(std::fabs(c[0].x - 40) < 1e-9 && std::fabs(c[0].y - 22.5) < 1e-9 && std::fabs(c[2].x - 120) < 1e-9 && std::fabs(c[2].y - 67.5) < 1e-9,
+                  "the frame from 40; 22,5 to 120; 67,5");
+            // Pressed 1,5 points of the screen outside the line, within its reach of 4.
+            f32 x0 = 0, x1 = 0, y = 0;
+            check(px().screen_of({40, 45}, x0, y) && px().screen_of({41, 45}, x1, y) && x1 - x0 > 0.5f, "the view's points a unit of the stage");
+            check(mb_hold_point({40 - 1.5 / (x1 - x0), 45}, 8, 0), "its left edge pressed 1,5 points outside it and dragged by 8; 0");
+            mb_let_go();
+            check(px().part() == "camera", "the camera chosen by its edge: «" + px().part() + "»");
+            const std::vector<u8> now = file(lua);
+            sb_dragged_.assign(now.begin(), now.end());
+            std::string rest = sb_dragged_;
+            const usize line = rest.find(kSbDrag);
+            if (line != std::string::npos) rest.erase(line, std::strlen(kSbDrag));
+            check(line != std::string::npos && rest == sb_typed_ && step_label() == dragged, "let go: a line at(1, camera():to({ x = 8 }, 0)); one step: " + step_label() +
+                                                                                                 " (" + px().note() + ")\n" + sb_dragged_);
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_typed_) && step_label() == saved, "Ctrl+Z: as typed, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_dragged_) && step_label() == dragged, "Ctrl+Y: again, byte for byte");
+            break;
+        }
+        // y typed into the camera's field: into the table of that line.
+        case 15: {
+            if (hold(rec && !px().stale() && px().code() == sb_dragged_ && px().part() == "camera" && ue_field("px-pf-x") == "8", "the camera moved by 8")) return true;
+            // x has a block of its own now: its row before zoom's; the follow on its row alone, not on x's.
+            check(element_text("px-track-0") == "камера · x" && element_text("px-track-1") == "камера · zoom" && element_text("px-track-2") == "камера · следит",
+                  "the rows «камера · x», «камера · zoom», «камера · следит»: «" + element_text("px-track-0") + "», «" + element_text("px-track-1") + "», «" +
+                      element_text("px-track-2") + "»");
+            i32 fx = -1;
+            for (usize i = 0; i < rec->blocks.size(); ++i)
+                if (rec->blocks[i].to == pixel::Block::To::Follow && rec->blocks[i].prop == pixel::Prop::X) fx = static_cast<i32>(i);
+            Rml::Element *follow = fx >= 0 ? ed_.find_element(("px-block-" + std::to_string(fx)).c_str()) : nullptr, *row = ed_.find_element("px-track-2");
+            check(follow && row && std::fabs(follow->GetAbsoluteTop() - row->GetAbsoluteTop()) < 1.5f, "the follow's block on the row «камера · следит»: at " +
+                                                                                                       std::to_string(follow ? follow->GetAbsoluteTop() : -1) + " for " +
+                                                                                                       std::to_string(row ? row->GetAbsoluteTop() : -1));
+            check(ue_type_enter("px-pf-y", "5"), "5 typed into y with Enter");
+            std::string want = sb_dragged_;
+            want.replace(want.find("{ x = 8 }"), 9, "{ x = 8, y = 5 }");
+            const std::vector<u8> now = file(lua);
+            check(now == bytes(want) && step_label() == "«Сцена»: камера · y = 5", "y = 5 in the line's table; one step: " + step_label() + "\n" +
+                                                                                    std::string(now.begin(), now.end()));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_dragged_), "Ctrl+Z: without y, byte for byte");
+            sc_frame(0);
+            break;
+        }
+        // zoom typed at 0: the call camera().zoom(…) of the frame; 0 refused.
+        case 16: {
+            if (hold(rec && !px().stale() && px().code() == sb_dragged_ && px().frame() == 0 && ue_field("px-pf-zoom") == "2", "frame 1, zoom 2")) return true;
+            check(px().part() == "camera", "the camera still chosen");
+            check(ue_type_enter("px-pf-zoom", "0") && px().note() == "zoom камеры — число больше 0: во сколько раз камера приближает" &&
+                      file(lua) == bytes(sb_dragged_),
+                  "zoom 0 refused, nothing written: «" + px().note() + "»");
+            check(ue_type_enter("px-pf-zoom", "3"), "3 typed into zoom with Enter");
+            std::string want = sb_dragged_;
+            want.replace(want.find("camera().zoom(2, 0)"), 19, "camera().zoom(3, 0)");
+            const std::vector<u8> now = file(lua);
+            check(now == bytes(want) && step_label() == "«Сцена»: камера · zoom = 3", "the call camera().zoom(3, 0); one step: " + step_label() + "\n" +
+                                                                                         std::string(now.begin(), now.end()));
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_dragged_), "Ctrl+Z: zoom 2, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(want), "Ctrl+Y: zoom 3, byte for byte");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(lua) == bytes(sb_dragged_), "Ctrl+Z: zoom 2");
+            sc_frame(114);
+            break;
+        }
+        // In the follow the frame is the code's: its edge dragged refused, nothing written.
+        case 17: {
+            if (hold(rec && !px().stale() && px().code() == sb_dragged_ && px().frame() == 114, "frame 115 in the follow")) return true;
+            pixel::Scene s;
+            std::string why;
+            vector::Point c[4];
+            check(sc_apart(s, 114 / 60.0, why), "the scene of the files at frame 115 " + why);
+            sb_corners(s, c);
+            check(mb_hold_point({(c[0].x + c[3].x) / 2, (c[0].y + c[3].y) / 2}, 4, 0), "the frame's left edge pressed and dragged");
+            mb_let_go();
+            check(px().part() == "camera" && px().note() == "Камеру не сдвинуть: камера следит за «hop»: правится в коде" && file(lua) == bytes(sb_dragged_) &&
+                      step_label() == dragged,
+                  "refused, nothing written: «" + px().note() + "»");
+            break;
+        }
+        // What the tab shows and the files, beside the games, for pixel-scene-b-again.
+        case 18: {
+            if (hold(rec && !px().stale() && px().code() == sb_dragged_ && shown("px-transition-1"), "the scene again")) return true;
+            check(file(lua) == bytes(sb_dragged_), "the file as left");
+            if (mb_look(sc_seen_)) return true;
+            sc_seen_ = sc_recorded() + sc_seen_;
+            const fs::path root = mo_root();
+            check(write_file_atomic(root / utf8_path("сцена б.txt"), bytes(sc_seen_)) && write_file_atomic(root / utf8_path("сцена б.luau"), file(lua)),
+                  "what the tab shows and the file, beside the games");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // In an editor for «Движение А» from another working folder after pixel-scene-b (--self-test pixel-scene-b-again).
+    bool pixel_scene_b_again_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const std::string doc = "сцены/Сцена.scene.json", lua = "сцены/Сцена.luau";
+        const pixel::Recording* rec = px().recording();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
+        switch (sc_step_) {
+        case 0:
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "«Движение А», from another working folder");
+            check(!left("сцена б.luau").empty() && file(lua) == left("сцена б.luau"), "the file as pixel-scene-b left it");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2:
+            if (hold(!as().busy() && !as().looking() && shown("px-scene-0"), "«Сцена» listed")) return true;
+            check(element_text("px-scene-0").find("160 × 90 · 2,25 с") != std::string::npos, "its row as read, not open: «" + element_text("px-scene-0") + "»");
+            check(px_click("px-scene-0") && px().opened() == doc && px().in_scene(), "«Сцена» open");
+            break;
+        case 3: {
+            if (hold(rec && !px().stale() && shown("px-transition-1"), "the scene recorded")) return true;
+            if (mb_look(sc_seen_)) return true;
+            sc_seen_ = sc_recorded() + sc_seen_;
+            const std::vector<u8> was = left("сцена б.txt");
+            check(sc_seen_ == std::string(was.begin(), was.end()), "the recording and every frame as pixel-scene-b left them:\n" + sc_seen_);
             check(px().console().empty() && px().note().empty(), "nothing said");
             return false;
         }
@@ -35436,7 +35866,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-e-again", "pixel-motion-f", "pixel-motion-f-again", "pixel-motion-g",
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
-                                         "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "input", "input-a", "input-a-again",
+                                         "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again", "input", "input-a", "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
                                          "match3-template-a-restored", "images", "images-a", "images-a-again", "images-b", "ui-scale",

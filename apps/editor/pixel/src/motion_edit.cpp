@@ -1,5 +1,7 @@
 #include "forge/pixel/motion_edit.h"
 
+#include "forge/pixel/scene.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -28,6 +30,12 @@ const CallSite* script_call(const Recording& rec, SiteRef s, const CodeSites& co
     if (static_cast<usize>(s.site) >= code.sites().size()) return why = "код изменился: запишите клип снова", nullptr;
     return &code.sites()[static_cast<usize>(s.site)];
 }
+
+// The handle of a part in a call: camera() for a scene's camera (part 6б), part("…") for the others; and a property's
+// word on it: the camera's scale is its zoom.
+std::string handle_call(std::string_view part) { return part == kCameraPart ? std::string("camera()") : "part(" + quote_string(part) + ")"; }
+std::string handle_word(std::string_view part, Prop p) { return part == kCameraPart && p == Prop::Scale ? "zoom" : prop_word(p); }
+std::string handle_word(const Recording& rec, u32 part, Prop p) { return handle_word(part < rec.parts.size() ? std::string_view(rec.parts[part]) : std::string_view(), p); }
 
 std::string value_text(Prop p, const PropValue& v) {
     if (prop_is_number(p)) return format_number(v.v);
@@ -61,6 +69,10 @@ bool has_value(const Recording& rec, const Block& b, std::string& why) {
     case Block::To::Saved: return why = "блок возвращает сохранённое save(): его значения в коде нет", false;
     case Block::To::Rest: return why = "блок возвращает в покой: его значения в коде нет", false;
     case Block::To::Binding: return why = "значение блока считает функция связи: правьте её в коде", false;
+    case Block::To::Follow:
+        return why = "камера следит за «" + (b.ref < rec.follows.size() ? rec.follows[b.ref].target : std::string("?")) + "»: правится в коде",
+               false;
+    case Block::To::Hold: return why = "камера стоит, где её оставило слежение: её значения в коде нет", false;
     }
     if (!b.frames.empty()) return why = "значения tween(…) считает его функция: правьте её в коде", false;
     return true;
@@ -156,15 +168,16 @@ bool edit_value(const Recording& rec, const Block& b, Prop p, const PropValue& v
         if (p == Prop::Morph) return why = "морфинг — отдельным вызовом part(\"…\"):morph(…)", false;
         if (value_text(p, value) == "nil") return why = own_in_table(rec, b, p), false;
         if (!prop_is_number(p)) return rewrite_field(source, arg, prop_word(p), value_text(p, value), out, why);
+        const std::string word = handle_word(rec, b.part, p);
         // The old value of another property of the same call: its block from the same step.
         f64 old = p == b.prop ? b.value.v : rest_value(p).v;
         if (p != b.prop)
             for (const Block& o : rec.blocks)
                 if (o.site == b.site && o.prop == p && o.start == b.start && o.to == Block::To::Value) old = o.value.v;
-        return rewrite_field_number(source, arg, prop_word(p), old, value.v, out, why);
+        return rewrite_field_number(source, arg, word, old, value.v, out, why);
     }
     if (p != b.prop)
-        return why = std::string("в вызове одного свойства (") + prop_word(b.prop) + ") другое не дописать: оно ляжет " +
+        return why = "в вызове одного свойства (" + handle_word(rec, b.part, b.prop) + ") другое не дописать: оно ляжет " +
                      "новой строкой at(…)",
                false;
     if (prop_is_number(p)) return rewrite_number(source, arg, b.value.v, value.v, out, why);
@@ -310,8 +323,8 @@ bool add_at_line(const Recording& rec, f64 t, std::string_view part, Prop p, con
     out.clear();
     if (!std::isfinite(t) || t < 0 || !std::isfinite(length) || length < 0)
         return why = "начало и длина — числа секунд не меньше 0", false;
-    std::string call = "part(" + quote_string(part) + ")";
-    call += p == Prop::Morph ? std::string(":morph(") : std::string(".") + prop_word(p) + "(";
+    std::string call = handle_call(part);
+    call += p == Prop::Morph ? std::string(":morph(") : "." + handle_word(part, p) + "(";
     call += value_text(p, value) + ", " + format_number(length) + ")";
     return insert_clip_line(code, source, rec.clip, "at(" + format_number(t) + ", " + call + ")", out, why);
 }
@@ -325,9 +338,9 @@ bool add_at_table(const Recording& rec, f64 t, std::string_view part, const std:
     std::string table;
     for (const auto& [p, v] : values) {
         if (!prop_is_number(p) || !std::isfinite(v)) return why = "в таблице — только числа: x, y, rot, scale, sx, sy, opacity", false;
-        table += (table.empty() ? "{ " : ", ") + std::string(prop_word(p)) + " = " + format_number(v);
+        table += (table.empty() ? "{ " : ", ") + handle_word(part, p) + " = " + format_number(v);
     }
-    const std::string call = "part(" + quote_string(part) + "):to(" + table + " }, " + format_number(length) + ")";
+    const std::string call = handle_call(part) + ":to(" + table + " }, " + format_number(length) + ")";
     return insert_clip_line(code, source, rec.clip, "at(" + format_number(t) + ", " + call + ")", out, why);
 }
 
@@ -442,7 +455,9 @@ bool part_prop_value(const Recording& rec, std::string_view part, f64 t, f64 fra
     // Before its track's first block, where start_from left it (part 5б).
     const PropValue first = pp.part >= 0 ? first_value(rec, static_cast<u32>(pp.part), p) : rest_value(p);
     out = first;
-    if (pp.block >= 0 && rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Binding) return false;
+    // A binding's value is its function's, a follow's (part 6б) where its target stands: the frame's.
+    if (pp.block >= 0 && (rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Binding || rec.blocks[static_cast<usize>(pp.block)].to == Block::To::Follow))
+        return false;
     going = pp.going;
     if (pp.going) return out = rec.blocks[static_cast<usize>(pp.block)].end, true;
     std::string why;
@@ -469,7 +484,7 @@ bool edit_part_prop(const Recording& rec, std::string_view part, f64 t, f64 fram
             const Block& o = rec.blocks[static_cast<usize>(bq)];
             std::string no;
             const CallSite* c = o.value_field && block_going(o, t, frame) ? value_call(rec, o, code, no) : nullptr;
-            if (!c || field_of(c->args[static_cast<usize>(o.value_arg)], prop_word(p))) continue;
+            if (!c || field_of(c->args[static_cast<usize>(o.value_arg)], handle_word(part, p))) continue;
             bool since = false;
             if (pp.track >= 0)
                 for (u32 k : rec.tracks[static_cast<usize>(pp.track)].blocks)

@@ -2,6 +2,8 @@
 // (pixel_editor.h). Its code is the panel's and its stage the vector's: the scene is clip «scene» of its code
 // (PoseScript::set_scene), recorded, laid out on the timeline and edited by the mouse as a character's clip is; a frame
 // poses the stage and its actors (pixel::Scene::pose). The rest of the mode is pixel_editor.cpp.
+// Part 6б «Камера и переходы»: the camera's frame over the vector and its edge dragged, its row of the tree, the player's
+// frame through it for the small view and the snapshot, the row of the transitions on the timeline.
 
 #include "pixel_editor.h"
 #include "pixel_files.h"
@@ -26,6 +28,8 @@ namespace {
 
 constexpr const char* kSceneSuffix = ".scene.json";
 constexpr f64 kMaxSnapshotSide = 4096; // a snapshot of a scene at its own size
+constexpr f32 kFrameReach = 4;         // how near the camera's frame's edge a press takes it (view points)
+constexpr u8 kFrameLine[4] = {255, 255, 255, 255}, kFrameEdge[4] = {30, 30, 36, 255}, kFrameChosen[4] = {40, 120, 255, 255};
 
 // "Вступление.scene.json" → "Вступление".
 std::string scene_stem(const std::string& file_name) {
@@ -117,6 +121,15 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
     on("px_actor_clip_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { actor_clip_to_code(arg_int(a, 0)); });
     on("px_actor_clip_to_code", [this](Rml::Event&, const Rml::VariantList&) { actor_clip_to_code(play_); });
     on("px_actor_character", [this](Rml::Event&, const Rml::VariantList&) { open_actor_character(); });
+    // Part 6б: the transitions' row.
+    model.Bind("px_transitions", &m_transitions_);
+    model.Bind("px_has_transition", &m_has_transition_);
+    model.Bind("px_transition_info", &m_transition_info_);
+    model.Bind("px_transition_call", &m_transition_call_);
+    model.Bind("px_transition_can_code", &m_transition_can_code_);
+    on("px_transition", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { select_transition(arg_int(a, 0)); });
+    on("px_transition_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { transition_to_code(arg_int(a, 0)); });
+    on("px_transition_to_code", [this](Rml::Event&, const Rml::VariantList&) { transition_to_code(transition_); });
 }
 
 // --- what a scene reads ------------------------------------------------------------------------------------
@@ -213,6 +226,7 @@ void PixelEditor::reload_scene() {
     recount();
     if (block_ >= 0) select_block(block_);
     if (play_ >= static_cast<i32>(rec_.plays.size()) || !rec_ok_) play_ = -1;
+    if (transition_ >= static_cast<i32>(rec_.transitions.size()) || !rec_ok_) transition_ = -1;
     view_dirty_ = true;
     rebuild_scene_list(); // its row: its size and length as read now
     rebuild();
@@ -339,16 +353,20 @@ PixelEditor::ShownPart PixelEditor::shown_part(const std::string& id) {
     return s;
 }
 
-bool PixelEditor::has_part(const std::string& id) const { return const_cast<PixelEditor*>(this)->shown_part(id).rig != nullptr; }
+bool PixelEditor::has_part(const std::string& id) const {
+    if (scene_mode_ && id == pixel::kCameraPart) return scene_ != nullptr; // the camera: of the recording, no drawing's (part 6б)
+    return const_cast<PixelEditor*>(this)->shown_part(id).rig != nullptr;
+}
 
 void PixelEditor::scene_rows() {
-    // The stage's parts as they nest; an actor's parts inside it, of the drawing it shows.
+    // The camera first (part 6б); the stage's parts as they nest; an actor's parts inside it, of the drawing it shows.
+    m_parts_.push_back({pixel::kCameraPart, "кадр игрока", 0, false, part_ == pixel::kCameraPart, "Камера", true});
     const pixel::Rig& stage = rig().shown();
     auto pivot_words = [](vector::Point pv) { return number_words(std::round(pv.x * 10) / 10) + "; " + number_words(std::round(pv.y * 10) / 10); };
     for (const pixel::Part& p : stage.parts()) {
         int depth = 0;
         for (i32 q = p.parent; q >= 0; q = stage.parts()[static_cast<usize>(q)].parent) ++depth;
-        m_parts_.push_back({p.id, pivot_words(stage.pivot(stage.part(p.id))), depth, p.shape, p.id == part_});
+        m_parts_.push_back({p.id, pivot_words(stage.pivot(stage.part(p.id))), depth, p.shape, p.id == part_, p.id});
         const pixel::Rig* actor = stage.hosted(p.id);
         if (!actor) continue;
         const pixel::Rig& shown = actor->shown();
@@ -356,7 +374,7 @@ void PixelEditor::scene_rows() {
             if (q.id == p.id) continue; // its root group: the actor itself
             int d = depth + 1;
             for (i32 r = q.parent; r >= 0 && shown.parts()[static_cast<usize>(r)].id != p.id; r = shown.parts()[static_cast<usize>(r)].parent) ++d;
-            m_parts_.push_back({q.id, pivot_words(shown.pivot(shown.part(q.id))), d, q.shape, q.id == part_});
+            m_parts_.push_back({q.id, pivot_words(shown.pivot(shown.part(q.id))), d, q.shape, q.id == part_, q.id});
         }
     }
 }
@@ -422,13 +440,13 @@ std::string PixelEditor::scene_snapshot() {
     std::string why;
     if (!pose_at(*c, t_, frame_, pose, why)) return refuse("Снимка нет: " + why);
     if (!scene_->pose(t_, rec_ok_ ? &rec_ : nullptr, pose)) return refuse("Снимка нет: " + scene_->error());
-    // The frame at the scene's size, as the view draws it.
+    // The player's frame at the scene's size, as «Через камеру» draws it (part 6б).
     const pixel::Stage& st = scene_->stage();
     const f64 sw = std::max<f64>(1, std::lround(st.width())), sh = std::max<f64>(1, std::lround(st.height()));
     if (sw > kMaxSnapshotSide || sh > kMaxSnapshotSide)
         return refuse("Снимка нет: сцена больше " + std::to_string(kMaxSnapshotSide) + " точек по стороне");
     const u32 w = static_cast<u32>(sw), h = static_cast<u32>(sh);
-    const assets::CookedTexture frame = rig().draw(w, h);
+    const assets::CookedTexture frame = scene_->draw_frame(w, h, pixel::Affine{});
     view_dirty_ = true;
     std::vector<u8> png;
     if (!assets::encode_image(frame, ".png", png)) return refuse("Кадр не кодируется в PNG");
@@ -458,6 +476,11 @@ bool PixelEditor::select_actor_clip(i32 index) {
     if (!scene_mode_ || !rec_ok_ || index < -1 || index >= static_cast<i32>(rec_.plays.size())) return false;
     play_ = index;
     if (index >= 0) select_block(-1); // one thing of the timeline in the inspector
+    if (index >= 0 && transition_ >= 0) {
+        transition_ = -1;
+        rebuild_transition();
+        lay_transitions();
+    }
     rebuild_actor_clip();
     lay_timeline();
     return true;
@@ -527,6 +550,161 @@ void PixelEditor::rebuild_actor_clip() {
     m_play_can_code_ = can_code;
     m_play_why_ = why;
     for (const char* var : {"px_has_play", "px_play_info", "px_play_call", "px_play_can_code", "px_play_why"}) dirty(var);
+}
+
+} // namespace forge::editor_app
+
+namespace forge::editor_app {
+
+// --- the camera's frame (part 6б) ----------------------------------------------------------------------------
+
+namespace {
+
+// The camera's frame on the stage: the canvas's corners back through the camera, clockwise from the top left.
+void frame_corners(const pixel::Scene& scene, vector::Point out[4]) {
+    const pixel::Affine back = pixel::inverse(scene.camera_matrix());
+    const f64 w = scene.stage().width(), h = scene.stage().height();
+    const vector::Point c[4] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
+    for (int i = 0; i < 4; ++i) out[i] = back.apply(c[i]);
+}
+
+// How far p is from the segment a–b.
+f64 segment_distance(vector::Point p, vector::Point a, vector::Point b) {
+    const f64 dx = b.x - a.x, dy = b.y - a.y, len = dx * dx + dy * dy;
+    const f64 k = len > 0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / len, 0.0, 1.0) : 0;
+    return std::hypot(p.x - (a.x + k * dx), p.y - (a.y + k * dy));
+}
+
+} // namespace
+
+bool PixelEditor::camera_corners(f32 x[4], f32 y[4]) const {
+    if (!scene_mode_ || !scene_ || !rig().loaded()) return false;
+    vector::Point c[4];
+    frame_corners(*scene_, c);
+    for (int i = 0; i < 4; ++i)
+        if (!screen_of(c[i], x[i], y[i])) return false;
+    return true;
+}
+
+bool PixelEditor::through_size(u32& w, u32& h) const {
+    if (!scene_mode_ || !scene_) return false;
+    pixel::frame_size(scene_->stage().width(), scene_->stage().height(), view_px(), w, h);
+    return true;
+}
+
+bool PixelEditor::camera_edge(f32 x, f32 y) const {
+    f32 cx[4], cy[4];
+    if (!camera_corners(cx, cy)) return false;
+    const f64 reach = kFrameReach * std::max(1.0f, view_w_ / static_cast<f32>(kViewPx));
+    for (int i = 0; i < 4; ++i)
+        if (segment_distance({x, y}, {cx[i], cy[i]}, {cx[(i + 1) % 4], cy[(i + 1) % 4]}) <= reach) return true;
+    return false;
+}
+
+void PixelEditor::draw_camera_frame(assets::CookedTexture& t, const pixel::Affine& texels) const {
+    if (!scene_ || t.rgba8.empty()) return;
+    vector::Point c[4];
+    frame_corners(*scene_, c);
+    for (vector::Point& p : c) p = texels.apply(p);
+    const i64 k = std::max<i64>(1, std::lround(dp_));
+    // A line k texels wide, edged k texels on each side, so it shows on light and dark scenes alike: squares of k + 2 ·
+    // grow texels along each side.
+    auto line = [&](i64 grow, const u8 (&color)[4]) {
+        for (int i = 0; i < 4; ++i) {
+            const vector::Point a = c[i], b = c[(i + 1) % 4];
+            const i64 n = static_cast<i64>(std::ceil(std::hypot(b.x - a.x, b.y - a.y))) + 1;
+            for (i64 s = 0; s <= n; ++s) {
+                const f64 u = static_cast<f64>(s) / static_cast<f64>(n);
+                const i64 px = static_cast<i64>(std::floor(a.x + (b.x - a.x) * u)) - k / 2, py = static_cast<i64>(std::floor(a.y + (b.y - a.y) * u)) - k / 2;
+                for (i64 yy = py - grow; yy < py + k + grow; ++yy)
+                    for (i64 xx = px - grow; xx < px + k + grow; ++xx) {
+                        if (xx < 0 || yy < 0 || xx >= t.width || yy >= t.height) continue;
+                        std::copy(color, color + 4, &t.rgba8[(static_cast<usize>(yy) * t.width + static_cast<usize>(xx)) * 4]);
+                    }
+            }
+        }
+    };
+    line(k, kFrameEdge);
+    line(0, camera_chosen() ? kFrameChosen : kFrameLine);
+}
+
+// --- the transitions on the timeline (part 6б) --------------------------------------------------------------------
+
+namespace {
+
+std::string transition_words(const pixel::SceneTransition& tr) {
+    return std::string(tr.leave ? "уход: " : "вход: ") + (tr.kind.empty() ? std::string("свой") : tr.kind);
+}
+
+} // namespace
+
+void PixelEditor::lay_transitions() {
+    m_transitions_.clear();
+    const f64 dp = std::max(1e-3f, dp_), w = tl_w_;
+    if (scene_mode_ && scene_ && rec_ok_ && tl_w_ > 0)
+        for (usize i = 0; i < rec_.transitions.size(); ++i) {
+            const pixel::SceneTransition& tr = rec_.transitions[i];
+            f64 x0 = tv_.x(tr.start), x1 = tv_.x(tr.start + tr.length);
+            if (x1 < 0 || x0 > w) continue;
+            x0 = std::max(0.0, x0);
+            x1 = std::min(w, std::max(x1, x0 + 2 * dp));
+            char style[112];
+            std::snprintf(style, sizeof style, "display: block; left: %.1fdevpx; width: %.1fdevpx;", x0, x1 - x0);
+            const std::string title = std::string(tr.leave ? "leave" : "transition") + "(" + (tr.kind.empty() ? std::string("function") : "\"" + tr.kind + "\"") +
+                                      ") с " + seconds_words(tr.start) + " по " + seconds_words(tr.start + tr.length) +
+                                      " с: длина правится в коде, двойной щелчок — к коду";
+            m_transitions_.push_back({static_cast<int>(i), style, transition_words(tr), title, static_cast<i32>(i) == transition_, false, false});
+        }
+    dirty("px_transitions");
+}
+
+bool PixelEditor::select_transition(i32 index) {
+    if (!scene_mode_ || !rec_ok_ || index < -1 || index >= static_cast<i32>(rec_.transitions.size())) return false;
+    transition_ = index;
+    if (index >= 0) {
+        select_block(-1); // one thing of the timeline in the inspector
+        if (play_ >= 0) select_actor_clip(-1);
+    }
+    rebuild_transition();
+    lay_transitions();
+    return true;
+}
+
+bool PixelEditor::transition_to_code(i32 index) {
+    if (!rec_ok_ || index < 0 || index >= static_cast<i32>(rec_.transitions.size())) return false;
+    select_transition(index);
+    const pixel::SceneTransition& tr = rec_.transitions[static_cast<usize>(index)];
+    if (tr.site.file != 0 || tr.site.site < 0 || tr.site.site >= static_cast<i32>(script().code().sites().size()))
+        return refuse_edit("Переход «" + transition_words(tr) + "» — из модуля: его код не в панели");
+    if (code_ != script_panel_) return refuse_edit("Код в панели не тот, что записан: сохраните его (Ctrl+S), и переход покажет свой вызов");
+    pixel::Block b;
+    b.site = tr.site;
+    select_call(b);
+    return true;
+}
+
+void PixelEditor::rebuild_transition() {
+    const bool has = scene_mode_ && rec_ok_ && transition_ >= 0 && transition_ < static_cast<i32>(rec_.transitions.size());
+    std::string info, call;
+    bool can_code = false;
+    if (has) {
+        const pixel::SceneTransition& tr = rec_.transitions[static_cast<usize>(transition_)];
+        info = transition_words(tr) + (tr.kind == "сдвиг" ? ", с края «" + tr.from + "»" : std::string()) + "\nс " + seconds_words(tr.start) + " по " +
+               seconds_words(tr.start + tr.length) + " с, длина " + seconds_words(tr.length) + " с" +
+               (tr.kind.empty() ? "\nсвой: длина — длина записи его функции" : std::string()) +
+               (tr.leave ? "\nпосле него сцена кончается: дальше игра" : "\nсцена идёт, пока входит") + "\nдлина и вид правятся в коде";
+        if (tr.site.file == 0 && tr.site.site >= 0 && tr.site.site < static_cast<i32>(script().code().sites().size())) {
+            const pixel::CallSite& site = script().code().sites()[static_cast<usize>(tr.site.site)];
+            const usize from = std::min<usize>(site.span.begin, script_text_.size()), to = std::min<usize>(site.span.end, script_text_.size());
+            call = "строка " + std::to_string(site.line) + ": " + call_words(std::string_view(script_text_).substr(from, to - from));
+            can_code = true;
+        }
+    }
+    m_has_transition_ = has;
+    m_transition_info_ = info;
+    m_transition_call_ = call;
+    m_transition_can_code_ = can_code;
+    for (const char* var : {"px_has_transition", "px_transition_info", "px_transition_call", "px_transition_can_code"}) dirty(var);
 }
 
 } // namespace forge::editor_app

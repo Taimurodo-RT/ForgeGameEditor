@@ -314,6 +314,25 @@ bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval,
         out.v = along_at(rec, b, k);
         return true;
     }
+    if (b.to == Block::To::Follow) {
+        // The camera's middle on the target as it stands now, less the share of the way left from where it was (part 6б).
+        if (local < 0) {
+            out = b.from;
+            return true;
+        }
+        if (b.ref >= rec.follows.size()) return why = "follow: нет цели", false;
+        const Follow& f = rec.follows[b.ref];
+        const i32 tb = bone_of(rec, f.target);
+        if (tb < 0) return why = "у записи нет кости части «" + f.target + "»", false;
+        World w{rec, eval, why};
+        Affine m;
+        if (!w.at(static_cast<u32>(tb), snap_time(t), m)) return false;
+        const vector::Point p = m.apply(rec.bones[static_cast<usize>(tb)].pivot);
+        const f64 now = b.prop == Prop::X ? p.x - f.pivot.x : p.y - f.pivot.y;
+        out = {};
+        out.v = now - (1 - block_share(rec, b, t)) * (b.value.v - b.from.v);
+        return true;
+    }
     if (b.length <= 0) {
         out = local < 0 ? b.from : b.end;
         return true;
@@ -398,55 +417,65 @@ bool resolve(Recording& rec, BindingEval* eval, std::string& why) {
     for (u32 i = 0; i < rec.saves.size(); ++i) events.push_back({rec.saves[i].time, rec.saves[i].order, true, i});
     std::stable_sort(events.begin(), events.end(),
                      [](const Event& a, const Event& b) { return a.t != b.t ? a.t < b.t : a.order < b.order; });
-    std::vector<i32> last(rec.tracks.size(), -1);
-    for (const Event& e : events) {
-        if (e.save) {
-            Saved& s = rec.saves[e.index];
-            for (usize p = 0; p < kPropCount; ++p) {
-                const i32 ti = rec.track(s.part, static_cast<Prop>(p));
-                const i32 li = ti >= 0 ? last[static_cast<usize>(ti)] : -1;
-                if (li < 0) s.values[p] = first_value(rec, s.part, static_cast<Prop>(p));
-                else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], s.time, eval, s.values[p], why)) return false;
+    auto values = [&]() {
+        std::vector<i32> last(rec.tracks.size(), -1);
+        for (const Event& e : events) {
+            if (e.save) {
+                Saved& s = rec.saves[e.index];
+                for (usize p = 0; p < kPropCount; ++p) {
+                    const i32 ti = rec.track(s.part, static_cast<Prop>(p));
+                    const i32 li = ti >= 0 ? last[static_cast<usize>(ti)] : -1;
+                    if (li < 0) s.values[p] = first_value(rec, s.part, static_cast<Prop>(p));
+                    else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], s.time, eval, s.values[p], why)) return false;
+                }
+                continue;
             }
-            continue;
+            Block& b = rec.blocks[e.index];
+            const i32 ti = rec.track(b.part, b.prop);
+            const i32 li = last[static_cast<usize>(ti)];
+            if (li < 0) b.from = first_value(rec, b.part, b.prop);
+            else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], b.start, eval, b.from, why)) return false;
+            switch (b.to) {
+            case Block::To::Value: b.end = b.value; break;
+            case Block::To::Back:
+                if (b.ref >= rec.blocks.size()) return why = "back: нет блока, к которому вернуться", false;
+                b.end = rec.blocks[b.ref].from;
+                break;
+            case Block::To::Saved:
+                if (b.ref >= rec.saves.size()) return why = "restore: нет сохранённого", false;
+                b.end = rec.saves[b.ref].values[static_cast<usize>(b.prop)];
+                break;
+            case Block::To::Rest: b.end = rest_value(b.prop); break;
+            case Block::To::Binding: b.end = {}; break;
+            case Block::To::Snap: b.end = b.value; break;
+            case Block::To::Follow: b.end = b.value; break;
+            case Block::To::Hold: b.end = b.from; break;
+            case Block::To::Along:
+                if (!along_ok(rec, b)) return why = "along: нет пути", false;
+                b.end = {};
+                b.end.v = along_at(rec, b, 1);
+                break;
+            }
+            if (b.spring) {
+                const char* w = nullptr;
+                if (!vector::spring_steps(b.spring_def, b.from.v, b.end.v, b.tolerance, b.steps, w,
+                                          std::max(60.0, b.length + 1)))
+                    return why = w ? w : "пружина", false;
+            }
+            if (!b.frames.empty()) b.end = b.frames.back();
+            last[static_cast<usize>(ti)] = static_cast<i32>(e.index);
         }
-        Block& b = rec.blocks[e.index];
-        const i32 ti = rec.track(b.part, b.prop);
-        const i32 li = last[static_cast<usize>(ti)];
-        if (li < 0) b.from = first_value(rec, b.part, b.prop);
-        else if (!block_value(rec, rec.blocks[static_cast<usize>(li)], b.start, eval, b.from, why)) return false;
-        switch (b.to) {
-        case Block::To::Value: b.end = b.value; break;
-        case Block::To::Back:
-            if (b.ref >= rec.blocks.size()) return why = "back: нет блока, к которому вернуться", false;
-            b.end = rec.blocks[b.ref].from;
-            break;
-        case Block::To::Saved:
-            if (b.ref >= rec.saves.size()) return why = "restore: нет сохранённого", false;
-            b.end = rec.saves[b.ref].values[static_cast<usize>(b.prop)];
-            break;
-        case Block::To::Rest: b.end = rest_value(b.prop); break;
-        case Block::To::Binding: b.end = {}; break;
-        case Block::To::Snap: b.end = b.value; break;
-        case Block::To::Along:
-            if (!along_ok(rec, b)) return why = "along: нет пути", false;
-            b.end = {};
-            b.end.v = along_at(rec, b, 1);
-            break;
-        }
-        if (b.spring) {
-            const char* w = nullptr;
-            if (!vector::spring_steps(b.spring_def, b.from.v, b.end.v, b.tolerance, b.steps, w,
-                                      std::max(60.0, b.length + 1)))
-                return why = w ? w : "пружина", false;
-        }
-        if (!b.frames.empty()) b.end = b.frames.back();
-        last[static_cast<usize>(ti)] = static_cast<i32>(e.index);
-    }
+        return true;
+    };
+    if (!values()) return false;
     // Links (part 4в): their carries, once every value is known.
     LinkPass pass{rec, eval, why, std::vector<u8>(rec.blocks.size(), 0)};
     for (u32 i = 0; i < rec.blocks.size(); ++i)
         if (rec.blocks[i].prop == Prop::Link && !pass.ensure(i)) return false;
+    // A camera's follow (part 6б) reads its target where it stands, carried by its links: once more now that every
+    // other block and the carries are known.
+    if (std::any_of(rec.blocks.begin(), rec.blocks.end(), [](const Block& b) { return b.to == Block::To::Follow; }) && !values())
+        return false;
     return true;
 }
 
@@ -462,7 +491,7 @@ i32 deciding_block(const Recording& rec, u32 track, f64 t) {
 
 bool block_going(const Block& b, f64 t, f64 frame) {
     const f64 local = snap_time(t - b.start); // as block_value reads it
-    if (b.to == Block::To::Binding) return local >= 0;
+    if (b.to == Block::To::Binding || b.to == Block::To::Follow) return local >= 0;
     if (b.length <= 0) return local >= 0 && local < frame;
     return local > 0 && local <= b.length;
 }
