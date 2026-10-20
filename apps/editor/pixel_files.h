@@ -24,7 +24,7 @@
 namespace forge::editor_app::pixel_files {
 
 // New contents of the character's files (none: the file is not there), written at once; Ctrl+Z writes them back. A
-// folder the files made (`made`) goes on Ctrl+Z when nothing else is in it.
+// folder the files made (`made`; outer ones first) goes on Ctrl+Z when nothing else is in it.
 class PixelFiles final : public editor::Command {
 public:
     struct File {
@@ -32,6 +32,8 @@ public:
         std::optional<std::vector<u8>> before, after;
     };
     PixelFiles(PixelEditor& editor, AssetLibrary& assets, std::vector<File> files, std::string label, std::filesystem::path made = {})
+        : PixelFiles(editor, assets, std::move(files), std::move(label), made.empty() ? std::vector<std::filesystem::path>{} : std::vector{made}) {}
+    PixelFiles(PixelEditor& editor, AssetLibrary& assets, std::vector<File> files, std::string label, std::vector<std::filesystem::path> made)
         : editor_(editor), assets_(assets), files_(std::move(files)), label_(std::move(label)), made_(std::move(made)) {}
     void apply(editor::Document&) override { put(true); }
     void revert(editor::Document&) override { put(false); }
@@ -45,8 +47,11 @@ private:
             if (!bytes) std::filesystem::remove(f.path, ec);
             else if (!write_file_atomic(f.path, *bytes)) FORGE_ERROR("Векторная: %s не записывается", path_to_utf8(f.path).c_str());
         }
-        std::error_code ec;
-        if (!forward && !made_.empty() && std::filesystem::is_empty(made_, ec)) std::filesystem::remove(made_, ec);
+        if (!forward)
+            for (auto it = made_.rbegin(); it != made_.rend(); ++it) {
+                std::error_code ec;
+                if (std::filesystem::is_empty(*it, ec)) std::filesystem::remove(*it, ec);
+            }
         editor_.reload();
         assets_.refresh(); // «Ресурсы» and the game's copies see the files as they are now
     }
@@ -54,7 +59,7 @@ private:
     AssetLibrary& assets_;
     std::vector<File> files_;
     std::string label_;
-    std::filesystem::path made_;
+    std::vector<std::filesystem::path> made_;
 };
 
 // 0.25 → "0,25".

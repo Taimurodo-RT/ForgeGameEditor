@@ -1610,7 +1610,7 @@ bool PixelEditor::bake(bool over_edits) {
         return false;
     };
     if (!has_ || !rig().loaded()) return refuse("Нечего запекать: рисунок не открыт");
-    if (scene_mode_) return refuse("Сцена не запекается в кадры: она отдаётся игре в части 6г");
+    if (scene_mode_) return refuse("Сцена не запекается в кадры: она отдаётся игре («Отдать игре»)");
     if (!script().loaded()) return refuse("Нечего запекать: скрипт позы не работает");
     if (assets_.looking()) return refuse("«Ресурсы» ещё смотрят файлы: запеките через миг");
     const std::vector<pixel::Rgba8> colors = doc_.game_palette && game_colors ? game_colors() : std::vector<pixel::Rgba8>{};
@@ -1694,7 +1694,7 @@ bool PixelEditor::give(u64 key) {
         rebuild();
         return false;
     };
-    if (scene_mode_) return refuse("Сцена отдаётся игре в части 6г, не объекту");
+    if (scene_mode_) return refuse("Сцена отдаётся игре («Отдать игре»), не объекту");
     objects::Library* lib = module_.library();
     const objects::Template* t = lib ? lib->find(key) : nullptr;
     if (!t) return refuse("Такого шаблона в игре нет");
@@ -1763,7 +1763,7 @@ bool PixelEditor::give_screen() {
         rebuild();
         return false;
     };
-    if (scene_mode_) return refuse("Сцена отдаётся игре в части 6г, не экрану");
+    if (scene_mode_) return refuse("Сцена отдаётся игре («Отдать игре»), не экрану");
     objects::Library* lib = module_.library();
     if (!lib || lib->pictures_folder().empty()) return refuse("Отдать экрану можно в открытой игре");
     if (!has_ || !rig().loaded()) return refuse("Нечего отдавать: рисунок не открыт");

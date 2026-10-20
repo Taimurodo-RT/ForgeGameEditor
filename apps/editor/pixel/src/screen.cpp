@@ -111,23 +111,6 @@ void not_drawn_in(const Pose& pose, std::set<std::string>& out) {
 // A drawing's name as the file has it: "draw" for the main one (a frame's "", a value's "draw" or "").
 std::string file_drawing(const std::string& name) { return name.empty() ? vector::kMotionMainDrawing : name; }
 
-// What a frame shows of the drawings, as the file's motion_shown has it.
-vector::MotionShown shown_of(const Pose& pose) {
-    vector::MotionShown out;
-    out.drawing = file_drawing(pose.drawing);
-    if (pose.swap) {
-        out.swap = true;
-        out.from = file_drawing(pose.swap_from);
-        out.k = pose.swap_k;
-    }
-    return out;
-}
-
-bool same_shown(const vector::MotionShown& a, const vector::MotionShown& b) {
-    return a.drawing == b.drawing && a.swap == b.swap && a.from == b.from &&
-           std::abs(a.k - b.k) <= 1e-9 * std::max({1.0, std::abs(a.k), std::abs(b.k)});
-}
-
 // 0.35 → "0,35".
 std::string seconds_words(f64 v) {
     char buf[32];
@@ -139,32 +122,6 @@ std::string seconds_words(f64 v) {
 
 vector::MotionMatrix matrix_of(const Affine& a) { return {a.a, a.b, a.c, a.d, a.e, a.f}; }
 
-// Whether a drawing's name makes a file name everywhere: not empty, none of / \ : * ? " < > | or a control character,
-// not ending in a dot or a space.
-bool file_name_ok(std::string_view name) {
-    if (name.empty() || name.back() == '.' || name.back() == ' ') return false;
-    for (const char ch : name) {
-        const auto c = static_cast<unsigned char>(ch);
-        if (c < 0x20 || c == 0x7f || std::string_view("/\\:*?\"<>|").find(ch) != std::string_view::npos) return false;
-    }
-    return true;
-}
-
-// A name with its Latin and Cyrillic capitals small: two names Windows keeps as one file.
-std::string folded(std::string_view name) {
-    std::string out;
-    for (usize i = 0; i < name.size(); ++i) {
-        const auto c = static_cast<unsigned char>(name[i]);
-        const auto n = i + 1 < name.size() ? static_cast<unsigned char>(name[i + 1]) : 0;
-        if (c >= 'A' && c <= 'Z') out += static_cast<char>(c - 'A' + 'a');
-        else if (c == 0xd0 && n >= 0x90 && n <= 0x9f) out += "\xd0", out += static_cast<char>(n + 0x20), ++i; // А … П
-        else if (c == 0xd0 && n >= 0xa0 && n <= 0xaf) out += "\xd1", out += static_cast<char>(n - 0x20), ++i; // Р … Я
-        else if (c == 0xd0 && n == 0x81) out += "\xd1\x91", ++i;                                           // Ё
-        else out += static_cast<char>(c);
-    }
-    return out;
-}
-
 std::string xml_escaped(std::string_view s) {
     std::string out;
     for (const char c : s) {
@@ -175,19 +132,6 @@ std::string xml_escaped(std::string_view s) {
         else out += c;
     }
     return out;
-}
-
-// A drawing's text with the main picture's root size (part 5д): its width, height, viewBox and preserveAspectRatio. The
-// tab draws every drawing in the main picture's units, so the drawing stands on the screen where it stands in the tab,
-// and a layer that shows it keeps its size.
-std::string with_root_of(const std::string& text, std::string_view main) {
-    const vector::SvgOutline mo = vector::scan_svg(main), o = vector::scan_svg(text);
-    if (mo.elements.empty() || o.elements.empty()) return text;
-    std::string tag = "<svg xmlns=\"http://www.w3.org/2000/svg\"";
-    for (const char* name : {"width", "height", "viewBox", "preserveAspectRatio"})
-        if (const std::string* v = mo.elements.front().attr(name)) tag += std::string(" ") + name + "=\"" + xml_escaped(*v) + "\"";
-    tag += '>';
-    return text.substr(0, o.elements.front().begin) + tag + text.substr(o.elements.front().open_end);
 }
 
 // --- parameters from the game (part 5ж) ---------------------------------------------------------
@@ -341,6 +285,61 @@ bool clip_by(PoseScript& script, const Rig& rig, const PixelDoc& doc, const Moti
 
 } // namespace
 
+vector::MotionShown screen_shown(const Pose& pose) {
+    vector::MotionShown out;
+    out.drawing = file_drawing(pose.drawing);
+    if (pose.swap) {
+        out.swap = true;
+        out.from = file_drawing(pose.swap_from);
+        out.k = pose.swap_k;
+    }
+    return out;
+}
+
+bool screen_same_shown(const vector::MotionShown& a, const vector::MotionShown& b) {
+    return a.drawing == b.drawing && a.swap == b.swap && a.from == b.from &&
+           std::abs(a.k - b.k) <= 1e-9 * std::max({1.0, std::abs(a.k), std::abs(b.k)});
+}
+
+// Whether a name makes a file name everywhere: not empty, none of / \ : * ? " < > | or a control character,
+// not ending in a dot or a space.
+bool file_name_ok(std::string_view name) {
+    if (name.empty() || name.back() == '.' || name.back() == ' ') return false;
+    for (const char ch : name) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c < 0x20 || c == 0x7f || std::string_view("/\\:*?\"<>|").find(ch) != std::string_view::npos) return false;
+    }
+    return true;
+}
+
+// A name with its Latin and Cyrillic capitals small: two names Windows keeps as one file.
+std::string folded(std::string_view name) {
+    std::string out;
+    for (usize i = 0; i < name.size(); ++i) {
+        const auto c = static_cast<unsigned char>(name[i]);
+        const auto n = i + 1 < name.size() ? static_cast<unsigned char>(name[i + 1]) : 0;
+        if (c >= 'A' && c <= 'Z') out += static_cast<char>(c - 'A' + 'a');
+        else if (c == 0xd0 && n >= 0x90 && n <= 0x9f) out += "\xd0", out += static_cast<char>(n + 0x20), ++i; // А … П
+        else if (c == 0xd0 && n >= 0xa0 && n <= 0xaf) out += "\xd1", out += static_cast<char>(n - 0x20), ++i; // Р … Я
+        else if (c == 0xd0 && n == 0x81) out += "\xd1\x91", ++i;                                           // Ё
+        else out += static_cast<char>(c);
+    }
+    return out;
+}
+
+// A drawing's text with the main picture's root size (part 5д): its width, height, viewBox and preserveAspectRatio. The
+// tab draws every drawing in the main picture's units, so the drawing stands on the screen where it stands in the tab,
+// and a layer that shows it keeps its size.
+std::string with_root_of(const std::string& text, std::string_view main) {
+    const vector::SvgOutline mo = vector::scan_svg(main), o = vector::scan_svg(text);
+    if (mo.elements.empty() || o.elements.empty()) return text;
+    std::string tag = "<svg xmlns=\"http://www.w3.org/2000/svg\"";
+    for (const char* name : {"width", "height", "viewBox", "preserveAspectRatio"})
+        if (const std::string* v = mo.elements.front().attr(name)) tag += std::string(" ") + name + "=\"" + xml_escaped(*v) + "\"";
+    tag += '>';
+    return text.substr(0, o.elements.front().begin) + tag + text.substr(o.elements.front().open_end);
+}
+
 vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector::MotionProp p) {
     MotionValue out = vector::motion_rest(p);
     if (p == MotionProp::Morph) {
@@ -389,13 +388,13 @@ vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector
         out.target = pp.carry_by;
         out.m = matrix_of(pp.carry);
         break;
-    case MotionProp::Drawing: break; // the character's, not a part's: shown_of
+    case MotionProp::Drawing: break; // the character's, not a part's: screen_shown
     }
     return vector::motion_plain(p, out);
 }
 
 bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::string_view clip, vector::MotionFile& file,
-                 vector::MotionClip& out, std::string& why) {
+                 vector::MotionClip& out, std::string& why, std::span<const std::string> more) {
     const Recording* rec = script.recording(rig, clip, doc.params, doc.seed);
     if (!rec) return why = "клип «" + std::string(clip) + "», " + script.error(), false;
     out = {};
@@ -418,6 +417,8 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
     for (const std::string& name : rig.drawings())
         for (const Part& p : rig.drawing(name)->parts())
             if (std::find(drawn_parts.begin(), drawn_parts.end(), p.id) == drawn_parts.end()) drawn_parts.push_back(p.id);
+    for (const std::string& id : more)
+        if (std::find(drawn_parts.begin(), drawn_parts.end(), id) == drawn_parts.end()) drawn_parts.push_back(id);
     auto drawn_part = [&](const std::string& id) { return std::find(drawn_parts.begin(), drawn_parts.end(), id) != drawn_parts.end(); };
     // The copies the screen draws (part 5г): of parts of a drawing, born within the clip.
     std::vector<char> drawn_copy(rec->copies.size(), 0);
@@ -616,7 +617,7 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             for (const i64 m : ms) {
                 const Pose* pose = frames.at(m, why);
                 if (!pose) return false;
-                vs.push_back(shown_of(*pose));
+                vs.push_back(screen_shown(*pose));
             }
             MotionPiece pc;
             pc.at = seconds(s);
@@ -649,7 +650,7 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
                 vector::MotionClip one;
                 one.length = out.length;
                 one.tracks.push_back({std::string(kDrawingPart), MotionProp::Drawing, {pc}});
-                while (wrong < ms.size() && same_shown(vector::motion_shown(probe, one, seconds(ms[wrong])), vs[wrong])) ++wrong;
+                while (wrong < ms.size() && screen_same_shown(vector::motion_shown(probe, one, seconds(ms[wrong])), vs[wrong])) ++wrong;
                 if (wrong == ms.size()) {
                     if (pc.curve >= 0) pc.curve = static_cast<i32>(curve_index(file, probe.curves.front()));
                     tr.pieces.push_back(std::move(pc));
@@ -666,11 +667,11 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
         if (length > 0) {
             const Pose* pose = frames.at(length, why);
             if (!pose) return false;
-            const vector::MotionShown last = shown_of(*pose);
+            const vector::MotionShown last = screen_shown(*pose);
             vector::MotionClip one;
             one.length = out.length;
             one.tracks.push_back(tr);
-            if (!same_shown(vector::motion_shown(file, one, out.length), last)) {
+            if (!screen_same_shown(vector::motion_shown(file, one, out.length), last)) {
                 if (last.swap)
                     return why = "клип «" + out.name + "»: смена рисунка в " + seconds_words(out.length) + " с не записывается переходом", false;
                 MotionPiece h;
