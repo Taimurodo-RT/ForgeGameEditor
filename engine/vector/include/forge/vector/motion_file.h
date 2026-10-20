@@ -254,6 +254,9 @@ struct MotionPartPose {
 // record there stays where it is (it is not in that drawing: read_motion_file refuses a part with no record at all).
 std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t,
                                         std::string_view drawing = kMotionMainDrawing);
+// A part's `moves` and matrix from its values and `has`, as it stands in drawing `drawing` (as motion_pose makes them);
+// a blend of clips (part 5е) poses its mixed values so.
+void motion_part_pose(const MotionFile& file, MotionPartPose& pp, std::string_view drawing = kMotionMainDrawing);
 // The first part of the picture a clip's calls name that the picture has not (part 5г): a mask part, a carrier, a part
 // of the order and its neighbour, a copy's source; what names it beside ("маска «eye»", "крепление «eye»", "порядок
 // «eye»", "копия «искра[1]»"). A part is the first element with the id that draws (g, use or a shape). False when the

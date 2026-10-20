@@ -357,8 +357,8 @@ int api_ui_svg_color(lua_State* L) { return svg_call(L, "color"); }
 int api_ui_svg_fade(lua_State* L) { return svg_call(L, "fade"); }
 int api_ui_svg_morph(lua_State* L) { return svg_call(L, "morph"); }
 int api_ui_svg_reset(lua_State* L) { return svg_call(L, "reset"); }
-// forge.ui.svg_play(screen, layer, clip[, loop or {loop = …, speed = …}]): x the loop (1, 0, or below 0 for the
-// clip's own), y the speed.
+// forge.ui.svg_play(screen, layer, clip[, loop or {loop = …, speed = …, blend = …}[, blend]]): the loop (1, 0, or
+// below 0 for the clip's own), the speed, the seconds of a blend into it (part 5е; the scheme's node gives it fifth).
 int api_ui_svg_play(lua_State* L) {
     auto text_at = [&](int i) {
         size_t len = 0;
@@ -366,7 +366,12 @@ int api_ui_svg_play(lua_State* L) {
         return std::string_view(s, len);
     };
     const std::string_view screen = text_at(1), layer = text_at(2), clip = text_at(3);
-    f64 loop = -1, speed = 1;
+    f64 loop = -1, speed = 1, blend = 0;
+    auto blend_of = [&](int i, const char* where) {
+        if (lua_isnil(L, i)) return;
+        blend = lua_type(L, i) == LUA_TNUMBER ? lua_tonumber(L, i) : -1;
+        if (!(blend >= 0) || !std::isfinite(blend)) luaL_error(L, "ui.svg_play: %s: нужно число секунд, 0 или больше", where);
+    };
     auto loop_of = [&](int i, const char* where) {
         if (lua_isnil(L, i)) return;
         if (!lua_isboolean(L, i)) luaL_error(L, "ui.svg_play: %s: нужно true или false", where);
@@ -382,17 +387,21 @@ int api_ui_svg_play(lua_State* L) {
             if (!(speed > 0) || !std::isfinite(speed)) luaL_error(L, "ui.svg_play: speed: нужно число больше 0");
         }
         lua_pop(L, 1);
+        lua_getfield(L, 4, "blend");
+        blend_of(-1, "blend");
+        lua_pop(L, 1);
         lua_pushnil(L);
         while (lua_next(L, 4)) {
             lua_pop(L, 1);
             const char* key = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
-            if (!key || (std::string_view(key) != "loop" && std::string_view(key) != "speed"))
-                luaL_error(L, "ui.svg_play: в таблице только loop и speed, а не «%s»", key ? key : luaL_typename(L, -1));
+            if (!key || (std::string_view(key) != "loop" && std::string_view(key) != "speed" && std::string_view(key) != "blend"))
+                luaL_error(L, "ui.svg_play: в таблице только loop, speed и blend, а не «%s»", key ? key : luaL_typename(L, -1));
         }
     } else if (!lua_isnone(L, 4)) loop_of(4, "4-е значение (повторять)");
+    if (!lua_isnone(L, 5)) blend_of(5, "5-е значение (плавно за, с)");
     GameBridge* b = bridge_of(L);
     std::string why;
-    if (b && !b->svg("play", screen, layer, clip, loop, speed, {}, &why)) luaL_error(L, "ui.svg_play: %s", why.c_str());
+    if (b && !b->svg_play(screen, layer, clip, {loop, speed, blend}, &why)) luaL_error(L, "ui.svg_play: %s", why.c_str());
     return 0;
 }
 int api_ui_svg_stop(lua_State* L) {
@@ -807,9 +816,11 @@ void register_core_api(ScriptApi& api) {
     api.add("ui.svg_play", &api_ui_svg_play).action().category("Экраны").icon("play_circle")
         .title("Проиграть анимацию картинки", "Play picture animation")
         .help("Клип персонажа из «Векторной» на SVG-картинке слоя: «Отдать экрану» кладёт клипы рядом с картинкой. "
-              "Тот же клип, пока идёт, не начинается заново.")
+              "Тот же клип, пока идёт, не начинается заново. «Плавно за» — за сколько секунд клип перетекает из того, что "
+              "слой показывает: старый клип доигрывает и гаснет.")
         .param("screen", V::String, "Экран", "Screen").param("layer", V::String, "Слой", "Layer")
-        .param("clip", V::String, "Клип", "Clip").param("loop", V::Bool, "Повторять", "Loop", "true");
+        .param("clip", V::String, "Клип", "Clip").param("loop", V::Bool, "Повторять", "Loop", "true")
+        .param("blend", V::Number, "Плавно за, с", "Blend, s", "0");
     api.add("ui.svg_stop", &api_ui_svg_stop).action().category("Экраны").icon("stop_circle")
         .title("Остановить анимацию картинки", "Stop picture animation")
         .help("Картинка стоит на показанном кадре.")

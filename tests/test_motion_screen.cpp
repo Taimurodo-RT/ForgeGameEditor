@@ -4,8 +4,12 @@
 // and in between for its holds and transitions, for every kind of block, with the copies and the order. A part's matrix
 // is the rig's after the pose; the screen's picture (lunasvg with the attributes and the stage the game gives it) is the
 // tab's (ThorVG) inside the shapes and in what it covers: dashes, drawn shares, tints, flashes, masks, links, copies and
-// the order too.
+// the order too. Part 5е («Смена клипов»): a blend of two poses, prop by prop, and the game blending a clip in from what
+// the layer shows, on the test's clock.
 
+#include "forge/core/path.h"
+#include "forge/game/screens.h"
+#include "forge/game/vars.h"
 #include "forge/pixel/bake.h"
 #include "forge/pixel/draw.h"
 #include "forge/pixel/motion.h"
@@ -14,15 +18,23 @@
 #include "forge/pixel/script.h"
 #include "forge/ui/live_svg.h"
 #include "forge/vector/motion_file.h"
+#include "forge/vector/timing.h"
+#include "forge/vector/trig.h"
 
+#include <RmlUi/Core.h>
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
+#include <random>
 #include <string>
 #include <vector>
 
@@ -2545,4 +2557,660 @@ TEST_CASE("Screen clips, part 5д: each drawing takes the parts of a pose it has
     CHECK_FALSE(new_stage.empty());
     CHECK(new_stage.find("<mask") == std::string::npos);
     CHECK(ui::svg_problems().empty());
+}
+
+// --- part 5е: a blend of clips on the screen -----------------------------------------------------------------------
+
+namespace {
+
+// Two clips of the hedgehog that move the same parts and others (a prop only one side has, at rest on the other, not
+// always 0), with copies on both sides and on one side only, the order, a mask, marks; a swap of its drawing and a clip
+// of no length.
+const char* kBlendClips = R"(    a = function(p, rng)
+      all(part("nose").x(4, 0.2), part("face").rot(90, 0.2), part("face").scale(1.5, 0.2), part("head").fill("#ff0000", 0.2),
+          part("nose").visible(false, 0.2), copies("nose", 2, function(i, c) c.x(6 * i, 0.1) end))
+      part("face"):above("nose")
+      part("head"):mask("nose")
+      emit("шаг")
+      part("nose").x(2, 0.2)
+    end,
+    b = function(p, rng)
+      emit("бум")
+      all(part("nose").y(6, 0.3), part("nose").scale(2, 0.3), part("face").x(3, 0.3), part("head").fill("#0000ff", 0.3),
+          part("mouth"):morph("mouth_o", 0.3), copies("nose", 1, function(i, c) c.y(5, 0.1) end),
+          copies("head", 1, function(i, c) c.opacity(0.5, 0.1) end))
+    end,
+    angry = function(p, rng)
+      swap("angry", 0.2)
+      wait(0.1)
+    end,
+    zero = function(p, rng) part("nose"):to({ x = 5 }, 0) end,)";
+
+// Whether two poses are the same in every field; the first that differs in `why`.
+bool same_pose(const ui::SvgPose& a, const ui::SvgPose& b, std::string& why) {
+    why.clear();
+    auto parts = [&](const std::vector<vector::MotionPartPose>& x, const std::vector<vector::MotionPartPose>& y, const char* what) {
+        if (x.size() != y.size()) {
+            why = std::string(what) + ": " + std::to_string(x.size()) + " / " + std::to_string(y.size());
+            return false;
+        }
+        for (usize i = 0; i < x.size(); ++i) {
+            bool same = x[i].id == y[i].id && x[i].moves == y[i].moves && x[i].local == y[i].local;
+            for (usize j = 0; same && j < vector::kMotionPropCount; ++j) same = x[i].has[j] == y[i].has[j] && x[i].values[j] == y[i].values[j];
+            if (!same) {
+                why = std::string(what) + " «" + x[i].id + "» / «" + y[i].id + "»";
+                return false;
+            }
+        }
+        return true;
+    };
+    if (a.picture != b.picture) why = "picture " + a.picture + " / " + b.picture;
+    else if (!parts(a.parts, b.parts, "parts") || !parts(a.from_parts, b.from_parts, "from_parts")) {
+    } else if (!(a.copies == b.copies)) why = "copies";
+    else if (!(a.order == b.order)) why = "order";
+    else if (a.drawing != b.drawing || a.swap != b.swap || a.swap_from != b.swap_from || a.swap_k != b.swap_k)
+        why = "drawing " + a.drawing + " " + std::to_string(a.swap) + " " + a.swap_from + " " + std::to_string(a.swap_k) + " / " + b.drawing +
+              " " + std::to_string(b.swap) + " " + b.swap_from + " " + std::to_string(b.swap_k);
+    else if (a.drawings.size() != b.drawings.size()) why = "drawings";
+    else
+        for (usize i = 0; i < a.drawings.size() && why.empty(); ++i)
+            if (a.drawings[i].name != b.drawings[i].name || a.drawings[i].picture != b.drawings[i].picture || !a.drawings[i].text ||
+                !b.drawings[i].text || *a.drawings[i].text != *b.drawings[i].text)
+                why = "drawing «" + a.drawings[i].name + "»";
+    return why.empty();
+}
+
+const vector::MotionPartPose* part_in(const ui::SvgPose& p, std::string_view id) {
+    for (const vector::MotionPartPose& pp : p.parts)
+        if (pp.id == id) return &pp;
+    return nullptr;
+}
+
+bool has_prop(const ui::SvgPose& p, std::string_view id, MotionProp prop) {
+    const vector::MotionPartPose* pp = part_in(p, id);
+    return pp && pp->has[static_cast<usize>(prop)];
+}
+
+// A part's value in a pose, at rest when the pose has none.
+MotionValue value_in(const ui::SvgPose& p, std::string_view id, MotionProp prop) {
+    const vector::MotionPartPose* pp = part_in(p, id);
+    return pp && pp->has[static_cast<usize>(prop)] ? pp->values[static_cast<usize>(prop)] : vector::motion_rest(prop);
+}
+
+std::vector<std::string> copy_ids(const ui::SvgPose& p) {
+    std::vector<std::string> out;
+    for (const vector::MotionCopy& c : p.copies) out.push_back(c.id);
+    return out;
+}
+
+// A renderer that draws nothing: the game's screens here only pose the layer.
+// Files from disk as they are named; the user agent sheet of web pages ("/web/html.rcss", which the game finds in its
+// UI folder) from the UI folder of the sources.
+struct DiskFiles final : Rml::FileInterface {
+    Rml::FileHandle Open(const Rml::String& path) override {
+        if (std::FILE* f = std::fopen(path.c_str(), "rb")) return reinterpret_cast<Rml::FileHandle>(f);
+        const std::string web = path.rfind("/web/", 0) == 0 ? path.substr(1) : path;
+        if (web.rfind("web/", 0) != 0) return 0;
+        return reinterpret_cast<Rml::FileHandle>(std::fopen((std::string(FORGE_SOURCE_DIR "/ui/") + web).c_str(), "rb"));
+    }
+    void Close(Rml::FileHandle file) override { std::fclose(reinterpret_cast<std::FILE*>(file)); }
+    size_t Read(void* buffer, size_t size, Rml::FileHandle file) override { return std::fread(buffer, 1, size, reinterpret_cast<std::FILE*>(file)); }
+    bool Seek(Rml::FileHandle file, long offset, int origin) override { return std::fseek(reinterpret_cast<std::FILE*>(file), offset, origin) == 0; }
+    size_t Tell(Rml::FileHandle file) override { return static_cast<size_t>(std::ftell(reinterpret_cast<std::FILE*>(file))); }
+};
+
+struct NoRender final : Rml::RenderInterface {
+    Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex>, Rml::Span<const int>) override { return 1; }
+    void RenderGeometry(Rml::CompiledGeometryHandle, Rml::Vector2f, Rml::TextureHandle) override {}
+    void ReleaseGeometry(Rml::CompiledGeometryHandle) override {}
+    Rml::TextureHandle LoadTexture(Rml::Vector2i& size, const Rml::String&) override {
+        size = {64, 64};
+        return 1;
+    }
+    Rml::TextureHandle GenerateTexture(Rml::Span<const Rml::byte>, Rml::Vector2i) override { return 1; }
+    void ReleaseTexture(Rml::TextureHandle) override {}
+    void EnableScissorRegion(bool) override {}
+    void SetScissorRegion(Rml::Rectanglei) override {}
+};
+
+// The element's text without the first element with this id.
+std::string without_id(std::string text, std::string_view id) {
+    const usize at = text.find("id=\"" + std::string(id) + "\"");
+    REQUIRE(at != std::string::npos);
+    const usize a = text.rfind('<', at), b = text.find("/>", at);
+    REQUIRE(a != std::string::npos);
+    REQUIRE(b != std::string::npos);
+    text.erase(a, b + 2 - a);
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("Screen clips, part 5е: a blend of two poses, prop by prop, the held ones and the order, the copies") {
+    Hedgehog h(hedgehog_code(kBlendClips));
+    const MotionFile& f = h.gift.motion;
+    const MotionClip* a = f.clip("a");
+    const MotionClip* b = f.clip("b");
+    REQUIRE(a);
+    REQUIRE(b);
+    CHECK(a->length == doctest::Approx(0.4));
+    CHECK(b->length == doctest::Approx(0.3));
+    const ui::SvgPose from = screen_pose(h.gift, *a, 0.4), to = screen_pose(h.gift, *b, 0.15);
+    std::string why;
+    // The ends are the poses themselves, and so is what is past them.
+    for (const f64 k : {0.0, -0.5}) {
+        const bool same = same_pose(ui::blend_pose(f, from, to, k), from, why);
+        INFO("k ", k, ": ", why);
+        CHECK(same);
+    }
+    for (const f64 k : {1.0, 1.5}) {
+        const bool same = same_pose(ui::blend_pose(f, from, to, k), to, why);
+        INFO("k ", k, ": ", why);
+        CHECK(same);
+    }
+    const f64 k = 0.3;
+    const ui::SvgPose mid = ui::blend_pose(f, from, to, k);
+    CHECK(mid.picture == "Ёжик.svg");
+    // Every prop of every part: the file's mix of the two sides, a side without it at rest; there where a side has it.
+    std::vector<std::string> ids;
+    for (const ui::SvgPose* p : {&from, &to})
+        for (const vector::MotionPartPose& pp : p->parts)
+            if (std::find(ids.begin(), ids.end(), pp.id) == ids.end()) ids.push_back(pp.id);
+    for (const std::string& id : ids) {
+        if (id == "nose[2]" || id == "head[1]") continue; // a copy on one side only: below
+        for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+            const auto prop = static_cast<MotionProp>(i);
+            INFO(id, " ", vector::motion_prop_word(prop));
+            CHECK(has_prop(mid, id, prop) == (has_prop(from, id, prop) || has_prop(to, id, prop)));
+            CHECK(value_in(mid, id, prop) == vector::motion_mix(prop, value_in(from, id, prop), value_in(to, id, prop), k));
+        }
+    }
+    // Numbers straight: the nose from x 2 to the rest, from the rest to «b»'s y.
+    CHECK(value_in(mid, "nose", MotionProp::X).v == doctest::Approx(1.4));
+    REQUIRE(value_in(to, "nose", MotionProp::Y).v > 1);
+    CHECK(value_in(mid, "nose", MotionProp::Y).v == doctest::Approx(0.3 * value_in(to, "nose", MotionProp::Y).v));
+    // A colour between the two; a morph from none in at «b»'s target.
+    const MotionValue fill = value_in(mid, "head", MotionProp::Fill);
+    CHECK(fill.color != value_in(from, "head", MotionProp::Fill).color);
+    CHECK(fill.color != value_in(to, "head", MotionProp::Fill).color);
+    CHECK(value_in(mid, "mouth", MotionProp::Morph).target == "mouth_o");
+    CHECK(value_in(mid, "mouth", MotionProp::Morph).v == doctest::Approx(0.3 * value_in(to, "mouth", MotionProp::Morph).v));
+    // The matrix made again from the mixed turn (63°) and size (1.35), not the matrices mixed (which would give
+    // 0.3 · 1 + 0.7 · 0 for a).
+    const vector::MotionPartPose* face = part_in(mid, "face");
+    REQUIRE(face);
+    CHECK(face->moves);
+    CHECK(value_in(mid, "face", MotionProp::Rot).v == doctest::Approx(63));
+    CHECK(value_in(mid, "face", MotionProp::Scale).v == doctest::Approx(1.35));
+    CHECK(face->local.a == doctest::Approx(1.35 * std::cos(63 * vector::trig::kPi / 180)));
+    CHECK(face->local.b == doctest::Approx(1.35 * std::sin(63 * vector::trig::kPi / 180)));
+    // The held: the nose hidden and the order as «a» has them to the blend's end, then as «b».
+    REQUIRE(!from.order.empty());
+    CHECK(to.order.empty());
+    CHECK(value_in(from, "nose", MotionProp::Visible).v == 0);
+    for (const f64 late : {0.3, 0.999}) {
+        const ui::SvgPose p = ui::blend_pose(f, from, to, late);
+        CHECK(value_in(p, "nose", MotionProp::Visible).v == 0);
+        CHECK(p.order == from.order);
+    }
+    // Copies: those of «b» and then the ones only «a» has; one on both sides mixed, one only in «a» going (its opacity
+    // times 1 − k), one only in «b» coming (times k), each with its own values.
+    CHECK(copy_ids(from) == std::vector<std::string>{"nose[1]", "nose[2]"});
+    CHECK(copy_ids(to) == std::vector<std::string>{"nose[1]", "head[1]"});
+    CHECK(copy_ids(mid) == std::vector<std::string>{"nose[1]", "head[1]", "nose[2]"});
+    CHECK(value_in(mid, "nose[1]", MotionProp::X).v == doctest::Approx(0.7 * 6));
+    CHECK_FALSE(has_prop(mid, "nose[1]", MotionProp::Opacity));
+    CHECK(value_in(mid, "nose[2]", MotionProp::X).v == doctest::Approx(12));
+    CHECK(has_prop(mid, "nose[2]", MotionProp::Opacity));
+    CHECK(value_in(mid, "nose[2]", MotionProp::Opacity).v == doctest::Approx(0.7));
+    CHECK(value_in(mid, "head[1]", MotionProp::Opacity).v == doctest::Approx(0.3 * 0.5));
+    // One drawing on both sides: no swap.
+    CHECK(mid.drawing == "draw");
+    CHECK_FALSE(mid.swap);
+
+    // A copy without values of its own (drawn as its source is): at rest, its opacity alone, coming and going.
+    ui::SvgPose bare_a, bare_b;
+    bare_a.picture = bare_b.picture = "Ёжик.svg";
+    bare_a.copies.push_back({"nose[3]", "nose", 3, 0});
+    bare_b.copies.push_back({"nose[4]", "nose", 4, 0});
+    const ui::SvgPose bare = ui::blend_pose(f, bare_a, bare_b, 0.25);
+    REQUIRE(bare.parts.size() == 2);
+    CHECK(bare.parts[0].id == "nose[4]");
+    CHECK(bare.parts[1].id == "nose[3]");
+    for (const vector::MotionPartPose& pp : bare.parts)
+        for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+            const auto prop = static_cast<MotionProp>(i);
+            INFO(pp.id, " ", vector::motion_prop_word(prop));
+            CHECK(pp.has[i] == (prop == MotionProp::Opacity));
+            if (prop != MotionProp::Opacity) CHECK(pp.values[i] == vector::motion_rest(prop));
+        }
+    CHECK(bare.parts[0].values[static_cast<usize>(MotionProp::Opacity)].v == doctest::Approx(0.25));
+    CHECK(bare.parts[1].values[static_cast<usize>(MotionProp::Opacity)].v == doctest::Approx(0.75));
+
+    // Poses made by hand: only what a side has counts, the values of what it has not are not read (here not at rest:
+    // a size of 0, a clear copy, an x of 9).
+    ui::SvgPose hand_a, hand_b;
+    hand_a.picture = hand_b.picture = "Ёжик.svg";
+    vector::MotionPartPose nose_a, nose_b, copy_a;
+    nose_a.id = "nose";
+    nose_a.has[static_cast<usize>(MotionProp::X)] = true;
+    nose_a.values[static_cast<usize>(MotionProp::X)].v = 2;
+    nose_b.id = "nose";
+    nose_b.has[static_cast<usize>(MotionProp::Scale)] = true;
+    nose_b.values[static_cast<usize>(MotionProp::Scale)].v = 2;
+    nose_b.values[static_cast<usize>(MotionProp::X)].v = 9;
+    copy_a.id = "nose[5]";
+    copy_a.has[static_cast<usize>(MotionProp::X)] = true;
+    copy_a.values[static_cast<usize>(MotionProp::X)].v = 1;
+    REQUIRE(nose_a.values[static_cast<usize>(MotionProp::Scale)].v == 0);
+    REQUIRE(copy_a.values[static_cast<usize>(MotionProp::Opacity)].v == 0);
+    hand_a.parts = {nose_a, copy_a};
+    hand_a.copies.push_back({"nose[5]", "nose", 5, 0});
+    hand_b.parts = {nose_b};
+    const ui::SvgPose hand = ui::blend_pose(f, hand_a, hand_b, 0.25);
+    CHECK(value_in(hand, "nose", MotionProp::X).v == doctest::Approx(1.5));
+    CHECK(value_in(hand, "nose", MotionProp::Scale).v == doctest::Approx(1.25));
+    CHECK(value_in(hand, "nose[5]", MotionProp::X).v == doctest::Approx(1));
+    CHECK(value_in(hand, "nose[5]", MotionProp::Opacity).v == doctest::Approx(0.75));
+
+    // A part posed again from its values and `has`: what it had before (moving, its matrix) does not stay, also for a
+    // part the drawing has not.
+    vector::MotionPartPose again = *face;
+    for (bool& h : again.has) h = false;
+    vector::motion_part_pose(f, again);
+    CHECK_FALSE(again.moves);
+    CHECK(again.local == vector::MotionMatrix{});
+    vector::MotionPartPose stray = *face;
+    stray.id = "нет такой";
+    vector::motion_part_pose(f, stray);
+    CHECK_FALSE(stray.moves);
+    CHECK(stray.local == vector::MotionMatrix{});
+}
+
+TEST_CASE("Screen clips, part 5е: a blend's drawings, each weighed by its share on each side, the clip's on top") {
+    Hedgehog h(hedgehog_code(kSwapClips));
+    const MotionFile& f = h.gift.motion;
+    auto pose = [&](const char* clip, f64 t) { return screen_pose(h.gift, *f.clip(clip), t); };
+    // Every part as it stands in the drawing above, and in the one under it.
+    auto posed_in = [&](const ui::SvgPose& p) {
+        for (const vector::MotionPartPose& pp : p.parts) {
+            vector::MotionPartPose again = pp;
+            vector::motion_part_pose(f, again, p.drawing);
+            INFO(pp.id, " in ", p.drawing);
+            CHECK(again.local == pp.local);
+            CHECK(again.moves == pp.moves);
+        }
+        if (!p.swap) return;
+        REQUIRE(p.from_parts.size() == p.parts.size());
+        for (usize i = 0; i < p.parts.size(); ++i) {
+            vector::MotionPartPose again = p.parts[i];
+            vector::motion_part_pose(f, again, p.swap_from);
+            INFO(p.parts[i].id, " in ", p.swap_from);
+            CHECK(p.from_parts[i].id == again.id);
+            CHECK(p.from_parts[i].local == again.local);
+            for (usize j = 0; j < vector::kMotionPropCount; ++j) CHECK(p.from_parts[i].values[j] == p.parts[i].values[j]);
+        }
+    };
+    // The main drawing to angry: angry on top of it, as far as the blend.
+    const ui::SvgPose main = pose("mad", 0.1), angry = pose("angry_end", 0.2);
+    REQUIRE(main.drawing == "draw");
+    REQUIRE_FALSE(main.swap);
+    REQUIRE(angry.drawing == "angry");
+    REQUIRE_FALSE(angry.swap);
+    const ui::SvgPose one = ui::blend_pose(f, main, angry, 0.3);
+    CHECK(one.drawing == "angry");
+    CHECK(one.swap);
+    CHECK(one.swap_from == "draw");
+    CHECK(one.swap_k == doctest::Approx(0.3));
+    CHECK(one.drawings.size() == angry.drawings.size());
+    posed_in(one);
+    // A clip in a swap of its own (main to angry, halfway): what it shows on top, its share and the old pose's.
+    const ui::SvgPose half = pose("mad", 0.4);
+    REQUIRE(half.swap);
+    REQUIRE(half.drawing == "angry");
+    REQUIRE(half.swap_from == "draw");
+    REQUIRE(half.swap_k == doctest::Approx(0.5));
+    const ui::SvgPose into = ui::blend_pose(f, angry, half, 0.4);
+    CHECK(into.drawing == "angry");
+    CHECK(into.swap_from == "draw");
+    CHECK(into.swap_k == doctest::Approx(0.6 + 0.4 * 0.5));
+    posed_in(into);
+    // The old pose in a swap (main to angry a quarter of the way) to sleepy: three drawings, the two heaviest drawn.
+    const ui::SvgPose quarter = pose("mad", 0.3), sleepy = pose("at_once", 0.2);
+    REQUIRE(quarter.swap_k == doctest::Approx(0.25));
+    REQUIRE(sleepy.drawing == "sleepy");
+    REQUIRE_FALSE(sleepy.swap);
+    const ui::SvgPose three = ui::blend_pose(f, quarter, sleepy, 0.4); // draw 0.45, angry 0.15, sleepy 0.4
+    CHECK(three.drawing == "sleepy");
+    CHECK(three.swap_from == "draw");
+    CHECK(three.swap_k == doctest::Approx(0.4 / 0.85));
+    posed_in(three);
+    const ui::SvgPose late = ui::blend_pose(f, quarter, sleepy, 0.9); // sleepy 0.9, draw 0.075
+    CHECK(late.swap_from == "draw");
+    CHECK(late.swap_k == doctest::Approx(0.9 / 0.975));
+    // A drawing the file has not (the old pose of a character given again without it) is not in the blend.
+    ui::SvgPose lost = main;
+    lost.drawing = "нет";
+    const ui::SvgPose dropped = ui::blend_pose(f, lost, main, 0.5);
+    CHECK(dropped.drawing == "draw");
+    CHECK_FALSE(dropped.swap);
+    CHECK(dropped.from_parts.empty());
+}
+
+TEST_CASE("Screen clips, part 5е: the game blends a clip in from what the layer shows, by the new clip's time") {
+    namespace fs = std::filesystem;
+    Hedgehog h(hedgehog_code(kBlendClips));
+    // The character given to a game (by names any file system takes), its clips read as the game reads them.
+    MotionFile motion = h.gift.motion;
+    motion.picture = "Hog.svg";
+    const fs::path dir = fs::temp_directory_path() / ("forge_blend_" + std::to_string(std::random_device{}()));
+    fs::create_directories(dir / "ui");
+    fs::create_directories(dir / "pictures");
+    auto put = [](const fs::path& p, const std::string& text) {
+        std::ofstream o(p, std::ios::binary | std::ios::trunc);
+        o << text;
+        return static_cast<bool>(o);
+    };
+    REQUIRE(put(dir / "pictures" / "Hog.svg", h.gift.svg));
+    std::vector<ui::SvgDrawing> drawings;
+    std::map<std::string, std::string> drawing_text;
+    for (vector::MotionDrawing& d : motion.drawings) {
+        const auto file = std::find_if(h.gift.drawings.begin(), h.gift.drawings.end(), [&](const ScreenGift::File& x) { return x.name == d.picture; });
+        REQUIRE(file != h.gift.drawings.end());
+        d.picture = "Hog." + d.name + ".svg";
+        drawing_text[d.name] = file->text;
+        REQUIRE(put(dir / "pictures" / d.picture, file->text));
+        drawings.push_back({d.name, d.picture, std::make_shared<const std::string>(file->text)});
+    }
+    REQUIRE(drawing_text.count("sleepy"));
+    REQUIRE(put(dir / "pictures" / "Hog.motion.json", vector::write_motion_file(motion)));
+
+    NoRender render;
+    DiskFiles files;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&files);
+    REQUIRE(Rml::Initialise());
+    Rml::Context* context = Rml::CreateContext("blend", {400, 300});
+    REQUIRE(context);
+    {
+        game::GameScreens screens;
+        u32 frames = 0; // the clock: on by a 60th of a second a frame, to the nanosecond
+        screens.set_clock([&] { return 1'000'000'000ULL + (static_cast<u64>(frames) * 1'000'000'000ULL + 30) / 60; });
+        std::vector<std::string> marks;
+        screens.on_action = [&](const game::ScreenAction& act, const std::string&) {
+            if (act.what == "message") marks.push_back(act.target);
+        };
+        const std::string html = R"(<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>)"
+                                 R"(<div forge-screen="playing" forge-size="400 300" style="position: absolute; left: 0; top: 0; width: 400px; height: 300px;">)"
+                                 R"(<img title="Hog" src="../pictures/Hog.svg" style="position: absolute; left: 10px; top: 10px; width: 64px; height: 64px;"/>)"
+                                 R"(</div></body></html>)";
+        REQUIRE(screens.load_page(context, "hud", html, path_to_utf8(dir / "ui" / "hud.html")));
+        game::Vars vars;
+        auto step = [&](u32 n) {
+            for (u32 i = 0; i < n; ++i) {
+                ++frames;
+                screens.update(vars, true, false, 400, 300);
+            }
+        };
+        step(1);
+        const std::vector<Rml::Element*> layer = screens.layers("hud", "Hog");
+        REQUIRE(layer.size() == 1);
+        Rml::Element* el = layer[0];
+        auto say = [&](const char* what, const char* clip = "", f64 loop = 0, f64 speed = 1, f64 blend = 0) {
+            game::ScreenSvg c;
+            c.what = what;
+            c.screen = "hud";
+            c.layer = "Hog";
+            c.part = clip;
+            c.x = loop;
+            c.y = speed;
+            c.blend = blend;
+            std::string why;
+            const bool ok = screens.svg(c, &why);
+            INFO(what, " ", clip, ": ", why);
+            REQUIRE(ok);
+        };
+        auto now = [&] {
+            game::ScreenClip c;
+            REQUIRE(screens.svg_clip("hud", "Hog", c));
+            return c;
+        };
+        auto shown = [&] {
+            const ui::SvgPose* p = ui::svg_posed(el);
+            REQUIRE(p);
+            return *p;
+        };
+        auto at = [&](const MotionFile& file, const char* clip, f64 t) { return ui::clip_pose("Hog.svg", file, *file.clip(clip), t, drawings); };
+        auto smooth = [](f64 x) { return vector::timing(vector::Timing::Smooth, x); };
+        auto is = [&](const ui::SvgPose& want, const std::string& when) {
+            std::string why;
+            const bool same = same_pose(shown(), want, why);
+            INFO(when, ": ", why);
+            CHECK(same);
+        };
+
+        // From «a» going round twice as fast: it plays on by its own time and speed, its marks no more, while «b» comes in
+        // over 0,24 s of «b»'s play; «b»'s mark at 0 comes on the next step, as without a blend.
+        say("play", "a", 1, 2);
+        step(28); // the first update starts its clock: 27 frames, 0,9 s of «a», 0,1 into its third lap
+        game::ScreenClip c = now();
+        CHECK(c.blend == 1);
+        CHECK(c.from_clip.empty());
+        const f64 a0 = c.time;
+        CHECK(a0 == doctest::Approx(0.1));
+        marks.clear();
+        say("play", "b", 0, 1, 0.24);
+        c = now();
+        CHECK(c.clip == "b");
+        CHECK(c.time == 0);
+        CHECK(c.blend == 0);
+        CHECK(c.from_clip == "a");
+        CHECK(c.from_time == doctest::Approx(a0));
+        is(at(motion, "a", c.from_time), "the blend's first frame at once: what «a» shows");
+        u32 blended = 0;
+        for (u32 i = 0; i < 30; ++i) {
+            step(1);
+            c = now();
+            if (c.blend >= 1) break;
+            ++blended;
+            INFO("frame ", i, " of the blend, «b» at ", c.time);
+            CHECK(c.blend == doctest::Approx(smooth(c.time / 0.24)));
+            CHECK(c.from_clip == "a");
+            CHECK(std::abs(std::remainder(a0 + 2 * c.time - c.from_time, 0.4)) < 1e-9); // round its lap
+            is(ui::blend_pose(motion, at(motion, "a", c.from_time), at(motion, "b", c.time), c.blend), "in the blend from «a»");
+        }
+        CHECK(blended == 15); // the first update and 14 more: 15/60 s is past 0,24
+        CHECK(c.from_clip.empty());
+        CHECK(c.time == doctest::Approx(0.25));
+        is(at(motion, "b", c.time), "the blend over: «b» itself");
+        CHECK(marks == std::vector<std::string>{"бум"}); // «a» passed its «шаг» at 0,2 in the blend
+
+        // «b» at its end: played again from 0, blended in from its end standing (a snapshot); played again in the blend
+        // twice as fast, it goes on, the blend by its time.
+        step(10);
+        c = now();
+        REQUIRE(c.time == doctest::Approx(0.3));
+        const ui::SvgPose b_end = shown();
+        say("play", "b", 0, 1, 0.24);
+        c = now();
+        CHECK(c.time == 0);
+        CHECK(c.blend == 0);
+        CHECK(c.from_clip.empty());
+        is(b_end, "«b» again from its end: the first frame");
+        f64 last = 0;
+        blended = 0;
+        for (u32 i = 0; i < 30; ++i) {
+            if (i == 3) say("play", "b", 0, 2, 0.5); // the same clip while it goes: on, twice as fast, the same blend
+            step(1);
+            c = now();
+            if (c.blend >= 1) break;
+            ++blended;
+            INFO("frame ", i, " of the blend, «b» at ", c.time);
+            if (i == 1) CHECK(c.time == doctest::Approx(1.0 / 60));
+            if (i >= 3) CHECK(c.time - last == doctest::Approx(2.0 / 60));
+            last = c.time;
+            CHECK(c.blend == doctest::Approx(smooth(c.time / 0.24)));
+            is(ui::blend_pose(motion, b_end, at(motion, "b", c.time), c.blend), "in the blend from «b»'s end");
+        }
+        CHECK(blended == 9); // 0, 1/60, 2/60, then 4/60 … 14/60
+        CHECK(c.time == doctest::Approx(16.0 / 60));
+
+        // A blend longer than a clip that does not loop is the clip's length: it ends with it; «a»'s mark comes in it.
+        step(10);
+        marks.clear();
+        say("play", "a", 0, 2, 1.0);
+        blended = 0;
+        for (u32 i = 0; i < 30; ++i) {
+            step(1);
+            c = now();
+            if (c.blend >= 1) break;
+            ++blended;
+            CHECK(c.blend == doctest::Approx(smooth(c.time / 0.4)));
+        }
+        CHECK(c.time == doctest::Approx(0.4));
+        CHECK(blended == 12); // 0, 2/60 … 22/60
+        CHECK(marks == std::vector<std::string>{"шаг"});
+        const ui::SvgPose a_end = shown();
+        // Round and round: the blend is longer than a lap, by what the clip has played.
+        say("play", "b", 1, 1, 0.5);
+        step(25); // 24/60 = 0,4 played, 0,1 into the second lap
+        c = now();
+        CHECK(c.time == doctest::Approx(0.1));
+        CHECK(c.blend == doctest::Approx(smooth(0.4 / 0.5)));
+        is(ui::blend_pose(motion, a_end, at(motion, "b", c.time), c.blend), "a blend longer than the lap");
+        step(6);
+        CHECK(now().blend == 1);
+        // A clip of no length, round and round too: at once.
+        say("play", "zero", 1, 1, 0.3);
+        c = now();
+        CHECK(c.blend == 1);
+        is(at(motion, "zero", 0), "a clip of no length");
+        // A blend that is no number of seconds: refused, the layer as it was.
+        for (const f64 wrong : {-0.1, std::nan(""), std::numeric_limits<f64>::infinity()}) {
+            game::ScreenSvg bad;
+            bad.what = "play";
+            bad.screen = "hud";
+            bad.layer = "Hog";
+            bad.part = "a";
+            bad.x = 1;
+            bad.y = 1;
+            bad.blend = wrong;
+            std::string why;
+            CHECK_FALSE(screens.svg(bad, &why));
+            CHECK(why == "blend: нужно число секунд, 0 или больше");
+            CHECK(now().clip == "zero");
+        }
+        // Stopped, not in a blend: from that pose standing.
+        say("play", "a", 1);
+        step(10);
+        say("stop");
+        step(3);
+        const ui::SvgPose stood = shown();
+        say("play", "b", 1, 1, 0.24);
+        c = now();
+        CHECK(c.from_clip.empty());
+        is(stood, "from a stopped clip: its pose");
+        step(4);
+        c = now();
+        is(ui::blend_pose(motion, stood, at(motion, "b", c.time), c.blend), "from a stopped clip");
+        step(20);
+
+        // Stopped in a blend: both stand, the layer at the blend's pose; played then, from that pose standing.
+        say("play", "a", 1);
+        step(11);
+        say("play", "b", 1, 1, 0.24);
+        step(7);
+        say("stop");
+        const game::ScreenClip stopped = now();
+        const ui::SvgPose held = shown();
+        CHECK_FALSE(stopped.going);
+        CHECK(stopped.blend > 0);
+        CHECK(stopped.blend < 1);
+        CHECK(stopped.from_clip == "a");
+        step(5);
+        c = now();
+        CHECK(c.time == stopped.time);
+        CHECK(c.blend == stopped.blend);
+        CHECK(c.from_time == stopped.from_time);
+        is(held, "stopped in the blend");
+        say("play", "a", 1, 1, 0.24);
+        c = now();
+        CHECK(c.from_clip.empty());
+        is(held, "from the stopped blend: its pose");
+        step(5);
+        c = now();
+        is(ui::blend_pose(motion, held, at(motion, "a", c.time), c.blend), "from the stopped blend");
+        // Called in a blend: a new one from the pose shown, standing.
+        const ui::SvgPose midway = shown();
+        say("play", "b", 1, 1, 0.24);
+        c = now();
+        CHECK(c.from_clip.empty());
+        is(midway, "in a blend: its pose first");
+        step(4);
+        c = now();
+        CHECK(c.blend < 1);
+        is(ui::blend_pose(motion, midway, at(motion, "b", c.time), c.blend), "a blend from a blend");
+
+        // A swap of drawings in the blend: angry comes on top as far as the two blends make it.
+        step(20);
+        say("play", "angry", 0, 1, 0.24);
+        step(6);
+        c = now();
+        const ui::SvgPose swapping = shown();
+        CHECK(swapping.drawing == "angry");
+        CHECK(swapping.swap);
+        CHECK(swapping.swap_from == "draw");
+        CHECK(c.from_clip == "b");
+        is(ui::blend_pose(motion, at(motion, "b", c.from_time), at(motion, "angry", c.time), c.blend), "a swap in the blend");
+
+        // A layer without a pose (the file again): from the picture at rest.
+        say("reset");
+        game::ScreenClip none;
+        CHECK_FALSE(screens.svg_clip("hud", "Hog", none));
+        CHECK(ui::svg_posed(el) == nullptr);
+        say("play", "a", 1, 1, 0.24);
+        ui::SvgPose rest;
+        rest.picture = "Hog.svg";
+        is(rest, "from rest: the picture");
+        step(6);
+        c = now();
+        is(ui::blend_pose(motion, rest, at(motion, "a", c.time), c.blend), "from rest");
+        // The pose of another picture: no blend.
+        say("reset");
+        ui::SvgPose other;
+        other.picture = "Other.svg";
+        ui::svg_pose(el, other);
+        say("play", "a", 1, 1, 0.24);
+        CHECK(now().blend == 1);
+        is(at(motion, "a", 0), "from another picture's pose: at once");
+
+        // The character given again without its nose while «a» plays: «a» plays on from the file it read, and what
+        // has the nose is not in the blend.
+        step(12);
+        MotionFile again = motion;
+        again.character = "Hog2";
+        REQUIRE(put(dir / "pictures" / "Hog.svg", without_id(h.gift.svg, "nose")));
+        REQUIRE(put(dir / "pictures" / "Hog.sleepy.svg", without_id(drawing_text["sleepy"], "nose")));
+        REQUIRE(put(dir / "pictures" / "Hog.motion.json", vector::write_motion_file(again)));
+        say("play", "angry", 0, 1, 0.24);
+        step(5);
+        c = now();
+        CHECK(c.from_clip == "a");
+        const ui::SvgPose cut = shown();
+        CHECK(cut.copies.empty());
+        CHECK(cut.order.empty());
+        CHECK(part_in(cut, "nose") == nullptr);
+        REQUIRE(has_prop(at(motion, "a", c.from_time), "head", MotionProp::Mask));
+        CHECK_FALSE(has_prop(cut, "head", MotionProp::Mask)); // masked by the nose no more
+        REQUIRE(part_in(cut, "face"));
+        CHECK(value_in(cut, "face", MotionProp::Rot).v ==
+              doctest::Approx(vector::motion_mix(MotionProp::Rot, value_in(at(motion, "a", c.from_time), "face", MotionProp::Rot),
+                                                 value_in(at(again, "angry", c.time), "face", MotionProp::Rot), c.blend).v));
+        CHECK(c.blend > 0);
+        CHECK(c.blend < 1);
+    }
+    Rml::Shutdown();
+    Rml::SetRenderInterface(nullptr);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
 }

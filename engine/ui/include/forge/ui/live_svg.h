@@ -97,6 +97,13 @@ struct SvgPose {
 // clip so): its parts, its copies drawn, its order's steps (part 5г); the drawing shown with the others' texts, in a swap
 // the one it comes from, how far and the parts as they stand in that one (part 5д).
 SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings = {});
+// A blend of clips (part 5е): the pose `k` of the way from `from` (the old clip's pose, or what the layer showed) to
+// `to` (the new clip's), the parts posed in `file`. Each prop of each part mixed as the file's transitions mix it
+// (vector::motion_mix; one only one side has is at rest on the other), held props and the order's steps as `from`'s
+// until k is 1; a copy only one side draws fades out by 1 − k or in by k where that side has it; of the drawings,
+// each weighed (1 − k) of its share in `from` and k in `to`, the one `to` shows on top of the heaviest other, as a
+// swap. k 0 and 1 give `from` and `to` themselves.
+SvgPose blend_pose(const vector::MotionFile& file, const SvgPose& from, const SvgPose& to, f64 k);
 // The element shows the pose on its next frame; another pose of the same parts replaces it.
 void svg_pose(Rml::Element* element, SvgPose pose);
 // The pose goes and the element's pictures are made again from their files, with what the changes above said: what a

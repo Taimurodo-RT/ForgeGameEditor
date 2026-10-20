@@ -7,6 +7,7 @@
 #include "forge/ui/html.h"
 #include "forge/ui/live_svg.h"
 #include "forge/vector/motion_file.h"
+#include "forge/vector/timing.h"
 
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/StyleSheetTypes.h>
@@ -217,6 +218,21 @@ struct GameScreens::Impl : Rml::EventListener {
         std::shared_ptr<const vector::SvgOutline> outline;
     };
     std::map<std::string, Outline> outlines;
+    // A blend into a clip (svg_play's `blend`, part 5е): the clip that played before goes on, or what the layer showed
+    // stands still; `length` seconds of the new clip's play, 0 for none or over.
+    struct Blend {
+        f64 length = 0;
+        bool live = false; // the old clip goes on: its file, drawings, clip, time; else `still`
+        std::shared_ptr<const vector::MotionFile> file;
+        std::shared_ptr<const Drawings> drawings;
+        const vector::MotionClip* clip = nullptr;
+        f64 played = 0, speed = 1;
+        bool loop = false;
+        ui::SvgPose still;
+        // The ids the picture and its drawings have now, when the old pose is of a file read before (the character given
+        // again): what it has that they have not is not in the blend. None: the same file.
+        std::shared_ptr<const std::set<std::string>> known;
+    };
     struct Playing {
         Rml::ObserverPtr<Rml::Element> element;
         std::string page, picture; // picture: its file name, "Ёжик.svg"
@@ -228,6 +244,7 @@ struct GameScreens::Impl : Rml::EventListener {
         f64 speed = 1;
         bool loop = false, going = true;
         u64 last = 0; // the clock at the last update; 0: none yet
+        Blend blend;
     };
     std::vector<Playing> playing;
     std::set<std::string> said_once; // what the clips said in the log once
@@ -374,6 +391,10 @@ struct GameScreens::Impl : Rml::EventListener {
             if (p.going) {
                 p.played += dt * p.speed;
                 if (!p.loop) p.played = std::min(p.played, c.length);
+                if (p.blend.live) { // the old clip goes on by its own time, its marks no more
+                    p.blend.played += dt * p.blend.speed;
+                    if (!p.blend.loop) p.blend.played = std::min(p.blend.played, p.blend.clip->length);
+                }
                 for (const usize m : vector::motion_marks_passed(c, p.counted, p.played, p.loop)) {
                     const vector::MotionMark& mk = c.marks[m];
                     if (!mk.sound) {
@@ -393,13 +414,54 @@ struct GameScreens::Impl : Rml::EventListener {
                 }
                 p.counted = p.played;
             }
-            ui::svg_pose(p.element.get(), pose_at(p, vector::motion_clip_time(c, p.played, p.loop)));
+            ui::svg_pose(p.element.get(), shown(p));
         }
     }
 
     // What a clip that plays shows at a moment (ui::clip_pose), with the character's other drawings as they were read.
     static ui::SvgPose pose_at(const Playing& p, f64 at) {
         return ui::clip_pose(p.picture, *p.file, *p.clip, at, p.drawings ? p.drawings->list : std::vector<ui::SvgDrawing>{});
+    }
+    // How far a blend into the clip is: smooth of its share of the clip's play; 1 without one.
+    static f64 blend_share(const Playing& p) {
+        if (!(p.blend.length > 0)) return 1;
+        return p.played >= p.blend.length ? 1 : vector::timing(vector::Timing::Smooth, p.played / p.blend.length);
+    }
+    // What the layer shows now: the clip at its moment, in a blend from what was before (it goes when it is over).
+    static ui::SvgPose shown(Playing& p) {
+        ui::SvgPose pose = pose_at(p, vector::motion_clip_time(*p.clip, p.played, p.loop));
+        const f64 k = blend_share(p);
+        if (k >= 1) {
+            p.blend = {};
+            return pose;
+        }
+        const Blend& b = p.blend;
+        ui::SvgPose from = b.live ? ui::clip_pose(p.picture, *b.file, *b.clip, vector::motion_clip_time(*b.clip, b.played, b.loop),
+                                                  b.drawings ? b.drawings->list : std::vector<ui::SvgDrawing>{})
+                                  : b.still;
+        if (b.known) from = known_only(std::move(from), *b.known);
+        return ui::blend_pose(*p.file, from, pose, k);
+    }
+    // A pose without the parts, copies (by their source), steps of the order and targets of masks, links and morphs
+    // that are not among `known`.
+    static ui::SvgPose known_only(ui::SvgPose pose, const std::set<std::string>& known) {
+        std::erase_if(pose.copies, [&](const vector::MotionCopy& c) { return !known.count(c.source); });
+        std::set<std::string> copies;
+        for (const vector::MotionCopy& c : pose.copies) copies.insert(c.id);
+        auto here = [&](const std::string& id) { return known.count(id) || copies.count(id); };
+        for (std::vector<vector::MotionPartPose>* parts : {&pose.parts, &pose.from_parts}) {
+            std::erase_if(*parts, [&](const vector::MotionPartPose& pp) { return !here(pp.id); });
+            for (vector::MotionPartPose& pp : *parts)
+                for (const vector::MotionProp prop : {vector::MotionProp::Mask, vector::MotionProp::Link, vector::MotionProp::Morph}) {
+                    const usize i = static_cast<usize>(prop);
+                    if (pp.has[i] && !pp.values[i].target.empty() && !here(pp.values[i].target)) {
+                        pp.has[i] = false;
+                        pp.values[i] = vector::motion_rest(prop);
+                    }
+                }
+        }
+        std::erase_if(pose.order, [&](const vector::MotionOrderStep& st) { return !here(st.part) || (!st.other.empty() && !here(st.other)); });
+        return pose;
     }
 
     Page* find(std::string_view name) {
@@ -1275,6 +1337,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
     }
     if (c.part.empty()) return fail("не сказано, какой клип играть");
     if (!(c.y > 0) || !std::isfinite(c.y)) return fail("speed: нужно число больше 0");
+    if (!(c.blend >= 0) || !std::isfinite(c.blend)) return fail("blend: нужно число секунд, 0 или больше");
     const Page* page = impl_->find(c.screen);
     // Each layer's picture and its clips first: nothing starts when one of them cannot.
     struct Start {
@@ -1283,6 +1346,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         std::shared_ptr<const vector::MotionFile> file;
         std::shared_ptr<const Impl::Drawings> drawings;
         const vector::MotionClip* clip;
+        std::shared_ptr<const vector::SvgOutline> outline;
     };
     std::vector<Start> starts;
     for (Rml::Element* e : found) {
@@ -1299,7 +1363,8 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             return fail("в «" + path_to_utf8(utf8_path(picture).stem()) + ".motion.json» нет клипа «" + c.part + "»: есть " + names);
         }
         std::string part, role;
-        if (const auto outline = impl_->outline_of(picture)) {
+        const auto outline = impl_->outline_of(picture);
+        if (outline) {
             // The parts a clip's calls name are looked for in every drawing (part 5д).
             std::vector<const vector::SvgOutline*> all{outline.get()};
             for (const vector::SvgOutline& o : drawings->outlines) all.push_back(&o);
@@ -1307,7 +1372,7 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
                 return fail("в «" + path_to_utf8(utf8_path(picture).filename()) + "»" + (all.size() > 1 ? " и его рисунках" : "") + " нет части «" + part +
                             "»: " + role + " в клипе «" + clip->name + "»");
         }
-        starts.push_back({e, path_to_utf8(utf8_path(picture).filename()), std::move(file), std::move(drawings), clip});
+        starts.push_back({e, path_to_utf8(utf8_path(picture).filename()), std::move(file), std::move(drawings), clip, outline});
     }
     for (Start& s : starts) {
         const bool loop = c.x < 0 ? s.clip->loop : c.x > 0;
@@ -1324,6 +1389,39 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
             p->loop = loop;
             p->speed = c.y;
             continue;
+        }
+        // A blend (part 5е): from the clip the layer plays, which goes on, or from what it shows standing still (a stopped
+        // clip, one at its end, a blend going on), or from the picture at rest; none from another picture.
+        Impl::Blend blend;
+        blend.length = !(s.clip->length > 0) ? 0 : loop ? c.blend : std::min(c.blend, s.clip->length);
+        if (blend.length > 0) {
+            const ui::SvgPose* still = ui::svg_posed(s.e);
+            if (p && p->picture == s.picture && p->going && !(p->blend.length > 0) && (p->loop || p->played < p->clip->length)) {
+                blend.live = true;
+                blend.file = p->file;
+                blend.drawings = p->drawings;
+                blend.clip = p->clip;
+                blend.played = p->played;
+                blend.speed = p->speed;
+                blend.loop = p->loop;
+            } else if (still && still->picture == s.picture)
+                blend.still = *still;
+            else if (still)
+                blend.length = 0;
+            else
+                blend.still.picture = s.picture;
+            // The old pose of a file read before: what the picture has now (rule 9).
+            if (blend.length > 0 && p && p->file != s.file) {
+                auto known = std::make_shared<std::set<std::string>>();
+                std::vector<const vector::SvgOutline*> all;
+                if (s.outline) all.push_back(s.outline.get());
+                if (s.drawings)
+                    for (const vector::SvgOutline& o : s.drawings->outlines) all.push_back(&o);
+                for (const vector::SvgOutline* o : all)
+                    for (const vector::SvgElement& el : o->elements)
+                        if (!el.id.empty()) known->insert(el.id);
+                blend.known = std::move(known);
+            }
         }
         if (!p) {
             impl_->playing.emplace_back();
@@ -1344,8 +1442,9 @@ bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& fou
         p->clip = s.clip;
         p->loop = loop;
         p->speed = c.y;
+        p->blend = std::move(blend);
         // Its first frame at once, before the next update moves it on.
-        ui::svg_pose(s.e, Impl::pose_at(*p, 0));
+        ui::svg_pose(s.e, Impl::shown(*p));
     }
     return true;
 }
@@ -1357,6 +1456,11 @@ bool GameScreens::svg_clip(std::string_view screen, std::string_view layer, Scre
                 out.clip = p.clip->name;
                 out.time = vector::motion_clip_time(*p.clip, p.played, p.loop);
                 out.going = p.going;
+                out.blend = Impl::blend_share(p);
+                if (out.blend < 1 && p.blend.live) {
+                    out.from_clip = p.blend.clip->name;
+                    out.from_time = vector::motion_clip_time(*p.blend.clip, p.blend.played, p.blend.loop);
+                }
                 return true;
             }
     return false;

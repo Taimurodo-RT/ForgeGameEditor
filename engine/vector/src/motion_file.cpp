@@ -1031,19 +1031,23 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
         pp.has[i] = true;
         pp.values[i] = motion_track_value(file, tr, t, clip.length);
     }
-    for (MotionPartPose& pp : out) {
-        for (usize p = 0; p < kMotionPropCount; ++p) pp.moves = pp.moves || (pp.has[p] && motion_prop_moves(static_cast<MotionProp>(p)));
-        const MotionPart* part = pp.moves ? file.part(pp.id, drawing) : nullptr;
-        if (!part) {
-            pp.moves = false;
-            continue;
-        }
-        auto v = [&](MotionProp p) { return pp.values[static_cast<usize>(p)].v; };
-        const MotionMatrix a = motion_matrix(v(MotionProp::X), v(MotionProp::Y), v(MotionProp::Rot), v(MotionProp::Scale), v(MotionProp::Sx),
-                                             v(MotionProp::Sy), v(MotionProp::SkewX), v(MotionProp::SkewY), part->pivot);
-        pp.local = inverse(part->frame) * a * part->frame * part->own;
-    }
+    for (MotionPartPose& pp : out) motion_part_pose(file, pp, drawing);
     return out;
+}
+
+void motion_part_pose(const MotionFile& file, MotionPartPose& pp, std::string_view drawing) {
+    pp.moves = false;
+    pp.local = {};
+    for (usize p = 0; p < kMotionPropCount; ++p) pp.moves = pp.moves || (pp.has[p] && motion_prop_moves(static_cast<MotionProp>(p)));
+    const MotionPart* part = pp.moves ? file.part(pp.id, drawing) : nullptr;
+    if (!part) {
+        pp.moves = false;
+        return;
+    }
+    auto v = [&](MotionProp p) { return pp.values[static_cast<usize>(p)].v; };
+    const MotionMatrix a = motion_matrix(v(MotionProp::X), v(MotionProp::Y), v(MotionProp::Rot), v(MotionProp::Scale), v(MotionProp::Sx),
+                                         v(MotionProp::Sy), v(MotionProp::SkewX), v(MotionProp::SkewY), part->pivot);
+    pp.local = inverse(part->frame) * a * part->frame * part->own;
 }
 
 bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::string& part, std::string& role) {
