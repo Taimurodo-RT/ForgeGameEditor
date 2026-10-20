@@ -30239,17 +30239,21 @@ return {
         return true;
     }
 
-    // Part 6г5а of docs/models/сцены-модель.md, clips changing smoothly in a scene, after pixel-scene-g: in «Сцена 2»
-    // `{ blend = -1 }` typed into the call of «jump», refused by the console on its line, made 0,3 from its line; «man»'s
-    // «stand» coming in from rest over 0,4 s; saved, undone and done again; the wedges on the timeline and the words of
-    // the clips, its marks as they were; «Через камеру» in the blends as the scene of the files draws it, unlike the same
-    // scene without «jump»'s blend while it goes and as it after; the actors' moments of the files by the rule; given to the
-    // game, a file of version 2, undone and done again; «Играть со стартового»: the scene project shows both scenes as the
-    // tab does with the references of 6г4 anew, «Сцена 2»'s clips changing smoothly after its waits.
+    // Part 6г5а of docs/models/сцены-модель.md, clips changing smoothly in a scene, after pixel-scene-g: in «Сцена 2» `{
+    // blend = -1 }` typed into the call of «jump», refused by the console on its line, made 0,3 from its line; «man»'s
+    // «stand» coming in from rest over 0,4 s; Скакун's legs kept sharp (kShSharp); saved, undone and done again; the
+    // wedges on the timeline and the words of the clips, its marks as they were; «Через камеру» in the blends as the scene
+    // of the files draws it, unlike the same scene without «jump»'s blend while it goes and as it after; the actors'
+    // moments of the files by the rule; given to the game, a file of version 2, undone and done again; «Играть со
+    // стартового»: the scene project shows both scenes as the tab does with the references of 6г4 anew, «Сцена 2»'s clips
+    // changing smoothly after its waits.
     static constexpr const char* kShJump = "actor(\"hop\"):play(\"jump\"";
     static constexpr const char* kShStand = "actor(\"man\"):loop(\"stand\"";
     static constexpr const char* kShBad = ", { blend = -1 }";
     static constexpr const char* kShMan = ", { blend = 0.4 }";
+    // «jump» blurs Скакун's legs from its start, and the game draws no blur («В игре не будет: размытие»): the scene keeps
+    // them sharp with a blur of its own, so the game's frames halfway through the blend are the tab's.
+    static constexpr const char* kShSharp = "part(\"hop/legs\").blur(0.001)\n    ";
     // «jump» begins at 1,5 s, after the waits: the game's references in its blend of 0,3 s, in twelfths of a second
     // (having waited kSgHolds), and the ruler's frames (60 a second) of «Через камеру»: «stand»'s blend from rest halfway,
     // «jump»'s at its start, halfway, at its end, after it.
@@ -30267,6 +30271,7 @@ return {
         std::string code = sg_typed();
         code.insert(code.find(kShJump) + std::strlen(kShJump), ", { blend = 0.3 }");
         code.insert(code.find(kShStand) + std::strlen(kShStand), kShMan);
+        code.insert(code.find(kSgIn), kShSharp);
         return code;
     }
     // The marks as the timeline's row of them shows them.
@@ -30348,7 +30353,7 @@ return {
             break;
         }
         // Refused on its line, the last recording faint; from the console's line to the number, 0,3; «stand» from rest over
-        // 0,4 s; saved; undone and done again.
+        // 0,4 s; Скакун's legs kept sharp; saved; undone and done again.
         case 4: {
             if (hold(px().stale() && shown("px-console-0"), "the console says it")) return true;
             const u32 line = static_cast<u32>(1 + std::count(bad.begin(), bad.begin() + static_cast<std::ptrdiff_t>(bad.find(kShJump)), '\n'));
@@ -30367,7 +30372,11 @@ return {
             check(px().code() == code, "0.3 typed:\n" + px().code());
             check(mo_caret(mo_char(code, kShStand) + mo_letters(kShStand)), "the caret before the bracket of «stand»'s call");
             mo_type(kShMan);
-            check(px().code() == typed && px().code_unsaved(), "«stand» from rest typed:\n" + px().code());
+            code.insert(code.find(kShStand) + std::strlen(kShStand), kShMan);
+            check(px().code() == code, "«stand» from rest typed:\n" + px().code());
+            check(mo_caret(mo_char(code, kSgIn)), "the caret before the way in");
+            mo_type(kShSharp);
+            check(px().code() == typed && px().code_unsaved(), "Скакун's legs kept sharp:\n" + px().code());
             key(SDLK_S, SDL_KMOD_CTRL);
             check(file(kSeLua) == bytes(typed) && !px().code_unsaved() && step_label() == saved, "Ctrl+S: the file what was typed; one step: " + step_label());
             check(away(), "out of the panel");
