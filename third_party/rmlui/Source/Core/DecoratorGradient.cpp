@@ -248,7 +248,9 @@ static void GenerateGradientMesh(Mesh& mesh, const RenderBox& render_box, Colour
 {
 	if (placement)
 	{
-		GenerateBackgroundTiles(mesh, render_box.GetFillOffset(), render_box.GetFillSize(), *placement, colour, {}, {}, true);
+		// Cut at rounded corners, as the box's colour is.
+		GenerateBackgroundTiles(mesh, render_box.GetFillOffset(), render_box.GetFillSize(), *placement, colour, {}, {}, true,
+			RoundedOutline(render_box));
 		return;
 	}
 	MeshUtilities::GenerateBackground(mesh, render_box, colour);

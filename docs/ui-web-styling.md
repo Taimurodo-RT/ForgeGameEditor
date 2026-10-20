@@ -42,7 +42,7 @@ tools/webcompat/run.sh build out [python]   # нужны Node с Playwright и P
 | Логические свойства | `margin-block`, `padding-inline`, `inset-*`, `block-size`, `inline-size`, `border-start-start-radius` и др. (письмо слева направо) |
 | Раскладка | сетка `display: grid` (шаблоны, области, `repeat`/`auto-fill`/`auto-fit`, растяжение на несколько ячеек, авторазмещение), `flex: 1` как в браузере, схлопывание отступов родителя и ребёнка, таблицы с авто-шириной колонок |
 | Псевдоэлементы | `::before`/`::after` с `content`, `attr()` и escape-последовательностями, `::marker`, `::first-letter`; маркеры списков рисуются фигурами размером как в Chromium |
-| Фон | несколько слоёв: линейные, радиальные и конические градиенты, картинки (PNG, SVG, `data:`), `background-size`/`-position`/`-repeat` для всех слоёв |
+| Фон | несколько слоёв: линейные, радиальные и конические градиенты, картинки (PNG, SVG, `data:`), `background-size`/`-position`/`-repeat` для всех слоёв; у скруглённых углов каждый слой обрезан по ним, как цвет фона (`RoundedOutline` в `BackgroundPlacement.cpp`; страница `16-rounded-fills`). Углы-эллипсы (`border-radius: 50%` у прямоугольника) RmlUi рисует кругами, и фон, и цвет |
 | Рисованные рамки | `border-image` и все его части (`-source`, `-slice` с `fill`, `-width`, `-outset`, `-repeat`: `stretch`/`repeat`/`round`/`space`); картинка режется на девять частей, углы не тянутся (`ElementBorderImage`) |
 | Маски | `mask`, `mask-image` (картинки, `data:`, градиенты), `mask-size`/`-position`/`-repeat`, приставка `-webkit-` (декоратор `forge-mask`) |
 | Эффекты | размытые `box-shadow` и `text-shadow`, `filter` (в том числе `drop-shadow()`), все 16 режимов `mix-blend-mode` (свой шейдер наложения), прозрачность группой как в браузере |
