@@ -2116,7 +2116,9 @@ struct Options {
     // into it, given, the frames at a wait as the game's references, played by the scene project, by "pixel-scene-f"; part
     // 6г4, transitions and scenes in a row: a way in through a growing circle, a picture's mask and a way out typed, a
     // scene coming in by «растворение» made, both given, their frames as the game's references, «Показать сцену» of one
-    // before the other, played by the scene project at 144 Hz and on 1920 × 1080, by "pixel-scene-g"); "input"
+    // before the other, played by the scene project at 144 Hz and on 1920 × 1080, by "pixel-scene-g"; part 6г5а, clips changing
+    // smoothly: a blend refused on its line, made, another from rest, their wedges and words, «Через камеру» in them, given
+    // as version 2, played by the scene project at 144 Hz, by "pixel-scene-h"); "input"
     // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
@@ -2420,6 +2422,7 @@ public:
         if (part == "pixel-scene-e") return frame < 3 || pixel_scene_e_step();
         if (part == "pixel-scene-f") return frame < 3 || pixel_scene_f_step();
         if (part == "pixel-scene-g") return frame < 3 || pixel_scene_g_step();
+        if (part == "pixel-scene-h") return frame < 3 || pixel_scene_h_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19334,6 +19337,14 @@ return {
                                 "сцену» of «Сцена 3» before that of «Сцена 2»; the game shows them as the tab does over its frame, one after "
                                 "the other with no frame of the game between, at 144 Hz and on 1920 × 1080 (pixel-scene-g: exit " +
                                     std::to_string(moved_scene) + ")");
+        // Part 6г5а: clips changing smoothly in a scene, in the game.
+        const fs::path thirty_six = mo_root() / utf8_path("тридцать шестая папка");
+        fs::create_directories(thirty_six, ec);
+        const int blended_scene = pj_run({exe, "--project", project, "--self-test", "pixel-scene-h"}, thirty_six);
+        check(blended_scene == 0, "«Сцена 2»: «{ blend = -1 }» refused on its line, «jump» blended from «idle» over 0,3 s and «stand» from rest over "
+                                  "0,4 s typed, saved, undone and done again; their wedges and words, «Через камеру» in the blends as the scene "
+                                  "of the files draws them, given as version 2; the game shows the scenes as the tab does, the clips changing "
+                                  "smoothly, at 144 Hz (pixel-scene-h: exit " + std::to_string(blended_scene) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -29847,13 +29858,55 @@ return {
     }
     // The player's frame of s as last posed at the size the game's screen of its shape (1440 × 1080) has it, beside
     // the games: its file.
-    std::string sg_keep(pixel::Scene& s, const std::string& name) {
+    std::string sg_keep(pixel::Scene& s, const std::string& name, const char* prefix = "сцена ж ") {
         const assets::CookedTexture big = s.draw_frame(kSeFrameW, kSeFrameH);
         std::vector<u8> png;
-        const std::filesystem::path out = mo_root() / utf8_path("сцена ж " + name + ".png");
+        const std::filesystem::path out = mo_root() / utf8_path(prefix + name + ".png");
         check(big.width == kSeFrameW && big.height == kSeFrameH && assets::encode_image(big, ".png", png) && write_file_atomic(out, png),
               "the frame at 1440 × 1080, beside the games: " + path_to_utf8(out));
         return path_to_utf8(out);
+    }
+    // The game's references of «Сцена 2» as the scene of the files draws them, kept with `prefix`: its way in (over the
+    // grey), its coin in the window, its way out having waited at its stops, and where the game's frame is in the way out.
+    void sg_second_refs(const char* prefix) {
+        sg_in_files_.clear();
+        sg_files_.clear();
+        sg_out_files_.clear();
+        sg_out_x_.clear();
+        pixel::Scene s;
+        std::string why;
+        check(sg_read(s, kSeDoc, kSeLua, why), "the scene of the files " + why);
+        pixel::ScenePoses poses;
+        for (const f64 t : kSgInFrames) {
+            check(s.frame(t) && s.poses(t, {}, -1, poses) && poses.phase == pixel::ScenePhase::Enter, "at " + se_num(t) + " s coming in " + s.error());
+            sg_in_files_.push_back(sg_keep(s, "вход " + std::to_string(std::lround(t * 12)), prefix));
+        }
+        for (const f64 t : kSgFrames) {
+            check(s.frame(t) && s.poses(t, {}, -1, poses) && poses.phase == pixel::ScenePhase::Scene, "at " + se_num(t) + " s itself " + s.error());
+            sg_files_.push_back(sg_keep(s, "окно " + std::to_string(std::lround(t * 12)), prefix));
+        }
+        for (const f64 t : kSgOutFrames) {
+            check(s.frame(t, kSgHolds, -1) && s.poses(t, kSgHolds, -1, poses) && poses.phase == pixel::ScenePhase::Leave,
+                  "at " + se_num(t) + " s going out, having waited " + s.error());
+            sg_out_files_.push_back(sg_keep(s, "уход " + std::to_string(std::lround(t * 12)), prefix));
+            sg_out_x_.push_back(poses.layers[3].x);
+        }
+        check(sg_out_x_.size() == 3 && sg_out_x_[0] > 135 && sg_out_x_[0] < 144 && sg_out_x_[1] < sg_out_x_[0] && sg_out_x_[2] > 0 &&
+                  sg_out_x_[2] < sg_out_x_[1],
+              "the game's frame comes in from the right edge, first over Скакун's legs: " + se_num(sg_out_x_.empty() ? 0 : sg_out_x_[0]));
+    }
+    // «Сцена 3»'s: its way in by «растворение» and its last frame.
+    void sg_third_refs(const char* prefix) {
+        sg_first_files_.clear();
+        pixel::Scene apart;
+        std::string why;
+        check(sg_read(apart, kSgDoc, kSgLua, why), "«Сцена 3» of the files " + why);
+        for (const f64 t : kSgFirstFrames) {
+            check(apart.frame(t), "«Сцена 3» at " + se_num(t) + " s " + apart.error());
+            sg_first_files_.push_back(sg_keep(apart, "растворение " + std::to_string(std::lround(t * 12)), prefix));
+        }
+        check(apart.frame(1), "«Сцена 3» at its end " + apart.error());
+        sg_last_file_ = sg_keep(apart, "последний кадр", prefix);
     }
     edits::ProjectEdits sg_edits(bool wide) {
         // The scheme of «Флаг» as pixel-scene-e built it, the stage's canvas, background and music; not the checks of 6г2
@@ -29980,32 +30033,8 @@ return {
             std::string line = "Отдано игре: «Сцена 2», 2 актёра, 1 картинка, 3 с.";
             for (const std::string& n : gift.notes) line += " " + n + ".";
             check(px().note() == line, "the line under the player: «" + px().note() + "», not «" + line + "»");
-            // The game's references: the scene of the files at the moments of its way in (over the grey), with its coin in the
-            // window, and of its way out having waited at its stops; where the game's frame is in the way out.
-            sg_in_files_.clear();
-            sg_files_.clear();
-            sg_out_files_.clear();
-            sg_out_x_.clear();
-            pixel::Scene s;
-            check(sg_read(s, kSeDoc, kSeLua, why), "the scene of the files " + why);
-            pixel::ScenePoses poses;
-            for (const f64 t : kSgInFrames) {
-                check(s.frame(t) && s.poses(t, {}, -1, poses) && poses.phase == pixel::ScenePhase::Enter, "at " + se_num(t) + " s coming in " + s.error());
-                sg_in_files_.push_back(sg_keep(s, "вход " + std::to_string(std::lround(t * 12))));
-            }
-            for (const f64 t : kSgFrames) {
-                check(s.frame(t) && s.poses(t, {}, -1, poses) && poses.phase == pixel::ScenePhase::Scene, "at " + se_num(t) + " s itself " + s.error());
-                sg_files_.push_back(sg_keep(s, "окно " + std::to_string(std::lround(t * 12))));
-            }
-            for (const f64 t : kSgOutFrames) {
-                check(s.frame(t, kSgHolds, -1) && s.poses(t, kSgHolds, -1, poses) && poses.phase == pixel::ScenePhase::Leave,
-                      "at " + se_num(t) + " s going out, having waited " + s.error());
-                sg_out_files_.push_back(sg_keep(s, "уход " + std::to_string(std::lround(t * 12))));
-                sg_out_x_.push_back(poses.layers[3].x);
-            }
-            check(sg_out_x_.size() == 3 && sg_out_x_[0] > 135 && sg_out_x_[0] < 144 && sg_out_x_[1] < sg_out_x_[0] && sg_out_x_[2] > 0 &&
-                      sg_out_x_[2] < sg_out_x_[1],
-                  "the game's frame comes in from the right edge, first over Скакун's legs: " + se_num(sg_out_x_.empty() ? 0 : sg_out_x_[0]));
+            // The game's references.
+            sg_second_refs("сцена ж ");
             sg_frame_ = 0;
             sg_to_frame(kSgTabFrames[0]);
             break;
@@ -30066,15 +30095,7 @@ return {
                   "«Отдать игре»: one step: " + step_label() + "; «" + px().note() + "»");
             check(sg_folder("Сцена 3") == built, "game/scenes/Сцена 3 as the library builds it: " + sd_paths(sg_folder("Сцена 3")));
             check(game::scene_names(a / "game") == std::vector<std::string>{"Сцена", "Сцена 2", "Сцена 3"}, "the game's scenes: «Сцена», «Сцена 2», «Сцена 3»");
-            sg_first_files_.clear();
-            pixel::Scene apart;
-            check(sg_read(apart, kSgDoc, kSgLua, why), "«Сцена 3» of the files " + why);
-            for (const f64 t : kSgFirstFrames) {
-                check(apart.frame(t), "«Сцена 3» at " + se_num(t) + " s " + apart.error());
-                sg_first_files_.push_back(sg_keep(apart, "растворение " + std::to_string(std::lround(t * 12))));
-            }
-            check(apart.frame(1), "«Сцена 3» at its end " + apart.error());
-            sg_last_file_ = sg_keep(apart, "последний кадр");
+            sg_third_refs("сцена ж ");
             sg_frame_ = 0;
             sg_to_frame(kSgFirstTabFrames[0]);
             break;
@@ -30210,6 +30231,282 @@ return {
             const int wide_code = tg_play(&wide, "переходы сцен 6г4 1920.json", mo_root(), "project", {"--size", "1920x1080"});
             check(wide_code == 0, "on 1920 × 1080: «сдвиг» out of «Сцена 2» begins past the screen's edge, the bars of its frame going with it "
                                   "(exit " + std::to_string(wide_code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
+    // Part 6г5а of docs/models/сцены-модель.md, clips changing smoothly in a scene, after pixel-scene-g: in «Сцена 2»
+    // `{ blend = -1 }` typed into the call of «jump», refused by the console on its line, made 0,3 from its line; «man»'s
+    // «stand» coming in from rest over 0,4 s; saved, undone and done again; the wedges on the timeline and the words of
+    // the clips, its marks as they were; «Через камеру» in the blends as the scene of the files draws it, unlike the same
+    // scene without «jump»'s blend while it goes and as it after; the actors' moments of the files by the rule; given to the
+    // game, a file of version 2, undone and done again; «Играть со стартового»: the scene project shows both scenes as the
+    // tab does with the references of 6г4 anew, «Сцена 2»'s clips changing smoothly after its waits.
+    static constexpr const char* kShJump = "actor(\"hop\"):play(\"jump\"";
+    static constexpr const char* kShStand = "actor(\"man\"):loop(\"stand\"";
+    static constexpr const char* kShBad = ", { blend = -1 }";
+    static constexpr const char* kShMan = ", { blend = 0.4 }";
+    // «jump» begins at 1,5 s, after the waits: the game's references in its blend of 0,3 s, in twelfths of a second
+    // (having waited kSgHolds), and the ruler's frames (60 a second) of «Через камеру»: «stand»'s blend from rest halfway,
+    // «jump»'s at its start, halfway, at its end, after it.
+    static constexpr f64 kShFrames[2] = {19.0 / 12, 20.0 / 12};
+    static constexpr u32 kShTabFrames[5] = {12, 90, 99, 108, 111};
+    usize sh_frame_ = 0;
+    std::string sh_marks_;
+    std::vector<std::string> sh_blend_files_;
+    static std::string sh_bad() {
+        std::string code = sg_typed();
+        code.insert(code.find(kShJump) + std::strlen(kShJump), kShBad);
+        return code;
+    }
+    static std::string sh_typed() {
+        std::string code = sg_typed();
+        code.insert(code.find(kShJump) + std::strlen(kShJump), ", { blend = 0.3 }");
+        code.insert(code.find(kShStand) + std::strlen(kShStand), kShMan);
+        return code;
+    }
+    // The marks as the timeline's row of them shows them.
+    static std::string sh_marks(const pixel::Recording& rec) {
+        std::string seen;
+        for (const pixel::Mark& m : rec.marks)
+            seen += se_num(m.time) + " " + (m.actor.empty() ? "" : m.actor + ": ") + (m.kind == pixel::Mark::Kind::Sound ? "звук " : "") + m.name + "\n";
+        return seen;
+    }
+    // «Сцена 2» of the doc on disk with `code`, recorded and drawn at t as the player's frame of «Через камеру».
+    bool sh_drawn(const std::string& code, f64 t, assets::CookedTexture& out, std::string& why) {
+        std::vector<u8> doc;
+        pixel::SceneDoc d;
+        if (!read_file(as().abs(kSeDoc), doc) || !pixel::read_scene_doc({reinterpret_cast<const char*>(doc.data()), doc.size()}, d, why))
+            return why = "«Сцена 2.scene.json» не читается " + why, false;
+        pixel::Scene s;
+        if (!s.load(code, d, sc_files()) || !s.record() || !s.frame(t)) return why = s.error(), false;
+        out = s.draw_frame(kSeFrameW, kSeFrameH);
+        return true;
+    }
+    edits::ProjectEdits sh_edits() {
+        edits::ProjectEdits e = sg_edits(false);
+        e.st_blend_frames.assign(std::begin(kShFrames), std::end(kShFrames));
+        e.st_blend_files = sh_blend_files_;
+        return e;
+    }
+
+    // In an editor for «Движение А» after pixel-scene-g (--self-test pixel-scene-h).
+    bool pixel_scene_h_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const pixel::Recording* rec = px().recording();
+        const std::string typed = sh_typed(), bad = sh_bad();
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto bytes = [](std::string_view text) { return std::vector<u8>(text.begin(), text.end()); };
+        auto text_of = [](const std::vector<u8>& b) { return std::string(b.begin(), b.end()); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto away = [&] { return ue_press("px-time") && !mo_panel_keys(); };
+        const std::string saved = "«Сцена 2»: код «Сцена 2.luau» сохранён", given = "«Сцена 2»: отдана игре";
+        switch (sc_step_) {
+        case 0: {
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            check(file(kSeLua) == bytes(sg_typed()), "«Сцена 2.luau» as pixel-scene-g typed it");
+            pixel::SceneGift gift;
+            SdFolder built;
+            std::string why;
+            check(se_gift(gift, built, why) && se_folder() == built && gift.motion.file.transitions.size() == 2, "game/scenes/Сцена 2 as pixel-scene-g gave it " + why);
+            check(std::none_of(gift.motion.file.plays.begin(), gift.motion.file.plays.end(), [](const vector::ScenePlay& p) { return p.blend > 0; }) &&
+                      text_of(built["scene.json"]).find("\"version\": 1,") != std::string::npos,
+                  "no blends yet, scene.json of version 1");
+            check(click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        }
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        case 2: {
+            if (hold(idle && shown("px-scene-2"), "«Сцена», «Сцена 2» and «Сцена 3» listed")) return true;
+            i32 at = -1;
+            for (i32 k = 0; k < 3; ++k)
+                if (sv_words(("px-scene-" + std::to_string(k)).c_str()).find("Сцена 2160 × 120") != std::string::npos) at = k;
+            check(at >= 0 && px_click("px-scene-" + std::to_string(at)) && px().opened() == kSeDoc && px().in_scene(), "«Сцена 2» open");
+            break;
+        }
+        // `{ blend = -1 }` typed into the call of «jump», key by key; saved as it is.
+        case 3: {
+            if (hold(rec && !px().stale() && px().code() == sg_typed() && rec->stops.size() == 3, "«Сцена 2» recorded")) return true;
+            if (!rec) break;
+            check(px().console().empty(), "the console empty:\n" + sc_recorded());
+            sh_marks_ = sh_marks(*rec);
+            const std::string code = sg_typed();
+            check(mo_caret(mo_char(code, kShJump) + mo_letters(kShJump)), "the caret before the bracket of «jump»'s call");
+            mo_type(kShBad);
+            check(px().code() == bad && px().code_unsaved(), "typed key by key:\n" + px().code());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(kSeLua) == bytes(bad) && !px().code_unsaved() && step_label() == saved, "Ctrl+S: the file what was typed; one step: " + step_label());
+            break;
+        }
+        // Refused on its line, the last recording faint; from the console's line to the number, 0,3; «stand» from rest over
+        // 0,4 s; saved; undone and done again.
+        case 4: {
+            if (hold(px().stale() && shown("px-console-0"), "the console says it")) return true;
+            const u32 line = static_cast<u32>(1 + std::count(bad.begin(), bad.begin() + static_cast<std::ptrdiff_t>(bad.find(kShJump)), '\n'));
+            const std::vector<PixelEditor::ConsoleLine>& c = px().console();
+            check(!c.empty() && c[0].error && c[0].line == line && c[0].text.find("строка " + std::to_string(line) + ": ") != std::string::npos &&
+                      c[0].text.find("play: blend — число секунд, 0 или больше") != std::string::npos && pj_class("px-console-0", "error"),
+                  "the console: «" + (c.empty() ? std::string() : c[0].text) + "» on line " + std::to_string(line));
+            check(away() && px_click("px-console-0") && mo_panel_keys(), "a click on the console's line: the panel has the keyboard");
+            u32 from = 0, to = 0;
+            check(px().code_selection(from, to) && from == pixel::line_char(bad, line) && to == from, "its caret at the start of line " + std::to_string(line));
+            const u32 minus = mo_char(bad, "blend = -1") + mo_letters("blend = ");
+            check(mo_select(minus, minus + 2), "«-1» selected");
+            mo_type("0.3");
+            std::string code = bad;
+            code.replace(code.find("blend = -1") + 8, 2, "0.3");
+            check(px().code() == code, "0.3 typed:\n" + px().code());
+            check(mo_caret(mo_char(code, kShStand) + mo_letters(kShStand)), "the caret before the bracket of «stand»'s call");
+            mo_type(kShMan);
+            check(px().code() == typed && px().code_unsaved(), "«stand» from rest typed:\n" + px().code());
+            key(SDLK_S, SDL_KMOD_CTRL);
+            check(file(kSeLua) == bytes(typed) && !px().code_unsaved() && step_label() == saved, "Ctrl+S: the file what was typed; one step: " + step_label());
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(file(kSeLua) == bytes(bad) && px().code() == bad, "Ctrl+Z: the save undone, the refused line byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(file(kSeLua) == bytes(typed) && px().code() == typed && step_label() == saved, "Ctrl+Y: the blends again, byte for byte");
+            break;
+        }
+        // Recorded: the blends of the calls, the marks as they were; the wedges and the words of the clips; «К коду».
+        case 5: {
+            if (hold(idle && rec && !px().stale() && !px().code_unsaved() && px().code() == typed && shown("px-play-0"), "the scene recorded with its blends"))
+                return true;
+            if (!rec) break;
+            check(px().console().empty() && std::fabs(rec->length - 3) < 1e-9, "the console empty, 3 s:\n" + sc_recorded());
+            const i32 jump = sc_play("hop", "jump"), loop = sc_play("hop", "idle"), stand = sc_play("man", "stand");
+            if (!check(jump >= 0 && loop >= 0 && stand >= 0, "the clips of «hop» and «man»:\n" + sc_recorded())) break;
+            const pixel::ActorPlay &j = rec->plays[static_cast<usize>(jump)], &i = rec->plays[static_cast<usize>(loop)], &s = rec->plays[static_cast<usize>(stand)];
+            check(j.blend == 0.3 && s.blend == 0.4 && i.blend == 0 && std::fabs(j.start - 1.5) < 1e-9 && s.start == 0 && std::fabs(j.clip_length - 0.4) < 1e-9,
+                  "«jump» from 1,5 s blended over 0,3 s, «stand» from 0 over 0,4 s, «idle» at once:\n" + sc_recorded());
+            check(sh_marks(*rec) == sh_marks_, "its marks as before the blends:\n" + sh_marks(*rec));
+            // The wedge from a clip's start as long as its blend lasts on the timeline; none on «idle».
+            auto wedge = [&](i32 play, f32& width) {
+                Rml::Element* bar = visible(("px-play-" + std::to_string(play)).c_str());
+                for (int k = 0; bar && k < bar->GetNumChildren(); ++k)
+                    if (Rml::Element* w = bar->GetChild(k); w->IsClassSet("px-play-blend") && w->IsVisible(true)) {
+                        width = w->GetBox().GetSize(Rml::BoxArea::Border).x;
+                        return std::fabs(w->GetAbsoluteOffset(Rml::BoxArea::Border).x - bar->GetAbsoluteOffset(Rml::BoxArea::Border).x) < 1.5f;
+                    }
+                return false;
+            };
+            for (const pixel::ActorPlay* p : {&j, &s}) {
+                const i32 k = p == &j ? jump : stand;
+                f32 width = 0, x0 = 0, x1 = 0;
+                check(wedge(k, width) && px().timeline_x(p->start, x0) && px().timeline_x(p->start + p->blend, x1) && std::fabs(width - (x1 - x0)) < 1.5f && width > 3,
+                      "the wedge of «" + p->clip + "» from its start for its blend: " + std::to_string(width) + " for " + std::to_string(x1 - x0));
+            }
+            f32 none = 0;
+            check(!wedge(loop, none), "no wedge on «idle»");
+            check(px_click("px-play-" + std::to_string(jump)) && px().actor_clip() == jump, "«jump» chosen");
+            break;
+        }
+        case 6: {
+            if (wait(2)) return true;
+            const i32 stand = sc_play("man", "stand");
+            check(element_text("px-play-info").find("плавно 0,3 с от «idle»") != std::string::npos, "«jump»'s words: «" + element_text("px-play-info") + "»");
+            check(px_click("px-play-code") && mo_panel_keys(), "«К коду»: the panel");
+            u32 from = 0, to = 0;
+            const std::string call = std::string(kShJump) + ", { blend = 0.3 })";
+            check(px().code_selection(from, to) && from == mo_char(typed, call) && to == from + mo_letters(call), "its call selected in the panel, the blend in it");
+            check(away() && px_click("px-play-" + std::to_string(stand)) && px().actor_clip() == stand, "«stand» chosen");
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            check(element_text("px-play-info").find("плавно 0,4 с от покоя") != std::string::npos, "«stand»'s words: «" + element_text("px-play-info") + "»");
+            sh_frame_ = 0;
+            sg_to_frame(kShTabFrames[0]);
+            break;
+        }
+        // «Через камеру» in the blends as the scene of the files draws the player's frame.
+        case 8: {
+            if (wait(2)) return true;
+            sg_tab_frame(kShTabFrames[sh_frame_], kSeDoc, kSeLua);
+            if (++sh_frame_ < std::size(kShTabFrames)) {
+                sg_to_frame(kShTabFrames[sh_frame_]);
+                return true;
+            }
+            break;
+        }
+        // The blend makes «jump» come in from «idle» and is over at its end; the actors' moments of the files by the rule;
+        // «Отдать игре»: version 2, undone and done again; the game's references.
+        case 9: {
+            if (hold(idle && shown("px-give-game"), "«Отдать игре»")) return true;
+            std::string without = typed, why;
+            without.erase(without.find(", { blend = 0.3 }"), std::strlen(", { blend = 0.3 }"));
+            assets::CookedTexture with_mid, without_mid, with_after, without_after;
+            check(sh_drawn(typed, 1.65, with_mid, why) && sh_drawn(without, 1.65, without_mid, why) && sh_drawn(typed, 1.85, with_after, why) &&
+                      sh_drawn(without, 1.85, without_after, why),
+                  "the scene with and without «jump»'s blend " + why);
+            check(!px_same(with_mid, without_mid) && px_same(with_after, without_after), "halfway through its blend «jump» is not as without it; after, it is");
+            pixel::SceneGift gift;
+            SdFolder built;
+            check(se_gift(gift, built, why), "the folder as the library builds it of the files: " + why);
+            const vector::SceneFile& f = gift.motion.file;
+            i32 idle_at = -1, jump_at = -1, stand_at = -1;
+            for (usize k = 0; k < f.plays.size(); ++k) {
+                if (f.plays[k].actor == "hop" && f.plays[k].clip == "idle") idle_at = static_cast<i32>(k);
+                if (f.plays[k].actor == "hop" && f.plays[k].clip == "jump") jump_at = static_cast<i32>(k);
+                if (f.plays[k].actor == "man" && f.plays[k].clip == "stand") stand_at = static_cast<i32>(k);
+            }
+            check(jump_at >= 0 && idle_at >= 0 && stand_at >= 0 && f.plays[static_cast<usize>(jump_at)].blend == 0.3 &&
+                      f.plays[static_cast<usize>(stand_at)].blend == 0.4 && f.plays[static_cast<usize>(idle_at)].blend == 0,
+                  "scene.json: «jump» blended over 0,3 s, «stand» over 0,4 s, «idle» at once");
+            const vector::SceneActorMoment mid = vector::scene_actor_moment(gift.motion, "hop", 1.65), after = vector::scene_actor_moment(gift.motion, "hop", 1.85),
+                                           first = vector::scene_actor_moment(gift.motion, "man", 0.2);
+            check(mid.play == jump_at && mid.blend.size() == 2 && mid.blend[0].play == idle_at && std::fabs(mid.blend[0].time - std::fmod(1.65, 0.5)) < 1e-9 &&
+                      mid.blend[0].k == 1 && mid.blend[1].play == jump_at && std::fabs(mid.blend[1].time - 0.15) < 1e-9 && std::fabs(mid.blend[1].k - 0.5) < 1e-9,
+                  "«hop» at 1,65 s: «idle» going on round and round (0,15 s of it), «jump» at 0,15 s over it by half");
+            check(after.play == jump_at && after.blend.empty() && std::fabs(after.time - 0.35) < 1e-9, "at 1,85 s «jump» alone");
+            check(first.play == stand_at && first.blend.size() == 2 && first.blend[0].play == -1 && std::fabs(first.blend[1].k - 0.5) < 1e-9,
+                  "«man» at 0,2 s: «stand» over the rest by half");
+            const SdFolder before = se_folder();
+            check(px_click("px-give-game") && step_label() == given, "«Отдать игре»: one step: " + step_label() + "; «" + px().note() + "»");
+            check(se_folder() == built, "game/scenes/Сцена 2 as the library builds it: " + sd_paths(se_folder()));
+            const std::string json = text_of(se_folder()["scene.json"]);
+            check(json.find("\"version\": 2,") != std::string::npos && json.find("\"blend\": 0.3") != std::string::npos && json.find("\"blend\": 0.4") != std::string::npos,
+                  "scene.json of version 2 with the blends");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(se_folder() == before, "Ctrl+Z: the folder of version 1 again, byte for byte");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(se_folder() == built && step_label() == given, "Ctrl+Y: given again, byte for byte");
+            // The game's references: those of 6г4 anew (the blends in them), and «jump»'s blend having waited.
+            sg_second_refs("сцена з ");
+            sg_third_refs("сцена з ");
+            sh_blend_files_.clear();
+            pixel::Scene s;
+            check(sg_read(s, kSeDoc, kSeLua, why), "the scene of the files " + why);
+            pixel::ScenePoses poses;
+            for (const f64 t : kShFrames) {
+                check(s.frame(t, kSgHolds, -1) && s.poses(t, kSgHolds, -1, poses) && poses.phase == pixel::ScenePhase::Scene,
+                      "at " + se_num(t) + " s in «jump»'s blend, having waited " + s.error());
+                sh_blend_files_.push_back(sg_keep(s, "смена " + std::to_string(std::lround(t * 12)), "сцена з "));
+            }
+            check(click_tab(0) && ed_.tab() == "level", "«Уровень»");
+            break;
+        }
+        case 10:
+            if (hold(lv().view_w() > 0 && shown("lv-levels"), "the level view is laid out")) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 11: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = sh_edits();
+            const int code = tg_play(&e, "смены клипов 6г5а.json", mo_root(), "project", {"--size", "1440x1080", "--hz", "144"});
+            check(code == 0, "on a screen of the scenes' shape at 144 Hz: both scenes as the tab's frames have them, «stand» coming in from rest "
+                             "as «Сцена 2» comes in, «jump» from «idle» after its waits (exit " + std::to_string(code) + ")");
             return false;
         }
         default: break;
@@ -37646,7 +37943,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
                                          "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again",
-                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "input", "input-a",
+                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "pixel-scene-h", "input", "input-a",
                                          "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
@@ -37666,7 +37963,7 @@ int main(int argc, char** argv) {
                     "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
                     "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, pixel-scene, "
                     "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, pixel-scene-d, pixel-scene-d-again, pixel-scene-e, "
-                    "pixel-scene-f, pixel-scene-g, "
+                    "pixel-scene-f, pixel-scene-g, pixel-scene-h, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

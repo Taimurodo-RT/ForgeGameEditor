@@ -1,5 +1,6 @@
 #include "forge/vector/scene_file.h"
 
+#include "forge/vector/timing.h"
 #include "json_text.h"
 
 #include <yyjson.h>
@@ -81,6 +82,7 @@ bool hex_color(std::string_view s) {
 struct Reader {
     SceneFile& f;
     std::string& why;
+    u64 version = 0;
 
     bool fail(const std::string& where, const std::string& what) {
         why = where + ": " + what;
@@ -168,6 +170,11 @@ struct Reader {
             if (!number(s, p.speed) || !(p.speed > 0)) return fail(at, "speed: нужно число больше 0");
         } else if (!stop) return fail(at, "speed: нужна скорость клипа");
         if (!order(yyjson_obj_get(v, "order"), p.order)) return fail(at, "order: нужен номер вызова, целое от 0");
+        if (yyjson_val* b = yyjson_obj_get(v, "blend")) {
+            if (stop) return fail(at, "blend: у stop смены нет");
+            if (version < 2) return fail(at, "blend: смена клипов — в файле версии 2");
+            if (!number(b, p.blend) || !(p.blend >= 0)) return fail(at, "blend: нужны секунды смены от 0");
+        }
         f.plays.push_back(std::move(p));
         return true;
     }
@@ -222,6 +229,7 @@ struct Reader {
             return why = "version " + std::to_string(yyjson_get_uint(ver)) + ": сцену отдал редактор новее этой игры (она читает " +
                          std::to_string(kSceneFileVersion) + ")",
                    false;
+        version = yyjson_get_uint(ver);
         if (!text(yyjson_obj_get(r, "name"), f.name) || f.name.empty()) return why = "name: нужно имя сцены строкой", false;
         if (!text(yyjson_obj_get(r, "from"), f.from)) return why = "from: нужен файл сцены в «Ресурсах» строкой", false;
         if (!pair(yyjson_obj_get(r, "canvas"), f.width, f.height) || !(f.width > 0) || !(f.height > 0))
@@ -321,7 +329,9 @@ bool read_scene_file(std::string_view json, SceneFile& out, std::string& why) {
 }
 
 std::string write_scene_file(const SceneFile& f) {
-    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(kSceneFileVersion) + ",\n  \"name\": ";
+    // Version 2 only with a blend (part 6г5а): a game made before reads the rest.
+    const bool blends = std::any_of(f.plays.begin(), f.plays.end(), [](const ScenePlay& p) { return p.blend > 0; });
+    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(blends ? 2 : 1) + ",\n  \"name\": ";
     put_string(out, f.name);
     out += ",\n  \"from\": ";
     put_string(out, f.from);
@@ -381,7 +391,9 @@ std::string write_scene_file(const SceneFile& f) {
         }
         put_field(out, "at", p.at);
         if (p.kind != ScenePlay::Kind::Stop) put_field(out, "speed", p.speed);
-        out += ", \"order\": " + std::to_string(p.order) + '}';
+        out += ", \"order\": " + std::to_string(p.order);
+        if (p.kind != ScenePlay::Kind::Stop && p.blend > 0) put_field(out, "blend", p.blend);
+        out += '}';
     });
     put_list(out, "music", f.music, [&](const SceneMusicCall& m) {
         out += "{\"at\": ";
@@ -437,47 +449,82 @@ bool check_scene(const SceneMotion& s, std::string& why) {
     return true;
 }
 
+namespace {
+
+// An actor's calls by start, then as made, and what it shows when one of them is the last begun.
+struct ActorCalls {
+    const SceneMotion& s;
+    std::span<const f64> held;
+    i32 actor = -1;
+    std::vector<i32> mine; // indices of file.plays
+
+    const ScenePlay& play(i64 k) const { return s.file.plays[static_cast<usize>(mine[static_cast<usize>(k)])]; }
+
+    f64 clip_length(const ScenePlay& p) const {
+        const MotionClip* clip = static_cast<usize>(actor) < s.actors.size() ? s.actors[static_cast<usize>(actor)].clip(p.clip) : nullptr;
+        return clip ? clip->length : 0;
+    }
+
+    // What the actor shows at t (the scene's waits up to then, of those at t made before `until`) when call k is the last
+    // begun: empty at rest. A stop holds what the one before it showed at its start.
+    std::vector<SceneBlendStep> shows(i64 k, f64 t, u32 until) const {
+        while (k >= 0 && play(k).kind == ScenePlay::Kind::Stop) {
+            t = play(k).at;
+            until = play(k--).order;
+        }
+        if (k < 0) return {};
+        const ScenePlay& p = play(k);
+        // The clip went on while the scene waited after its start.
+        f64 waited = 0;
+        for (usize i = 0; i < held.size() && i < s.file.stops.size(); ++i) {
+            const SceneStop& w = s.file.stops[i];
+            const bool after = w.at > p.at || (w.at == p.at && w.order > p.order);
+            const bool by_then = w.at < t || (w.at == t && w.order < until);
+            if (after && by_then) waited += held[i];
+        }
+        const f64 length = clip_length(p);
+        const f64 x = (t - p.at + waited) * p.speed;
+        SceneBlendStep step;
+        step.play = mine[static_cast<usize>(k)];
+        if (p.kind == ScenePlay::Kind::Play) step.time = std::min(x, length);
+        else step.time = length > 0 ? std::fmod(x, length) : 0;
+        step.time = std::max(0.0, step.time);
+        // Part 6г5а: its blend, over its clip's play, no longer than the clip when it is no loop.
+        const f64 blend = !(length > 0) ? 0 : p.kind == ScenePlay::Kind::Loop ? p.blend : std::min(p.blend, length);
+        if (blend > 0 && x < blend) step.k = timing(Timing::Smooth, std::max(0.0, x) / blend);
+        if (step.k >= 1) return {step};
+        // From what it showed at the play's start: the call before going on by its own time, or that held (a stop, a
+        // blend going on then, the character at rest).
+        std::vector<SceneBlendStep> out = shows(k - 1, p.at, p.order);
+        if (out.size() == 1 && out[0].play == mine[static_cast<usize>(k - 1)]) out = shows(k - 1, t, until);
+        if (out.empty()) out.push_back({});
+        out.push_back(step);
+        return out;
+    }
+};
+
+} // namespace
+
 SceneActorMoment scene_actor_moment(const SceneMotion& s, std::string_view actor, f64 t, std::span<const f64> held, i32 waiting) {
     const SceneFile& f = s.file;
-    const i32 ai = actor_index(f, actor);
-    if (ai < 0) return {};
-    std::vector<i32> mine;
+    ActorCalls calls{s, held, actor_index(f, actor), {}};
+    if (calls.actor < 0) return {};
     for (usize i = 0; i < f.plays.size(); ++i)
-        if (f.plays[i].actor == actor) mine.push_back(static_cast<i32>(i));
-    std::stable_sort(mine.begin(), mine.end(), [&](i32 a, i32 b) {
+        if (f.plays[i].actor == actor) calls.mine.push_back(static_cast<i32>(i));
+    std::stable_sort(calls.mine.begin(), calls.mine.end(), [&](i32 a, i32 b) {
         const ScenePlay &x = f.plays[static_cast<usize>(a)], &y = f.plays[static_cast<usize>(b)];
         return x.at != y.at ? x.at < y.at : x.order < y.order;
     });
-    auto play = [&](i64 k) -> const ScenePlay& { return f.plays[static_cast<usize>(mine[static_cast<usize>(k)])]; };
     const SceneStop* at = stop_of(f, waiting);
     i64 k = -1;
-    for (usize i = 0; i < mine.size(); ++i)
-        if (begun(play(static_cast<i64>(i)).at, play(static_cast<i64>(i)).order, t, at)) k = static_cast<i64>(i);
-    // A stop holds the moment the one before it showed at its start: the scene's waits up to then, of those made before it
-    // if at its start.
-    u32 until = std::numeric_limits<u32>::max();
-    while (k >= 0 && play(k).kind == ScenePlay::Kind::Stop) {
-        t = play(k).at;
-        until = play(k--).order;
-    }
-    if (k < 0) return {};
-    const ScenePlay& p = play(k);
-    // The clip went on while the scene waited after its start.
-    f64 waited = 0;
-    for (usize i = 0; i < held.size() && i < f.stops.size(); ++i) {
-        const SceneStop& w = f.stops[i];
-        const bool after = w.at > p.at || (w.at == p.at && w.order > p.order);
-        const bool by_then = w.at < t || (w.at == t && w.order < until);
-        if (after && by_then) waited += held[i];
-    }
-    const MotionClip* clip = static_cast<usize>(ai) < s.actors.size() ? s.actors[static_cast<usize>(ai)].clip(p.clip) : nullptr;
-    const f64 length = clip ? clip->length : 0;
-    const f64 x = (t - p.at + waited) * p.speed;
+    for (usize i = 0; i < calls.mine.size(); ++i)
+        if (begun(calls.play(static_cast<i64>(i)).at, calls.play(static_cast<i64>(i)).order, t, at)) k = static_cast<i64>(i);
+    std::vector<SceneBlendStep> steps = calls.shows(k, t, std::numeric_limits<u32>::max());
+    if (steps.empty()) return {};
     SceneActorMoment m;
-    m.play = mine[static_cast<usize>(k)];
-    if (p.kind == ScenePlay::Kind::Play) m.time = std::min(x, length);
-    else m.time = length > 0 ? std::fmod(x, length) : 0;
-    m.time = std::max(0.0, m.time);
+    m.play = steps.back().play;
+    m.time = steps.back().time;
+    if (steps.size() > 1) m.blend = std::move(steps);
     return m;
 }
 
@@ -631,15 +678,21 @@ ScenePose scene_pose(const SceneMotion& s, f64 t, std::span<const f64> held, i32
         // Where its parts stand: by its file, or by the stage's for one that plays no clip.
         const MotionFile* records = f.actors[a].motion.empty() ? &s.stage : file;
         ap.moment = scene_actor_moment(s, ap.id, t, held, waiting);
-        const MotionClip* clip = file && ap.moment.play >= 0 ? file->clip(f.plays[static_cast<usize>(ap.moment.play)].clip) : nullptr;
-        if (clip) {
-            ap.shown = motion_shown(*file, *clip, ap.moment.time);
-            ap.parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.drawing);
-            if (ap.shown.swap) ap.from_parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.from);
-            for (const MotionCopy& c : clip->copies)
-                if (motion_copy_drawn(c, ap.moment.time)) ap.copies.push_back(c);
-            ap.order = motion_order_at(*clip, ap.moment.time);
+        // A step's clip at its moment; the character at rest without one.
+        auto clip_pose = [&](const SceneBlendStep& st) {
+            const MotionClip* clip = file && st.play >= 0 ? file->clip(f.plays[static_cast<usize>(st.play)].clip) : nullptr;
+            return clip ? motion_clip_pose(*file, *clip, st.time) : MotionClipPose{};
+        };
+        MotionClipPose shown = clip_pose({ap.moment.play, ap.moment.time});
+        if (file && !ap.moment.blend.empty()) {
+            shown = clip_pose(ap.moment.blend.front());
+            for (usize i = 1; i < ap.moment.blend.size(); ++i) shown = motion_blend(*file, shown, clip_pose(ap.moment.blend[i]), ap.moment.blend[i].k);
         }
+        ap.parts = std::move(shown.parts);
+        ap.copies = std::move(shown.copies);
+        ap.order = std::move(shown.order);
+        ap.shown = std::move(shown.shown);
+        ap.from_parts = std::move(shown.from_parts);
         // The scene's over the clip's, in the drawing shown and, in a swap, in the one it comes from.
         auto put_over = [&](std::vector<MotionPartPose>& parts, std::string_view drawing) {
             for (const MotionPartPose& sp : over[a]) {

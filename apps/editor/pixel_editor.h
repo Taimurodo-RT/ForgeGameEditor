@@ -622,6 +622,7 @@ private:
         int index = 0;
         Rml::String style, label, title;
         bool selected = false, loop = false, stop = false;
+        Rml::String blend; // part 6г5а: the width of its blend's wedge from its left edge; empty without one
     };
     struct MusicView {
         int index = 0; // the call that began it

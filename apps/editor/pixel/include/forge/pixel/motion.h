@@ -62,6 +62,13 @@ PropValue rest_value(Prop p);
 // drawing change at k = 1 only (a frame shows a swap's way by Pose::swap_k).
 PropValue mix(Prop p, const PropValue& a, const PropValue& b, f64 k);
 
+// A blend of two of a character's poses (part 6г5а of docs/models/сцены-модель.md, as the game's vector::motion_blend):
+// the pose k of the way from `from` to `to`. Each property of each part mixed by mix() (one a side has not is at rest
+// there), the link `from`'s, the order's steps `from`'s; a copy only one side draws fades out by 1 − k or in by k where
+// that side has it; of the drawings (the rig's), each weighed (1 − k) of its share in `from` and k in `to`, the one `to`
+// shows on top of the heaviest other, as a swap. k 0 and 1 give `from` and `to`.
+Pose blend_pose(const Rig& rig, const Pose& from, const Pose& to, f64 k);
+
 // A call of the code: file 0 is the character's script, the others the modules it requires (Recording::files); site
 // is its place in that file's CodeSites::sites(), -1 for none.
 struct SiteRef {
@@ -163,10 +170,11 @@ struct Mark {
     u32 order = 0;
 };
 
-// actor("ёжик"):play("walk"[, { speed, params }]), :loop(…) and :stop() in a scene (part 6а of
+// actor("ёжик"):play("walk"[, { speed, params, blend }]), :loop(…) and :stop() in a scene (part 6а of
 // docs/models/сцены-модель.md): from `start` the actor plays its character's clip, once (holding its last pose after)
 // or round and round, or stands in the pose it showed then. A play waits `length` = clip_length / speed; a loop and a
-// stop do not wait.
+// stop do not wait. Part 6г5а: with `blend`, the clip comes in over that many seconds of its play from what the actor
+// showed (scene_file.h, SceneActorMoment).
 struct ActorPlay {
     enum class Kind : u8 { Play, Loop, Stop };
     Kind kind = Kind::Play;
@@ -180,6 +188,7 @@ struct ActorPlay {
     SiteRef site;       // the play(…) call
     SiteRef start_site; // the at(…) or delay(…) whose first argument is its start, when it starts there
     u32 order = 0;      // of two that start together, the later made wins
+    f64 blend = 0;      // seconds of the clip's play; 0: at once
 };
 
 // wait(s) and t:wait(s): a pause the timeline shows as a block too.

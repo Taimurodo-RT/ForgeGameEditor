@@ -1,8 +1,12 @@
 #include "forge/pixel/motion.h"
 
+#include "forge/vector/motion_file.h"
+
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <map>
+#include <set>
 
 namespace forge::pixel {
 
@@ -585,6 +589,68 @@ void put(Pose& out, const std::string& id, Prop prop, const PropValue& v) {
     }
 }
 
+// A property's value in the frame, as put() writes it: the rest for a part it has not.
+PropValue taken(const Pose& pose, const std::string& id, Prop prop) {
+    PropValue v = rest_value(prop);
+    if (prop == Prop::Morph) {
+        if (const auto m = pose.morphs.find(id); m != pose.morphs.end() && m->second.k > 0) {
+            v.v = m->second.k;
+            v.target = m->second.target;
+        }
+        return v;
+    }
+    const auto it = pose.parts.find(id);
+    if (it == pose.parts.end()) return v;
+    const PartPose& pp = it->second;
+    auto shared = [&](bool has, const Rgba8& c, f64 k) {
+        if (!has) return;
+        v.v = k;
+        v.color = c;
+    };
+    switch (prop) {
+    case Prop::X: v.v = pp.x; break;
+    case Prop::Y: v.v = pp.y; break;
+    case Prop::Rot: v.v = pp.rot; break;
+    case Prop::Scale: v.v = pp.scale; break;
+    case Prop::Sx: v.v = pp.sx; break;
+    case Prop::Sy: v.v = pp.sy; break;
+    case Prop::SkewX: v.v = pp.skew_x; break;
+    case Prop::SkewY: v.v = pp.skew_y; break;
+    case Prop::Opacity: v.v = pp.opacity; break;
+    case Prop::Fill: shared(pp.has_fill, pp.fill, pp.fill_k); break;
+    case Prop::Stroke: shared(pp.has_stroke, pp.stroke, pp.stroke_k); break;
+    case Prop::StrokeWidth:
+        if (pp.has_stroke_width) {
+            v.v = pp.stroke_width_k;
+            v.n = pp.stroke_width;
+        }
+        break;
+    case Prop::Dash: v.v = pp.dash; break;
+    case Prop::DrawFrom: v.v = pp.draw_from; break;
+    case Prop::DrawTo: v.v = pp.draw_to; break;
+    case Prop::Visible: v.v = pp.visible ? 1 : 0; break;
+    case Prop::Tint: shared(pp.has_tint, pp.tint, pp.tint_k); break;
+    case Prop::Flash: v.v = pp.flash; break;
+    case Prop::FlashColor: shared(pp.has_flash_color, pp.flash_color, pp.flash_color_k); break;
+    case Prop::Blur: v.v = pp.blur; break;
+    case Prop::Shadow: shared(pp.has_shadow, pp.shadow, pp.shadow_k); break;
+    case Prop::ShadowX: v.v = pp.shadow_x; break;
+    case Prop::ShadowY: v.v = pp.shadow_y; break;
+    case Prop::ShadowBlur: v.v = pp.shadow_blur; break;
+    case Prop::Mask:
+        if (!pp.mask.empty()) {
+            v.v = pp.mask_invert ? 2 : 1;
+            v.target = pp.mask;
+        }
+        break;
+    case Prop::Morph:
+    case Prop::Link:
+    case Prop::Order:
+    case Prop::Drawing: break;
+    }
+    return v;
+}
+
 void put_link(Pose& out, const std::string& id, const PropValue& v, const Affine& carry) {
     PartPose& pp = out.parts[id];
     pp.carry_by = v.v > 0 ? v.target : std::string();
@@ -594,6 +660,76 @@ void put_link(Pose& out, const std::string& id, const PropValue& v, const Affine
 std::string drawing_name(const PropValue& v) { return v.target == "draw" ? std::string() : v.target; }
 
 } // namespace
+
+Pose blend_pose(const Rig& rig, const Pose& from, const Pose& to, f64 k) {
+    if (!(k > 0)) return from;
+    if (k >= 1) return to;
+    // The drawings by the file's names (the main one "draw"), so that of two as heavy the same one is under as in the game.
+    auto file_name = [](const std::string& d) { return d.empty() ? std::string(vector::kMotionMainDrawing) : d; };
+    std::map<std::string, f64> weight;
+    auto weigh = [&](const Pose& p, f64 of) {
+        auto add = [&](const std::string& d, f64 w) {
+            if (w > 0 && rig.drawing(d)) weight[file_name(d)] += w;
+        };
+        if (p.swap) {
+            add(p.swap_from, of * (1 - p.swap_k));
+            add(p.drawing, of * p.swap_k);
+        } else
+            add(p.drawing, of);
+    };
+    weigh(from, 1 - k);
+    weigh(to, k);
+    const std::string top = file_name(to.drawing);
+    std::string under;
+    for (const auto& [d, w] : weight)
+        if (d != top && (under.empty() || w > weight[under])) under = d;
+
+    Pose out;
+    out.drawing = to.drawing;
+    out.order = from.order;
+    std::set<std::string> from_copies, to_copies;
+    for (const PartCopy& c : from.copies) from_copies.insert(c.id);
+    for (const PartCopy& c : to.copies) to_copies.insert(c.id);
+    out.copies = to.copies;
+    for (const PartCopy& c : from.copies)
+        if (!to_copies.count(c.id)) out.copies.push_back(c);
+    std::set<std::string> ids;
+    for (const Pose* p : {&from, &to}) {
+        for (const auto& [id, pp] : p->parts) ids.insert(id);
+        for (const auto& [id, m] : p->morphs) ids.insert(id);
+    }
+    ids.insert(from_copies.begin(), from_copies.end());
+    ids.insert(to_copies.begin(), to_copies.end());
+    for (const std::string& id : ids) {
+        const bool going = from_copies.count(id) && !to_copies.count(id), coming = to_copies.count(id) && !from_copies.count(id);
+        if (going || coming) {
+            // A copy where the side that draws it has it.
+            const Pose& side = going ? from : to;
+            PartPose pp;
+            if (const auto it = side.parts.find(id); it != side.parts.end()) pp = it->second;
+            pp.opacity *= going ? 1 - k : k;
+            out.parts[id] = pp;
+            if (const auto m = side.morphs.find(id); m != side.morphs.end()) out.morphs[id] = m->second;
+            continue;
+        }
+        const bool part = from.parts.count(id) || to.parts.count(id);
+        for (usize i = 0; i < kPropCount; ++i) {
+            const Prop p = static_cast<Prop>(i);
+            if (p == Prop::Link || p == Prop::Order || p == Prop::Drawing || (!part && p != Prop::Morph)) continue;
+            put(out, id, p, mix(p, taken(from, id, p), taken(to, id, p), k));
+        }
+        if (const auto it = from.parts.find(id); it != from.parts.end()) { // the link is from's until k is 1
+            out.parts[id].carry_by = it->second.carry_by;
+            out.parts[id].carry = it->second.carry;
+        }
+    }
+    if (!under.empty()) {
+        out.swap = true;
+        out.swap_from = under == vector::kMotionMainDrawing ? std::string() : under;
+        out.swap_k = weight[top] / (weight[top] + weight[under]);
+    }
+    return out;
+}
 
 const StartValue* start_value(const Recording& rec, u32 part, Prop p) {
     const usize i = part * kPropCount + static_cast<usize>(p);

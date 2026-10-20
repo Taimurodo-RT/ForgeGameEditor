@@ -1282,6 +1282,98 @@ std::vector<MotionOrderStep> motion_order_at(const MotionClip& clip, f64 t) {
     return out;
 }
 
+MotionClipPose motion_clip_pose(const MotionFile& file, const MotionClip& clip, f64 t) {
+    MotionClipPose out;
+    out.shown = motion_shown(file, clip, t);
+    out.parts = motion_pose(file, clip, t, out.shown.drawing);
+    if (out.shown.swap) out.from_parts = motion_pose(file, clip, t, out.shown.from);
+    for (const MotionCopy& c : clip.copies)
+        if (motion_copy_drawn(c, t)) out.copies.push_back(c);
+    out.order = motion_order_at(clip, t);
+    return out;
+}
+
+MotionClipPose motion_blend(const MotionFile& file, const MotionClipPose& from, const MotionClipPose& to, f64 k) {
+    if (!(k > 0)) return from;
+    if (k >= 1) return to;
+    auto main = [](const std::string& d) { return d.empty() ? std::string(kMotionMainDrawing) : d; };
+    // The drawings and their shares: a pose shows one, a swap two.
+    std::map<std::string, f64> weight;
+    auto weigh = [&](const MotionClipPose& p, f64 of) {
+        const std::string shown = main(p.shown.drawing);
+        const std::string before = main(p.shown.from);
+        auto add = [&](const std::string& d, f64 w) {
+            if (w > 0 && (d == kMotionMainDrawing || file.drawing(d))) weight[d] += w;
+        };
+        if (p.shown.swap) {
+            add(before, of * (1 - p.shown.k));
+            add(shown, of * p.shown.k);
+        } else
+            add(shown, of);
+    };
+    weigh(from, 1 - k);
+    weigh(to, k);
+    const std::string top = main(to.shown.drawing);
+    std::string under;
+    for (const auto& [d, w] : weight)
+        if (d != top && (under.empty() || w > weight[under])) under = d;
+
+    MotionClipPose out;
+    out.shown.drawing = top;
+    out.order = from.order;
+    // The copies drawn on either side; one only one side draws comes in or goes out with its opacity.
+    std::set<std::string> from_copies, to_copies;
+    for (const MotionCopy& c : from.copies) from_copies.insert(c.id);
+    for (const MotionCopy& c : to.copies) to_copies.insert(c.id);
+    out.copies = to.copies;
+    for (const MotionCopy& c : from.copies)
+        if (!to_copies.count(c.id)) out.copies.push_back(c);
+    std::map<std::string, const MotionPartPose*> a, b;
+    for (const MotionPartPose& p : from.parts) a.emplace(p.id, &p);
+    for (const MotionPartPose& p : to.parts) b.emplace(p.id, &p);
+    std::vector<std::string> ids;
+    for (const MotionPartPose& p : to.parts) ids.push_back(p.id);
+    for (const MotionPartPose& p : from.parts)
+        if (!b.count(p.id)) ids.push_back(p.id);
+    for (const std::set<std::string>* copies : {&to_copies, &from_copies}) // a copy without tracks fades too
+        for (const std::string& id : *copies)
+            if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
+    constexpr usize kOpacity = static_cast<usize>(MotionProp::Opacity);
+    for (const std::string& id : ids) {
+        const auto ai = a.find(id), bi = b.find(id);
+        const MotionPartPose* pa = ai == a.end() ? nullptr : ai->second;
+        const MotionPartPose* pb = bi == b.end() ? nullptr : bi->second;
+        MotionPartPose pp;
+        pp.id = id;
+        const bool going = from_copies.count(id) && !to_copies.count(id), coming = to_copies.count(id) && !from_copies.count(id);
+        if (going || coming) {
+            // A copy where the side that draws it has it.
+            if (const MotionPartPose* side = going ? pa : pb) pp = *side;
+            else
+                for (usize i = 0; i < kMotionPropCount; ++i) pp.values[i] = motion_rest(static_cast<MotionProp>(i));
+            if (!pp.has[kOpacity]) pp.values[kOpacity] = motion_rest(MotionProp::Opacity);
+            pp.has[kOpacity] = true;
+            pp.values[kOpacity].v *= going ? 1 - k : k;
+        } else
+            for (usize i = 0; i < kMotionPropCount; ++i) {
+                const MotionProp prop = static_cast<MotionProp>(i);
+                pp.has[i] = (pa && pa->has[i]) || (pb && pb->has[i]);
+                const MotionValue rest = motion_rest(prop);
+                pp.values[i] = !pp.has[i] ? rest : motion_mix(prop, pa && pa->has[i] ? pa->values[i] : rest, pb && pb->has[i] ? pb->values[i] : rest, k);
+            }
+        motion_part_pose(file, pp, top);
+        out.parts.push_back(std::move(pp));
+    }
+    if (!under.empty()) {
+        out.shown.swap = true;
+        out.shown.from = under;
+        out.shown.k = weight[top] / (weight[top] + weight[under]);
+        out.from_parts = out.parts;
+        for (MotionPartPose& pp : out.from_parts) motion_part_pose(file, pp, under);
+    }
+    return out;
+}
+
 MotionClip motion_clip_with(const MotionFile& file, const MotionClip& clip, const std::vector<MotionParam>& values) {
     MotionClip out = clip;
     for (const MotionParam& given : values) {

@@ -241,6 +241,8 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("st_files", &forge::edits::ProjectEdits::st_files);
     t.field("st_out_files", &forge::edits::ProjectEdits::st_out_files);
     t.field("st_wide", &forge::edits::ProjectEdits::st_wide);
+    t.field("st_blend_frames", &forge::edits::ProjectEdits::st_blend_frames);
+    t.field("st_blend_files", &forge::edits::ProjectEdits::st_blend_files);
 }
 
 namespace forge::edits {

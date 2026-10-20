@@ -166,9 +166,17 @@ bool load_character(const SceneFiles& files, const std::string& file, SceneChara
 // the seconds the scene waited at each of rec.stops, or none; a clip goes on while the scene waits, so its moment is
 // ahead by the waits after its start up to t (a stop at its start counts when made before it). `waiting`: the stop of
 // rec.stops the scene stands at now (-1: none), what was made after it at its moment not begun yet.
+// Part 6г5а: while a play's blend goes, `blend` is what the actor shows, as vector::SceneActorMoment's: the first step
+// at rest (null play) or a clip at its moment, each next blended in over it by its k (blend_pose), the last this play.
+struct ActorBlendStep {
+    const ActorPlay* play = nullptr;
+    f64 time = 0;
+    f64 k = 1;
+};
 struct ActorMoment {
     const ActorPlay* play = nullptr;
     f64 time = 0;
+    std::vector<ActorBlendStep> blend; // empty when no blend goes
 };
 ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
 

@@ -286,6 +286,7 @@ bool build(Scene& scene, std::string_view name, std::string_view from, const Sce
         sp.at = p.start;
         sp.speed = p.speed;
         sp.order = p.order;
+        if (p.kind != ActorPlay::Kind::Stop) sp.blend = p.blend;
         const i32 a = actor_index(p.actor);
         if (a < 0) return why = "на сцене нет актёра «" + p.actor + "»", false;
         if (p.kind != ActorPlay::Kind::Stop) {
@@ -535,8 +536,14 @@ bool check_scene_gift(Scene& scene, const vector::SceneMotion& motion, std::stri
                 if (f.actors[k].id == p.actor) return static_cast<i32>(k);
             return -1;
         }();
-        if (p.kind == vector::ScenePlay::Kind::Play && a >= 0)
-            if (const MotionClip* c = motion.actors[static_cast<usize>(a)].clip(p.clip)) add(p.at + c->length / p.speed);
+        const MotionClip* c = a >= 0 && p.kind != vector::ScenePlay::Kind::Stop ? motion.actors[static_cast<usize>(a)].clip(p.clip) : nullptr;
+        if (c && p.kind == vector::ScenePlay::Kind::Play) add(p.at + c->length / p.speed);
+        // Part 6г5а: a blend's start, middle and end in the scene's seconds (no waits).
+        if (c && p.blend > 0 && c->length > 0) {
+            const f64 lasts = (p.kind == vector::ScenePlay::Kind::Loop ? p.blend : std::min(p.blend, c->length)) / p.speed;
+            add(p.at + lasts / 2);
+            add(p.at + lasts);
+        }
     }
     for (const vector::SceneStop& s : f.stops) add(s.at);
     for (const vector::SceneTransition& t : f.transitions) {
@@ -562,15 +569,17 @@ bool check_scene_gift(Scene& scene, const vector::SceneMotion& motion, std::stri
                               near(heard[i].since, played[i].since) && near(heard[i].volume, played[i].volume);
             if (!same) return differs("музыка «" + (i < heard.size() ? heard[i].name : played[i].name) + "»");
         }
-        // Each value of a part, where the files keep it exactly; the parts placed in `rig`'s drawing `drawing` with their
-        // records in `file`.
+        // Each value of a part, where the files keep it exactly (the stage's clip and each clip at its moment); the parts
+        // placed in `rig`'s drawing `drawing` with their records in `file`.
+        using Clips = std::vector<std::pair<const MotionClip*, f64>>;
         auto values = [&](const Pose& pose, const std::vector<MotionPartPose>& parts, const std::vector<std::string>& ids, const MotionFile* file,
-                          const Rig* rig, const std::vector<vector::MotionCopy>& copies, const std::string& drawing, const MotionClip* clip,
-                          f64 clip_t) {
+                          const Rig* rig, const std::vector<vector::MotionCopy>& copies, const std::string& drawing, const Clips& clips) {
             for (const std::string& id : ids)
                 for (usize p = 0; p < kProps; ++p) {
                     const auto mp = static_cast<MotionProp>(p);
-                    if (mp == MotionProp::Drawing || !exact(stage_clip, id, mp, t) || (clip && !exact(*clip, id, mp, clip_t))) continue;
+                    if (mp == MotionProp::Drawing || !exact(stage_clip, id, mp, t) ||
+                        std::any_of(clips.begin(), clips.end(), [&](const auto& c) { return !exact(*c.first, id, mp, c.second); }))
+                        continue;
                     if (!vector::motion_same(mp, screen_value(pose, id, mp), game_value(parts, id, mp))) return differs("«" + id + "», " + prop_words(mp));
                 }
             // A part the clip moves or links stands by its record in the file, where the drawing has it (without one the game
@@ -601,8 +610,8 @@ bool check_scene_gift(Scene& scene, const vector::SceneMotion& motion, std::stri
         frames.insert(frames.end(), std::begin(game.frames), std::end(game.frames));
         std::vector<std::string> frame_ids{kCameraPart};
         frame_ids.insert(frame_ids.end(), std::begin(kLayerParts), std::end(kLayerParts));
-        if (!values(tab.scene, frames, frame_ids, nullptr, nullptr, {}, vector::kMotionMainDrawing, nullptr, 0)) return false;
-        if (!values(tab.stage, game.stage, ids_of(tab.stage, game.stage), &motion.stage, &scene.rig(), stage_clip.copies, vector::kMotionMainDrawing, nullptr, 0))
+        if (!values(tab.scene, frames, frame_ids, nullptr, nullptr, {}, vector::kMotionMainDrawing, {})) return false;
+        if (!values(tab.stage, game.stage, ids_of(tab.stage, game.stage), &motion.stage, &scene.rig(), stage_clip.copies, vector::kMotionMainDrawing, {}))
             return false;
         if (copy_ids(tab.stage.copies) != copy_ids(game.copies)) return differs("копии на сцене");
         if (!same_order(tab.stage.order, game.order)) return differs("порядок частей сцены");
@@ -612,13 +621,27 @@ bool check_scene_gift(Scene& scene, const vector::SceneMotion& motion, std::stri
             const ActorMoment m = actor_moment(*rec, id, t, held, waiting);
             const i32 play = m.play ? static_cast<i32>(m.play - rec->plays.data()) : -1;
             if (play != ap.moment.play || (play >= 0 && !near(m.time, ap.moment.time))) return differs("«" + id + "», клип и его миг");
+            // Part 6г5а: in a blend, the same steps, each at its moment and share.
+            bool same_blend = m.blend.size() == ap.moment.blend.size();
+            for (usize i = 0; same_blend && i < m.blend.size(); ++i) {
+                const ActorBlendStep& x = m.blend[i];
+                const vector::SceneBlendStep& y = ap.moment.blend[i];
+                same_blend = (x.play ? static_cast<i32>(x.play - rec->plays.data()) : -1) == y.play && near(x.time, y.time) && near(x.k, y.k);
+            }
+            if (!same_blend) return differs("«" + id + "», смена клипов");
             const Pose& pose = tab.actors[id];
-            const MotionClip* clip = play >= 0 ? motion.actors[a].clip(f.plays[static_cast<usize>(play)].clip) : nullptr;
+            Clips clips;
+            auto clip_of = [&](i32 at, f64 time) {
+                if (const MotionClip* c = at >= 0 ? motion.actors[a].clip(f.plays[static_cast<usize>(at)].clip) : nullptr) clips.push_back({c, time});
+            };
+            if (ap.moment.blend.empty()) clip_of(play, ap.moment.time);
+            for (const vector::SceneBlendStep& st : ap.moment.blend) clip_of(st.play, st.time);
             // The records of its parts: its file's, or the stage's for an actor with none.
             const MotionFile& file = f.actors[a].motion.empty() ? motion.stage : motion.actors[a];
-            const bool drawing_exact = !clip || exact(*clip, kDrawingPart, MotionProp::Drawing, ap.moment.time);
+            const bool drawing_exact =
+                std::all_of(clips.begin(), clips.end(), [&](const auto& c) { return exact(*c.first, kDrawingPart, MotionProp::Drawing, c.second); });
             if (drawing_exact && !screen_same_shown(screen_shown(pose), ap.shown)) return differs("«" + id + "», рисунок");
-            if (!values(pose, ap.parts, ids_of(pose, ap.parts), &file, scene.actor_rig(id), ap.copies, ap.shown.drawing, clip, ap.moment.time)) return false;
+            if (!values(pose, ap.parts, ids_of(pose, ap.parts), &file, scene.actor_rig(id), ap.copies, ap.shown.drawing, clips)) return false;
             if (copy_ids(pose.copies) != copy_ids(ap.copies)) return differs("«" + id + "», копии");
             if (!same_order(pose.order, ap.order)) return differs("«" + id + "», порядок частей");
         }

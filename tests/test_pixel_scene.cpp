@@ -51,6 +51,7 @@
 #include <functional>
 #include <map>
 #include <numbers>
+#include <set>
 #include <span>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
@@ -557,7 +558,8 @@ TEST_CASE("Сцена: что сцене нельзя — со строкой") 
         {"    actor(\"лес\"):play(\"walk\")", "на сцене нет актёра «лес»"},
         {"    actor(\"нет\"):to({ x = 1 }, 0)", "на сцене нет актёра «нет»"},
         {"    actor(\"ёжик\"):play(\"walk\", { speed = 0 })", "speed — число больше 0"},
-        {"    actor(\"ёжик\"):play(\"walk\", { blend = 0.2 })", "blend — в части 6г"},
+        {"    actor(\"ёжик\"):play(\"walk\", { blend = -1 })", "play: blend — число секунд, 0 или больше"},
+        {"    actor(\"ёжик\"):loop(\"walk\", { blend = \"x\" })", "loop: blend — число секунд, 0 или больше"},
         {"    actor(\"ёжик\"):play(\"walk\", { pace = 1 })", "поля «pace» нет"},
         {"    actor(\"ёжик\"):play(\"walk\", { params = { len = \"x\" } })", "params — таблица чисел"},
         {"    actor(\"ёжик\"):play()", "первым — имя клипа"},
@@ -816,7 +818,7 @@ TEST_CASE("Сцена: кадр — фон, картинка и актёры, н
     wait(0.4))");
     record(s);
     CHECK(s.recording()->length == doctest::Approx(1.2));
-    // The characters drawn alone, as their own tabs draw them.
+    // The characters drawn alone, as their own tabs draw them, not cut at their canvases (as in a scene: part 6г2).
     struct Alone {
         const char* id;
         const char* file;
@@ -828,6 +830,7 @@ TEST_CASE("Сцена: кадр — фон, картинка и актёры, н
         std::string why;
         REQUIRE(load_character(files.scene(), a.file, a.c, why));
         REQUIRE(a.code.load(a.c.code));
+        a.c.rig.uncut();
     }
     for (const f64 t : {0.0, 0.1, 0.35, 0.45, 1.0, 1.2}) {
         CAPTURE(t);
@@ -2182,7 +2185,7 @@ TEST_CASE("Сцена в игре: scene.json — каждое поле туда
     };
     const Bad bad[] = {
         {"\"forge\": \"scene\"", "\"forge\": \"screen\"", "forge: "},
-        {"\"version\": 1", "\"version\": 2", "version 2: сцену отдал редактор новее этой игры"},
+        {"\"version\": 1", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
         {"\"name\": \"Вступление\"", "\"name\": \"\"", "name: "},
         {"\"canvas\": [160, 120]", "\"canvas\": [160, 0]", "canvas: "},
         {"\"background\": \"#203040\"", "\"background\": \"red\"", "background: "},
@@ -3137,6 +3140,16 @@ TEST_CASE("Сцена в игре: рамка актёра — куда дотя
     CHECK(r[2] == doctest::Approx(46));
     CHECK(r[3] == doctest::Approx(58));
     CHECK_FALSE(s.actor_reach("лиса", r));
+    // The tab does not cut it at its canvas either: the head above it is drawn (over the sky).
+    {
+        const assets::CookedTexture frame = s.draw(160, 120);
+        const vector::Point above = (s.rig().to_pixels(160, 120) * s.rig().global_matrix(s.rig().part("ёжик"))).apply({32, -3});
+        CAPTURE(above.x);
+        CAPTURE(above.y);
+        REQUIRE(above.x >= 0);
+        REQUIRE(above.y >= 0);
+        CHECK(near(pixel_at(frame, static_cast<u32>(above.x), static_cast<u32>(above.y)), Rgba8{0xc0, 0x90, 0x60, 255}));
+    }
     // The game draws it in that box: the head above its canvas is there.
     const vector::ScenePose pose = vector::scene_pose(gift.motion, 0.25);
     ui::SvgPose hog;
@@ -4486,4 +4499,333 @@ TEST_CASE("Сцена в игре: сцена за сценой — прежня
     CHECK(mix(middle(1.0 / 60), kOutsideScene, kOutsideScene, 0));
     std::error_code ec;
     fs::remove_all(game_dir, ec);
+}
+
+namespace {
+
+// Part 6г5а: the hedgehog's calls with blends from each kind of what it showed, the beetle from rest; lines from 11.
+// A play waits for its clip: spawned, the next line comes at once.
+const char* kBlendScene = R"(    spawn(actor("жук"):play("hop", { blend = 0.6 }))
+    actor("ёжик"):loop("walk")
+    wait(0.6)
+    spawn(actor("ёжик"):play("wave", { blend = 0.3 }))
+    wait(0.1)
+    spawn(actor("ёжик"):play("walk", { blend = 0.4 }))
+    wait(1)
+    actor("ёжик"):stop()
+    wait(0.2)
+    actor("ёжик"):loop("walk", { blend = 0.8, speed = 2 })
+    wait(0.5)
+    actor("ёжик"):play("stretch", { blend = 5, params = { len = 0 } })
+    wait(0.3)
+    spawn(actor("ёжик"):play("wave", { blend = 2 }))
+    wait(0.1)
+    wait_action("Поговорить")
+    wait(0.9))";
+
+f64 smooth(f64 x) { return vector::timing(vector::Timing::Smooth, x); }
+
+} // namespace
+
+TEST_CASE("Смешивание (6г5а): что актёр показывает в смене — от клипа, который идёт, от снимка смены, от stop, от покоя") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& walk_loop = play_of(rec, "ёжик", ActorPlay::Kind::Loop);
+    const ActorPlay& wave = play_of(rec, "ёжик", ActorPlay::Kind::Play, 0);
+    const ActorPlay& walk = play_of(rec, "ёжик", ActorPlay::Kind::Play, 1);
+    const ActorPlay& fast = play_of(rec, "ёжик", ActorPlay::Kind::Loop, 1);
+    const ActorPlay& stretch = play_of(rec, "ёжик", ActorPlay::Kind::Play, 2);
+    const ActorPlay& wave_again = play_of(rec, "ёжик", ActorPlay::Kind::Play, 3);
+    const ActorPlay& hop = play_of(rec, "жук", ActorPlay::Kind::Play);
+    CHECK(wave.blend == 0.3);
+    CHECK(walk_loop.blend == 0);
+    CHECK(fast.blend == 0.8);
+    CHECK(stretch.clip_length == 0);
+    struct Step {
+        const ActorPlay* play;
+        f64 time, k;
+    };
+    auto steps = [&](const char* actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1) {
+        std::vector<Step> out;
+        for (const ActorBlendStep& st : actor_moment(rec, actor, t, held, waiting).blend) out.push_back({st.play, st.time, st.k});
+        return out;
+    };
+    auto same = [](const std::vector<Step>& a, const std::vector<Step>& b) {
+        bool ok = a.size() == b.size();
+        for (usize i = 0; ok && i < a.size(); ++i) ok = a[i].play == b[i].play && std::abs(a[i].time - b[i].time) < 1e-9 && std::abs(a[i].k - b[i].k) < 1e-9;
+        return ok;
+    };
+    // The beetle from rest, over 0,6 s of hop's 0,8.
+    CHECK(same(steps("жук", 0.1), {{nullptr, 0, 1}, {&hop, 0.1, smooth(0.1 / 0.6)}}));
+    CHECK(steps("жук", 0.6).empty());
+    // wave from the walk going on round by its own time.
+    CHECK(same(steps("ёжик", 0.65), {{&walk_loop, 0.15, 1}, {&wave, 0.05, smooth(0.05 / 0.3)}}));
+    CHECK(same(steps("ёжик", 0.69), {{&walk_loop, 0.19, 1}, {&wave, 0.09, smooth(0.09 / 0.3)}}));
+    // walk in the middle of wave's blend: from what was shown then, held, no chain going on.
+    const std::vector<Step> shown_then = {{&walk_loop, 0.2, 1}, {&wave, 0.1, smooth(0.1 / 0.3)}};
+    for (const f64 t : {0.75, 0.9, 1.05}) {
+        CAPTURE(t);
+        std::vector<Step> want = shown_then;
+        want.push_back({&walk, t - 0.7, smooth((t - 0.7) / 0.4)});
+        CHECK(same(steps("ёжик", t), want));
+    }
+    const ActorMoment over = actor_moment(rec, "ёжик", 1.2);
+    CHECK(over.play == &walk);
+    CHECK(over.time == doctest::Approx(0.5));
+    CHECK(over.blend.empty());
+    // After the stop, the loop at speed 2 from the pose it held; a loop's blend longer than its clip is not cut.
+    CHECK(same(steps("ёжик", 1.95), {{&walk, 0.5, 1}, {&fast, 0.1, smooth(0.1 / 0.8)}}));
+    CHECK(same(steps("ёжик", 2.2), {{&walk, 0.5, 1}, {&fast, 0.1, smooth(0.6 / 0.8)}}));
+    CHECK(steps("ёжик", 2.31).empty());
+    // A clip of length 0 comes at once; wave's blend of 2 s no longer than wave, from it.
+    CHECK(actor_moment(rec, "ёжик", 2.5).play == &stretch);
+    CHECK(steps("ёжик", 2.5).empty());
+    CHECK(same(steps("ёжик", 2.75), {{&stretch, 0, 1}, {&wave_again, 0.05, smooth(0.05 / 0.5)}}));
+    CHECK(steps("ёжик", 3.2).empty());
+    // The scene waits at 2,8: the new clip goes on, its blend too.
+    REQUIRE(rec.stops.size() == 1);
+    const std::vector<f64> held = {0.2};
+    CHECK(same(steps("ёжик", 2.8, {}, 0), {{&stretch, 0, 1}, {&wave_again, 0.1, smooth(0.1 / 0.5)}}));
+    CHECK(same(steps("ёжик", 2.8, held, 0), {{&stretch, 0, 1}, {&wave_again, 0.3, smooth(0.3 / 0.5)}}));
+    CHECK(same(steps("ёжик", 2.9, held), {{&stretch, 0, 1}, {&wave_again, 0.4, smooth(0.4 / 0.5)}}));
+    CHECK(steps("ёжик", 3.05, held).empty());
+
+    // The files say the same at every moment, with and without the wait.
+    CHECK(gift.motion.file.plays[static_cast<usize>(&wave - rec.plays.data())].blend == 0.3);
+    for (const std::vector<f64>& h : {std::vector<f64>{}, held})
+        for (f64 t = 0; t <= rec.length + 1e-9; t += 0.01)
+            for (i32 waiting = -1; waiting < 1; ++waiting)
+                for (const char* actor : {"ёжик", "жук"}) {
+                    CAPTURE(t);
+                    CAPTURE(actor);
+                    CAPTURE(waiting);
+                    const ActorMoment tab = actor_moment(rec, actor, t, h, waiting);
+                    const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, actor, t, h, waiting);
+                    CHECK(game.play == (tab.play ? static_cast<i32>(tab.play - rec.plays.data()) : -1));
+                    CHECK(game.time == doctest::Approx(tab.time));
+                    REQUIRE(game.blend.size() == tab.blend.size());
+                    for (usize i = 0; i < tab.blend.size(); ++i) {
+                        CHECK(game.blend[i].play == (tab.blend[i].play ? static_cast<i32>(tab.blend[i].play - rec.plays.data()) : -1));
+                        CHECK(game.blend[i].time == doctest::Approx(tab.blend[i].time));
+                        CHECK(game.blend[i].k == doctest::Approx(tab.blend[i].k));
+                    }
+                }
+}
+
+TEST_CASE("Смешивание (6г5а): поза в смене — свойства, рисунки и метки по правилам 5е, во вкладке и в игре") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    const vector::MotionFile& hf = m.actors[0];
+    const vector::MotionFile& bf = m.actors[1];
+    using P = vector::MotionProp;
+    auto clip_value = [](const vector::MotionFile& f, const char* clip, f64 t, const char* part, P p) {
+        return game_value_of(vector::motion_pose(f, *f.clip(clip), t), part, p).v;
+    };
+    auto tab_part = [&](f64 t, const char* actor, const char* part) {
+        ScenePoses poses;
+        REQUIRE(s.poses(t, {}, -1, poses));
+        return poses.actors[actor].parts[part];
+    };
+    // wave from walk going on: the head comes from walk's bob to rest, the nose from rest to wave's turn.
+    {
+        const f64 t = 0.65, k = smooth(0.05 / 0.3);
+        const f64 head = (1 - k) * clip_value(hf, "walk", 0.15, "ёжик/head", P::Y), nose = k * clip_value(hf, "wave", 0.05, "ёжик/nose", P::Rot);
+        CHECK(head < -1);
+        CHECK(nose > 0);
+        CHECK(tab_part(t, "ёжик", "ёжик/head").y == doctest::Approx(head));
+        CHECK(tab_part(t, "ёжик", "ёжик/nose").rot == doctest::Approx(nose));
+        const vector::ScenePose whole = vector::scene_pose(m, t);
+        const vector::SceneActorPose& g = whole.actors[0];
+        CHECK(game_value_of(g.parts, "ёжик/head", P::Y).v == doctest::Approx(head));
+        CHECK(game_value_of(g.parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    }
+    // From a blend going on: what it showed then, held, into walk.
+    {
+        const f64 k0 = smooth(0.1 / 0.3), k = smooth(0.15 / 0.4);
+        const f64 head_then = (1 - k0) * clip_value(hf, "walk", 0.2, "ёжик/head", P::Y);
+        const f64 head = head_then + (clip_value(hf, "walk", 0.15, "ёжик/head", P::Y) - head_then) * k;
+        const f64 nose = (1 - k) * k0 * clip_value(hf, "wave", 0.1, "ёжик/nose", P::Rot);
+        CHECK(tab_part(0.85, "ёжик", "ёжик/head").y == doctest::Approx(head));
+        CHECK(tab_part(0.85, "ёжик", "ёжик/nose").rot == doctest::Approx(nose));
+        const vector::ScenePose whole = vector::scene_pose(m, 0.85);
+        const vector::SceneActorPose& g = whole.actors[0];
+        CHECK(game_value_of(g.parts, "ёжик/head", P::Y).v == doctest::Approx(head));
+        CHECK(game_value_of(g.parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    }
+    // The beetle from rest into hop's swap to its flat drawing: the main drawing weighed (1 − k) and hop's share of it,
+    // flat on top as a swap by its share k · s.
+    {
+        const f64 t = 0.4, k = smooth(0.4 / 0.6);
+        const vector::MotionShown hop = vector::motion_shown(bf, *bf.clip("hop"), 0.4);
+        REQUIRE(hop.swap);
+        REQUIRE(hop.drawing == "flat");
+        const vector::ScenePose whole = vector::scene_pose(m, t);
+        const vector::SceneActorPose& g = whole.actors[1];
+        CHECK(g.shown.drawing == "flat");
+        CHECK(g.shown.swap);
+        CHECK(g.shown.from == vector::kMotionMainDrawing);
+        CHECK(g.shown.k == doctest::Approx(k * hop.k));
+        ScenePoses poses;
+        REQUIRE(s.poses(t, {}, -1, poses));
+        const Pose& tab = poses.actors["жук"];
+        CHECK(tab.drawing == "flat");
+        CHECK(tab.swap);
+        CHECK(tab.swap_from.empty());
+        CHECK(tab.swap_k == doctest::Approx(k * hop.k));
+        CHECK(tab.parts.at("жук/shell").y == doctest::Approx(k * clip_value(bf, "hop", 0.4, "жук/shell", P::Y)));
+    }
+    // The walk loop's steps stop with wave at 0,6: its round past 0,75 says nothing; walk again says its own.
+    std::vector<vector::SceneMark> marks;
+    std::string why;
+    REQUIRE(vector::scene_marks(m, marks, why));
+    std::vector<f64> steps;
+    for (const vector::SceneMark& mk : marks)
+        if (mk.name == "шаг") steps.push_back(mk.at);
+    REQUIRE(steps.size() >= 3);
+    CHECK(steps[0] == doctest::Approx(0.25));
+    CHECK(steps[1] == doctest::Approx(0.95)); // walk from 0,7, not walk's round at 0,75
+    std::vector<Mark> tab_marks;
+    REQUIRE(s.marks(tab_marks));
+    REQUIRE(tab_marks.size() == marks.size());
+    for (usize i = 0; i < marks.size(); ++i) CHECK(tab_marks[i].time == doctest::Approx(marks[i].at));
+}
+
+TEST_CASE("Смешивание (6г5а): scene.json со сменой — версия 2 и обратно, без смен — 1; сверка ловит другую смену") {
+    using K = vector::ScenePlay::Kind;
+    vector::SceneFile f;
+    f.name = "Смена";
+    f.from = "сцены/Смена.luau";
+    f.length = 2;
+    f.actors = {{"ёжик", "персонажи/Ёжик", "actors/ёжик.svg", "actors/ёжик.motion.json", {0, 0}, 64, 64}};
+    f.plays = {{K::Loop, "ёжик", "walk", 0, 1, 0}, {K::Play, "ёжик", "wave", 0.5, 1.5, 1, 0.3}, {K::Stop, "ёжик", "", 1, 1, 2}};
+    const std::string text = vector::write_scene_file(f);
+    INFO(text);
+    CHECK(has(text, "\"version\": 2"));
+    CHECK(has(text, "{\"actor\": \"ёжик\", \"kind\": \"play\", \"clip\": \"wave\", \"at\": 0.5, \"speed\": 1.5, \"order\": 1, \"blend\": 0.3}"));
+    CHECK(has(text, "{\"actor\": \"ёжик\", \"kind\": \"loop\", \"clip\": \"walk\", \"at\": 0, \"speed\": 1, \"order\": 0}"));
+    vector::SceneFile back;
+    std::string why;
+    REQUIRE(vector::read_scene_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_scene_file(back) == text);
+    // Without a blend, version 1, as a game made before reads it.
+    vector::SceneFile plain = f;
+    plain.plays[1].blend = 0;
+    CHECK(has(vector::write_scene_file(plain), "\"version\": 1"));
+    CHECK_FALSE(has(vector::write_scene_file(plain), "blend"));
+    struct Bad {
+        const char *from, *to, *said;
+    };
+    const Bad bad[] = {
+        {"\"version\": 2", "\"version\": 1", "plays[1]: blend: смена клипов — в файле версии 2"},
+        {"\"version\": 2", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
+        {"\"blend\": 0.3", "\"blend\": -0.3", "plays[1]: blend: нужны секунды смены от 0"},
+        {"\"blend\": 0.3", "\"blend\": \"0.3\"", "plays[1]: blend: нужны секунды смены от 0"},
+        {"\"order\": 2}", "\"order\": 2, \"blend\": 1}", "plays[2]: blend: у stop смены нет"},
+    };
+    for (const Bad& b : bad) {
+        CAPTURE(b.to);
+        vector::SceneFile out;
+        CHECK_FALSE(vector::read_scene_file(replaced(text, b.from, b.to), out, why));
+        CHECK(why == b.said);
+    }
+
+    // The gift's check: the files with another blend would not show what the tab shows.
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files);
+    CHECK(has(*gift_file(gift, "scene.json"), "\"version\": 2"));
+    vector::SceneMotion other = gift.motion;
+    for (vector::ScenePlay& p : other.file.plays)
+        if (p.clip == "wave" && p.at > 2) p.blend = 0.25;
+    CHECK_FALSE(check_scene_gift(s, other, why));
+    CHECK(has(why, "«ёжик», смена клипов"));
+    // A scene without blends goes as before: version 1.
+    Scene before;
+    load(before, files, "    actor(\"ёжик\"):loop(\"walk\")\n    wait(1)");
+    CHECK(has(*gift_file(gift_of(before, files), "scene.json"), "\"version\": 1"));
+}
+
+TEST_CASE("Смешивание (6г5а): blend_pose вкладки — как motion_blend игры: копии гаснут и проявляются, связь и порядок прежние") {
+    Rig rig;
+    std::string why;
+    REQUIRE(rig.load(R"(<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect id="a" width="4" height="4"/><rect id="b" width="4" height="4"/></svg>)", why));
+    Pose from, to;
+    from.parts["a"].x = 4;
+    from.parts["a"].visible = false;
+    from.parts["a"].carry_by = "b";
+    from.parts["a"].fill = {255, 0, 0, 255};
+    from.parts["a"].has_fill = true;
+    from.parts["искра[1]"].y = 2;
+    from.copies = {{"искра[1]", "a", 1}};
+    from.order = {{"a", OrderStep::Kind::Top, ""}};
+    from.morphs["b"] = {"a", 0.5};
+    to.parts["a"].x = 8;
+    to.parts["b"].rot = 90;
+    to.parts["искра[2]"].opacity = 0.5;
+    to.copies = {{"искра[2]", "a", 2}};
+    const f64 k = 0.25;
+    const Pose out = blend_pose(rig, from, to, k);
+    CHECK(out.parts.at("a").x == doctest::Approx(5));
+    CHECK_FALSE(out.parts.at("a").visible); // until k is 1
+    CHECK(out.parts.at("a").carry_by == "b");
+    CHECK(out.parts.at("a").has_fill);
+    CHECK(out.parts.at("a").fill == Rgba8{255, 0, 0, 255});
+    CHECK(out.parts.at("a").fill_k == doctest::Approx(0.75));
+    CHECK(out.parts.at("b").rot == doctest::Approx(22.5));
+    CHECK(out.morphs.at("b").target == "a");
+    CHECK(out.morphs.at("b").k == doctest::Approx(0.375));
+    CHECK(out.parts.at("искра[1]").y == 2);
+    CHECK(out.parts.at("искра[1]").opacity == doctest::Approx(0.75));
+    CHECK(out.parts.at("искра[2]").opacity == doctest::Approx(0.125));
+    REQUIRE(out.copies.size() == 2);
+    CHECK(out.copies[0].id == "искра[2]");
+    CHECK(out.copies[1].id == "искра[1]");
+    CHECK(out.order == from.order);
+    CHECK(out.drawing.empty());
+    CHECK_FALSE(out.swap);
+    CHECK(blend_pose(rig, from, to, 0).parts.at("a").x == 4);
+    CHECK(blend_pose(rig, from, to, 1).parts.at("a").x == 8);
+    // The same by the game's rule.
+    auto side = [](const Pose& p) {
+        vector::MotionClipPose c;
+        std::set<std::string> ids;
+        for (const auto& [id, pp] : p.parts) ids.insert(id);
+        for (const auto& [id, mm] : p.morphs) ids.insert(id);
+        for (const std::string& id : ids) {
+            vector::MotionPartPose pp;
+            pp.id = id;
+            for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+                const auto mp = static_cast<vector::MotionProp>(i);
+                pp.values[i] = screen_value(p, id, mp);
+                pp.has[i] = mp != vector::MotionProp::Drawing;
+            }
+            c.parts.push_back(pp);
+        }
+        for (const PartCopy& k : p.copies) c.copies.push_back({k.id, k.source, k.number, 0});
+        return c;
+    };
+    vector::MotionFile file;
+    const vector::MotionClipPose game = vector::motion_blend(file, side(from), side(to), k);
+    for (const vector::MotionPartPose& pp : game.parts)
+        for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+            const auto mp = static_cast<vector::MotionProp>(i);
+            if (mp == vector::MotionProp::Drawing || mp == vector::MotionProp::Link) continue;
+            CAPTURE(pp.id);
+            CAPTURE(i);
+            CHECK(vector::motion_same(mp, pp.values[i], screen_value(out, pp.id, mp)));
+        }
+    REQUIRE(game.copies.size() == 2);
+    CHECK(game.copies[0].id == "искра[2]");
+    CHECK(game.copies[1].id == "искра[1]");
 }
