@@ -59,6 +59,7 @@ public:
     // its size is the same. drop_image forgets it, a backdrop too.
     void set_image(const std::string& name, const u8* rgba, u32 width, u32 height);
     void drop_image(const std::string& name);
+    usize images() const { return owned_.size(); }
     // Clears texture to transparent, for drawing a context into it.
     void clear_texture(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture);
 

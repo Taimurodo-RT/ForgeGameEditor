@@ -48,6 +48,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <numbers>
 #include <span>
@@ -4015,8 +4016,8 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
 }
 
 TEST_CASE("Сцена в игре: площадь фигуры для маски — как у вкладки (Rig::area), разница только на краях") {
-    // Filled, only outlined, hidden and faded shapes, one turned by the scene, through a camera that moves, zooms and
-    // turns, on a screen twice the canvas.
+    // Filled, only outlined, hidden (only outlined: all of it, as ThorVG reads a hidden shape without its paints) and
+    // faded shapes, one turned by the scene, through a camera that moves, zooms and turns, on a screen twice the canvas.
     Files files;
     project(files);
     Scene s;
@@ -4024,7 +4025,7 @@ TEST_CASE("Сцена в игре: площадь фигуры для маски
     background("#203040")
     rect("плита", { x = 20, y = 20, w = 50, h = 30, fill = "#ff0000" })
     circle("кольцо", { x = 110, y = 40, r = 20, fill = "none", stroke = "#00ff00", stroke_width = 6 })
-    rect("тайник", { x = 30, y = 70, w = 30, h = 30, fill = "#0000ff", hidden = true })
+    rect("тайник", { x = 30, y = 70, w = 30, h = 30, fill = "none", stroke = "#0000ff", stroke_width = 4, hidden = true })
     ellipse("дымка", { x = 110, y = 90, rx = 25, ry = 12, fill = "#ffffff", opacity = 0.3 })
     rect("пол", { x = 0, y = 110, w = 160, h = 10, fill = "#405060" }))";
     load(s, files, R"(    part("плита").rot(30)
@@ -4090,6 +4091,10 @@ TEST_CASE("Сцена в игре: площадь фигуры для маски
     REQUIRE(places.area("кольцо", vector::MotionMatrix{}, 160, 120, ring));
     CHECK(ring[40 * 160 + 110] == 0);
     CHECK(ring[40 * 160 + 130] == 255);
+    // The hidden outline's is all of it, its middle too.
+    std::vector<u8> hidden;
+    REQUIRE(places.area("тайник", vector::MotionMatrix{}, 160, 120, hidden));
+    CHECK(hidden[85 * 160 + 45] == 255);
     // A part not asked for at place, or none such: no area.
     std::vector<u8> none;
     CHECK_FALSE(places.area("пол", screen, w, h, none));
@@ -4205,14 +4210,24 @@ std::string frame_differs(const std::vector<u8>& game, const assets::CookedTextu
     return off ? std::to_string(off) + " расходятся (" + why + ")" : "сплошных только " + std::to_string(solid);
 }
 
+// What a scene's check also looks at, each moment: the game's frame, the tab's and the screen.
+using FrameCheck = std::function<void(f64 t, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen& screen)>;
+
 // A scene of the tab given to a game, played on the screen from its start: the game's frame at each moment against the
-// tab's (moments in order, the first 0).
-void game_frames_as_tab(Files& files, std::string_view stage, std::string_view code, const std::vector<f64>& moments, const char* name) {
+// tab's (moments in order, the first 0); the tab's of `tab_code` when given (what the game draws where it will not draw
+// what the scene says).
+void game_frames_as_tab(Files& files, std::string_view stage, std::string_view code, const std::vector<f64>& moments, const char* name,
+                        std::string_view tab_code = {}, const FrameCheck& also = {}) {
     INFO("сцена «", name, "»");
-    Scene s;
-    load(s, files, code, stage);
-    record(s);
-    const SceneGift gift = gift_of(s, files, name);
+    Scene given, other;
+    load(given, files, code, stage);
+    record(given);
+    Scene& s = tab_code.empty() ? given : other;
+    if (!tab_code.empty()) {
+        load(other, files, tab_code, stage);
+        record(other);
+    }
+    const SceneGift gift = gift_of(given, files, name);
     const fs::path game_dir = empty_dir("forge_tests_переходы_в_игре");
     give(gift, game_dir, name);
     {
@@ -4232,9 +4247,11 @@ void game_frames_as_tab(Files& files, std::string_view stage, std::string_view c
             INFO(s.error());
             REQUIRE(ok);
             std::string said;
-            const std::string differs = frame_differs(game, s.draw_frame(160, 120, Affine{}), said);
+            const assets::CookedTexture tab = s.draw_frame(160, 120, Affine{});
+            const std::string differs = frame_differs(game, tab, said);
             INFO(said);
             CHECK_MESSAGE(differs.empty(), differs);
+            if (also) also(t, game, tab, screen);
         }
         scene.drop();
     }
@@ -4295,7 +4312,9 @@ TEST_CASE("Сцена в игре: маска картинки и актёра �
     actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
     circle("окно", { x = 30, y = 20, r = 14, fill = "#ffffff", hidden = true })
     rect("щель", { x = 20, y = 60, w = 40, h = 12, fill = "#ffffff", hidden = true })
-    circle("дыра", { x = 120, y = 85, r = 6, fill = "#ffffff", hidden = true }))";
+    circle("дыра", { x = 120, y = 85, r = 6, fill = "#ffffff", hidden = true })
+    rect("полоса", { x = -40000, y = 6, w = 40030, h = 20, fill = "#ffffff", hidden = true })
+    rect("рамка", { x = 10, y = 10, w = 30.05, h = 20.05, fill = "#ffffff", hidden = true }))";
     // The picture inside a circle, the hedgehog in a slit that moves, the beetle outside a hole; the camera zoomed and
     // turned (its view inside the canvas).
     game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
@@ -4306,12 +4325,45 @@ TEST_CASE("Сцена в игре: маска картинки и актёра �
     camera().rot(4)
     part("щель").y(20, 1, "linear"))",
                        {0, 0.3, 0.6, 0.9}, "Маски");
-    // Unmasked again: whole, as 6г2 draws it.
+    // Unmasked again: whole, as 6г2 draws it; its mask's picture gone from the GPU.
     game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
     wait(0.5)
     part("лес"):mask()
     wait(0.5))",
-                       {0, 0.25, 0.75}, "Без маски");
+                       {0, 0.25, 0.75}, "Без маски", {}, [](f64 t, const std::vector<u8>&, const assets::CookedTexture&, SceneScreen& screen) {
+                           CHECK(screen.ui.gpu_images() == (t < 0.5 ? 1u : 0u));
+                       });
+    // By an actor or a picture: drawn whole («В игре не будет: маска по актёру или картинке»), as the tab without them.
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("ёжик")
+    part("жук"):mask("лес", { invert = true })
+    wait(0.5))",
+                       {0, 0.25}, "По актёру", "    wait(0.5)",
+                       [](f64, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen&) {
+                           // The picture's own pixels too (a gradient, none of them solid), all there.
+                           int off = 0;
+                           for (u32 y = 8; y < 34; ++y)
+                               for (u32 x = 10; x < 46; ++x) {
+                                   const Rgba8 t = pixel_at(tab, x, y), g = rgba_at(game, 160, x, y);
+                                   if (std::abs(g.r - t.r) > 8 || std::abs(g.g - t.g) > 8 || std::abs(g.b - t.b) > 8) ++off;
+                               }
+                           CHECK(off == 0);
+                       });
+    // A shape far out of the camera's view (a strip 40 000 long): its raster only of what the camera sees, at the
+    // screen's scale, its edge where the tab has it.
+    game_frames_as_tab(files, stage, "    part(\"лес\"):mask(\"полоса\")\n    wait(0.5)", {0, 0.25}, "Длинная полоса");
+    // A box not of whole pixels (30,05 × 20,05 on a still camera, the raster 31 × 21): the far edges where the tab has
+    // them, the raster's last pixel not stretched over the box.
+    game_frames_as_tab(files, stage, "    part(\"лес\"):mask(\"рамка\")\n    wait(0.5)", {0, 0.25}, "Край маски", {},
+                       [](f64, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen&) {
+                           int off = 0;
+                           auto near = [&](u32 x, u32 y) {
+                               const Rgba8 t = pixel_at(tab, x, y), g = rgba_at(game, 160, x, y);
+                               if (std::abs(g.r - t.r) > 48 || std::abs(g.g - t.g) > 48 || std::abs(g.b - t.b) > 48) ++off;
+                           };
+                           for (u32 y = 12; y < 28; ++y) near(39, y);
+                           for (u32 x = 12; x < 38; ++x) near(x, 29);
+                           CHECK(off == 0);
+                       });
 }
 
 TEST_CASE("Сцена в игре: сцена за сценой — прежняя стоит старым кадром до конца входа новой, последний кадр — до хода логики") {

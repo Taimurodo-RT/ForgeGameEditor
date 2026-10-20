@@ -1095,11 +1095,13 @@ void GpuRenderer::upload_pending(SDL_GPUCommandBuffer* cmd) {
     SDL_UnmapGPUTransferBuffer(device_, transfer_);
 
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    u32 sent = 0; // not those dropped or replaced by a newer one
     for (const Upload& u : uploads_) {
         if (u.buffer) {
             SDL_GPUTransferBufferLocation src{transfer_, u.offset};
             SDL_GPUBufferRegion dst{u.buffer, u.buffer_offset, u.size};
             SDL_UploadToGPUBuffer(copy, &src, &dst, false);
+            ++sent;
         } else if (u.texture || u.image) {
             SDL_GPUTextureTransferInfo src{};
             src.transfer_buffer = transfer_;
@@ -1110,10 +1112,11 @@ void GpuRenderer::upload_pending(SDL_GPUCommandBuffer* cmd) {
             dst.h = u.texture ? u.texture->height : u.image_h;
             dst.d = 1;
             SDL_UploadToGPUTexture(copy, &src, &dst, false);
+            ++sent;
         }
     }
     SDL_EndGPUCopyPass(copy);
-    stats_.uploads = static_cast<u32>(uploads_.size());
+    stats_.uploads = sent;
     uploads_.clear();
     staging_.clear();
 }

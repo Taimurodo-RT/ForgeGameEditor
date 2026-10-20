@@ -148,6 +148,8 @@ public:
     // to the GPU with the next frame). drop_gpu_image forgets it, and a backdrop's picture too.
     void set_gpu_image(const std::string& name, const u8* rgba, u32 width, u32 height);
     void drop_gpu_image(const std::string& name);
+    // How many such pictures and backdrops' snapshots it keeps on the GPU.
+    usize gpu_images() const;
 
     const Tokens& tokens() const;
     const std::filesystem::path& root() const;

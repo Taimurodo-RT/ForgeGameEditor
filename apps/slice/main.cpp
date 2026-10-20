@@ -10177,17 +10177,54 @@ private:
     }
 
     // The game under the scenes one grey, as the tab's «то, что было» (part 6г4): a page of that grey over the world, the
-    // game's screens and its HUD, under the scenes' documents and the shell's; brought there before each frame looked at.
-    static void grey_under_scenes(Shell& s, Rml::ElementDocument*& grey) {
+    // game's screens and its HUD (`open` pixels at the bottom left to the world), pulled over everything at the end of
+    // each frame of the checks, as a screen the game pulls over all would be: the shell's next update puts the scenes'
+    // documents (the one before under the one coming in) and its own back over it.
+    // The pixels at the bottom the grey leaves to the world on 1920 × 1080.
+    static constexpr u32 kWorldRows = 16;
+    static void grey_over_game(Shell& s, Rml::ElementDocument*& grey, u32 open) {
         if (!grey) {
-            grey = s.context()->LoadDocumentFromMemory("<rml><head><style>body { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; "
-                                                       "background-color: #808080; }</style></head><body></body></rml>");
+            const std::string size = open ? "top: 0px; bottom: " + std::to_string(open) + "px;" : "top: 0px; height: 100%;";
+            grey = s.context()->LoadDocumentFromMemory("<rml><head><style>body { position: absolute; left: 0px; width: 100%; " + size +
+                                                       " background-color: #808080; }</style></head><body></body></rml>");
             if (grey) grey->Show();
         }
-        if (!grey) return;
-        grey->PullToFront();
-        for (Rml::ElementDocument* d : s.scene().documents()) d->PullToFront();
-        if (Rml::Element* menu = s.find_element("pause-skip-scene")) menu->GetOwnerDocument()->PullToFront();
+        if (grey) grey->PullToFront();
+    }
+    // On 1920 × 1080 the grey leaves the bottom kWorldRows to the world: in each frame of «сдвиг» out (where the game's
+    // frame began, the frame) the game's frame from there on is the game's of now moved by that, its world as it stands
+    // now (it stood still): where now's is solid (a pixel and its eight neighbours one colour), within 6; not black.
+    void world_in_leaving(Shell& s, const std::vector<std::pair<f64, std::vector<u8>>>& leaving) {
+        std::vector<u8> now;
+        u32 W = 0, H = 0;
+        if (!check_ok(frame_pixels(s, now, W, H) && W == 1920 && H == 1080, "кадр игры после сцены 1920 × 1080")) return;
+        auto at = [W](const std::vector<u8>& p, u32 x, u32 y, int c) { return int(p[(static_cast<usize>(y) * W + x) * 4 + static_cast<usize>(c)]); };
+        check(!leaving.empty(), "кадры ухода сняты");
+        for (const auto& [shift, was] : leaving) {
+            if (!check_ok(was.size() == now.size(), "кадр ухода того же размера")) continue;
+            int compared = 0, off = 0;
+            std::string first;
+            for (u32 y = H - 5; y < H - 2; ++y)
+                for (u32 x = 1; x + 1 < W; ++x) {
+                    const i64 into = std::llround(x + shift);
+                    if (into < 1 || into + 1 >= static_cast<i64>(W)) continue;
+                    bool solid = true;
+                    for (int dy = -1; dy <= 1 && solid; ++dy)
+                        for (int dx = -1; dx <= 1 && solid; ++dx)
+                            for (int c = 0; c < 3 && solid; ++c) solid = std::abs(at(now, x + dx, y + dy, c) - at(now, x, y, c)) <= 1;
+                    if (!solid) continue;
+                    ++compared;
+                    int d = 0;
+                    for (int c = 0; c < 3; ++c) d = std::max(d, std::abs(at(was, static_cast<u32>(into), y, c) - at(now, x, y, c)));
+                    if (d > 6 && off++ == 0)
+                        first = " (в " + std::to_string(into) + ", " + std::to_string(y) + " тогда " +
+                                rgb_text(pixel_at(was, W, H, static_cast<f32>(into), static_cast<f32>(y))) + ", сейчас " +
+                                rgb_text(pixel_at(now, W, H, static_cast<f32>(x), static_cast<f32>(y))) + ")";
+                }
+            FORGE_INFO("self-test: мир внизу в кадре ухода с %.2f: %d сплошных, %d расходятся", shift, compared, off);
+            check(compared >= 50 && off == 0, "в кадре ухода с " + std::to_string(shift) + " мир внизу — как в игре сейчас: " + std::to_string(off) +
+                                                  " из " + std::to_string(compared) + " расходятся" + first);
+        }
     }
     // The player's frame against the tab's frame «Через камеру» of the same moment on a screen of the scene's shape (part
     // 6г4): where the tab's is solid (a pixel and its eight neighbours one colour), the game's within 6 of it over black
@@ -10247,17 +10284,19 @@ private:
     }
 
     // Scenes of «Векторная» one after the other, with their ways in and out (--edits st_*, the editor's self-test
-    // pixel-scene-g; part 6г4 of docs/models/сцены-модель.md), the game under them one grey (the tab's «то, что было»). On
-    // a screen of their shape (st_wide not): the scheme of sg_thing shows st_first at the start, which comes in over the
-    // game by «растворение», the game's frame needed only while it comes in, its frames the tab's; it ends, and until the
-    // logic has heard that and begun st_scene its last frame stays, no frame of the game between them; st_scene comes in
-    // over that frame through a circle growing (it stands under, the game's frame not needed), its frames the tab's with
-    // the frame before where the tab has the grey; on its own, its coin in a window; its waits held st_holds; out to the
-    // game by «сдвиг», the game's frame needed, its frames the tab's having waited; once over, gone when the logic has run
-    // and begun nothing; «Сцена кончилась» of it heard. A new game: st_first skipped from the pause menu as it comes in,
-    // st_scene coming in over its look at the skip, skipped too, its last frame till the logic has run. On 1920 × 1080
-    // (st_wide): «сдвиг» out begins past the screen's edge, where the frame's x of the canvas puts it, the bars of the
-    // scene going under it. The time of a frame in the log.
+    // pixel-scene-g; part 6г4 of docs/models/сцены-модель.md), the game under them one grey (the tab's «то, что было»)
+    // pulled over all each frame, the shell putting the scenes back over it. On a screen of their shape (st_wide not): the
+    // scheme of sg_thing shows st_first at the start, which comes in over the game by «растворение», the game's frame
+    // needed only while it comes in, its frames the tab's; it ends, and until the logic has heard that and begun st_scene
+    // its last frame stays, no frame of the game between them; st_scene comes in over that frame through a circle growing
+    // (it stands under, the game's frame not needed), its frames the tab's with the frame before where the tab has the
+    // grey; on its own, its coin in a window; its waits held st_holds; out to the game by «сдвиг», the game's frame
+    // needed, its frames the tab's having waited; once over, gone when the logic has run and begun nothing; «Сцена
+    // кончилась» of it heard. A new game: st_first skipped from the pause menu as it comes in, st_scene coming in over its
+    // look at the skip, skipped too, its last frame till the logic has run. The game lost: st_first played then is gone
+    // the frame after its end. On 1920 × 1080 (st_wide): «сдвиг» out begins past the screen's edge, where the frame's x of
+    // the canvas puts it, the bars of the scene going under it, the world at the bottom of its frames (the grey stops
+    // short there) the game's as it stands after. The time of a frame in the log.
     void build_scene_transitions(Shell& s) {
         struct Seen {
             std::vector<assets::CookedTexture> first, in, frames, out;
@@ -10265,6 +10304,7 @@ private:
             Rml::ElementDocument* grey = nullptr;
             u64 serial = 0, last_ns = 0;
             std::optional<u64> runs; // the logic's runs when a scene ended or was skipped
+            std::vector<std::pair<f64, std::vector<u8>>> leaving; // on 1920 × 1080: where the game's frame began, the frame
             u32 stage = 0, at = 0, between = 0;
             usize next = 0;
             std::vector<f64> frame_ms;
@@ -10292,7 +10332,6 @@ private:
         // Compared with the tab's frame k of `refs` (`old`: the frame before where the tab has the grey).
         auto compare = [this, &s, st](const std::vector<assets::CookedTexture>& refs, usize k, const std::vector<std::string>& files,
                                       const assets::CookedTexture* old, const std::string& what) {
-            grey_under_scenes(s, st->grey);
             std::string said;
             const std::string why = screen_frame_differs(s, refs[k], old, utf8_path(files[k]).parent_path() / utf8_path("игра " + what + ".png"), said);
             check(why.empty(), "кадр игры " + what + " — кадр вкладки: " + why);
@@ -10320,7 +10359,15 @@ private:
             // The talk closed, the scene goes on (its stop held till the talk is over).
             check(w == 2 ? !s.in_dialogue() : sc.waiting() == nullptr, w == 2 ? "разговор сцены закрыт" : "сцена идёт дальше");
         };
-        steps_.push_back({"сцены подряд с переходами при старте игры", 2400, [&s, this, st, var, at_moment, timed, log_ms, compare, through_waits](u32 f) {
+        // Each frame of these steps ends with the grey pulled over everything (grey_over_game).
+        auto over_grey = [st](auto step) {
+            return [st, step](u32 f) {
+                const bool done = step(f);
+                if (st->grey) st->grey->PullToFront();
+                return done;
+            };
+        };
+        steps_.push_back({"сцены подряд с переходами при старте игры", 2400, over_grey([&s, this, st, var, at_moment, timed, log_ms, compare, through_waits](u32 f) {
             const ProjectEdits& e = project_edits;
             GameScene& sc = s.scene();
             if (f == 0) {
@@ -10354,8 +10401,8 @@ private:
                 check(b.size() == 2 && !b[0].leave && std::fabs(b[0].length - e.st_in) < 1e-9 && b[1].leave && b[1].kind == "сдвиг" &&
                           std::fabs(b[1].length - e.st_out) < 1e-9 && std::fabs(two.file.length - e.st_length) < 1e-9 && two.file.stops.size() == 3,
                       "у «" + e.st_scene + "» свой вход, уход «сдвиг», три ожидания и её длина, как у вкладки");
-                grey_under_scenes(s, st->grey);
-                check(st->grey != nullptr, "серая страница игры под сценами");
+                grey_over_game(s, st->grey, e.st_wide ? kWorldRows : 0);
+                check(st->grey != nullptr, "серая страница над игрой");
                 return false;
             }
             if (sc.going()) timed();
@@ -10456,7 +10503,6 @@ private:
                             if (!e.st_wide) compare(st->out, st->next, e.st_out_files, nullptr, "ухода «" + e.st_scene + "» " + std::to_string(st->next));
                             else {
                                 // Where the game's frame begins on the middle row: the grey from there to the right edge.
-                                grey_under_scenes(s, st->grey);
                                 std::vector<u8> px;
                                 u32 W = 0, H = 0;
                                 check(frame_pixels(s, px, W, H) && W == 1920 && H == 1080, "кадр игры 1920 × 1080");
@@ -10475,6 +10521,7 @@ private:
                                               std::to_string(frame_right) + "), левее — её полоса: " + rgb_text(pixel(edge - 3)));
                                 }
                                 FORGE_INFO("self-test: уход «сдвиг» на 1920 × 1080 в %.4f с: кадр игры с %u-го столбца при %.2f", sc.time(), edge, want_edge);
+                                st->leaving.emplace_back(want_edge, std::move(px));
                                 st->skip_ms = true;
                             }
                             ++st->next;
@@ -10506,9 +10553,10 @@ private:
                 check(s.vars().get(e.sg_name).text() == e.st_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0,
                       "«Сцена кончилась»: «" + s.vars().get(e.sg_name).text() + "», пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " +
                           std::to_string(var(e.sg_ends)) + ", после " + std::to_string(var(e.sg_after)));
+                if (e.st_wide) world_in_leaving(s, st->leaving);
                 return true;
             }
-        }});
+        })});
         if (project_edits.st_wide) {
             steps_.push_back({"сцены с переходами: серая страница убрана", 2, [&s, st](u32) {
                 if (st->grey) st->grey->Close();
@@ -10517,7 +10565,7 @@ private:
             }});
             return;
         }
-        steps_.push_back({"новая игра: сцена пропущена, пока входит, следующая входит поверх её вида", 900, [&s, this, st, var, at_moment, compare](u32 f) {
+        steps_.push_back({"новая игра: сцена пропущена, пока входит, следующая входит поверх её вида", 900, over_grey([&s, this, st, var, at_moment, compare](u32 f) {
             const ProjectEdits& e = project_edits;
             GameScene& sc = s.scene();
             if (f == 0) {
@@ -10602,6 +10650,43 @@ private:
                 st->grey = nullptr;
                 return true;
             }
+            }
+        })});
+        // Over (lost, the hero out of hearts): the schemes run no more, and a scene played then is gone the frame after
+        // its end (Game::logic_runs counts each frame of an ended game).
+        steps_.push_back({"конец игры: сцена после него уходит в кадре после своего конца", 900, [&s, this, st](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                g_.hurt(g_.hearts());
+                st->stage = 0;
+                return false;
+            }
+            switch (st->stage) {
+            case 0: {
+                if (!g_.lost()) {
+                    check(f < 30, "игра не проиграна");
+                    return f >= 30;
+                }
+                std::string why;
+                check(s.play_scene(e.st_first, {true, true}, why), "сцена после конца игры: " + why);
+                st->serial = sc.serial();
+                st->stage = 1;
+                return false;
+            }
+            case 1:
+                if (sc.going()) {
+                    check(f < 600, "«" + e.st_first + "» не кончилась");
+                    return f >= 600;
+                }
+                check(sc.over(st->serial) && !sc.skipped(st->serial), "«" + e.st_first + "» кончилась");
+                st->stage = 2;
+                st->at = f;
+                [[fallthrough]];
+            default:
+                if (sc.documents().empty()) return true;
+                check(f - st->at < 3, "её последний кадр ушёл: логика кончившейся игры идёт каждый кадр");
+                return f - st->at >= 3;
             }
         }});
     }

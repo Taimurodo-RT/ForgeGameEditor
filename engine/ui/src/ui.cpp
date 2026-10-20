@@ -576,6 +576,7 @@ void Ui::set_gpu_image(const std::string& name, const u8* rgba, u32 width, u32 h
     impl_->renderer.set_image(name, rgba, width, height);
 }
 void Ui::drop_gpu_image(const std::string& name) { impl_->renderer.drop_image(name); }
+usize Ui::gpu_images() const { return impl_->renderer.images(); }
 u32 Ui::msaa_samples() const { return impl_->renderer.msaa_samples(); }
 void Ui::on_reload(std::function<void()> callback) { impl_->on_reload = std::move(callback); }
 

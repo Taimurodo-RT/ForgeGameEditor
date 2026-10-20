@@ -44,7 +44,7 @@ constexpr std::array<int, 4> kYellow{255, 255, 0, 255}, kCyan{0, 255, 255, 255},
 
 } // namespace
 
-TEST_CASE("Снимок под <backdrop>: мир и то, что нарисовано под ним, ничего выше; скрытый — снимка нет; картинки кода в /gpu/") {
+TEST_CASE("Снимок под <backdrop>: мир и то, что нарисовано под ним, ничего выше, без мира — чёрный; скрытый — снимка нет; картинки кода в /gpu/") {
     SDL_GPUDevice* device = render::create_offscreen_device();
     REQUIRE(device);
     SDL_GPUTexture* world = render::create_render_target(device, kW, kH);
@@ -95,14 +95,14 @@ TEST_CASE("Снимок под <backdrop>: мир и то, что нарисов
         ui.set_gpu_image("mask", left_right.data(), 100, 1);
 
         std::vector<u8> rgba;
-        auto frame = [&](f32 r, f32 g, f32 b) {
+        auto frame = [&](f32 r, f32 g, f32 b, bool with_world = true) {
             SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
             REQUIRE(cmd);
             // As the game draws a frame that needs the world under the UI: the world into its own texture, then to the
             // frame.
             fill(cmd, world, r, g, b);
             fill(cmd, target, r, g, b);
-            ui.set_world(world);
+            if (with_world) ui.set_world(world);
             ui.update();
             ui.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, kW, kH);
             ui.set_world(nullptr);
@@ -142,10 +142,30 @@ TEST_CASE("Снимок под <backdrop>: мир и то, что нарисов
         CHECK(near(at(rgba, 50, 125), kBlue));
         CHECK(near(at(rgba, 50, 215), kGreen));
         CHECK(near(at(rgba, 90, 125), kBlue));
+        // Two pictures of the same name before a frame: only the newer goes to the GPU (white at the bottom).
+        std::vector<u8> bottom_top = top_bottom;
+        for (u8& c : bottom_top) c = static_cast<u8>(255 - c);
+        frame(0, 1, 1);
+        CHECK(ui.stats().uploads == 0);
+        ui.set_gpu_image("mask", top_bottom.data(), 1, 100);
+        ui.set_gpu_image("mask", bottom_top.data(), 1, 100);
+        frame(0, 1, 1);
+        CHECK(ui.stats().uploads == 1);
+        CHECK(near(at(rgba, 50, 125), kGreen));
+        CHECK(near(at(rgba, 50, 215), kBlue));
         // Forgotten, it shows nothing: the square masked by nothing is not there.
+        CHECK(ui.gpu_images() == 2);
         ui.drop_gpu_image("mask");
+        CHECK(ui.gpu_images() == 1);
         frame(0, 1, 1);
         CHECK(near(at(rgba, 50, 125), kGreen));
+        // No world this frame: black under what the UI drew, not the frame's colour.
+        frame(0, 1, 1, false);
+        CHECK(near(at(rgba, 230, 150), kBlue));
+        CHECK(near(at(rgba, 205, 125), (std::array<int, 4>{0, 0, 0, 255})));
+        // The snapshot forgotten too.
+        ui.drop_gpu_image("snap");
+        CHECK(ui.gpu_images() == 0);
         ui.shutdown();
     }
     SDL_ReleaseGPUTexture(device, world);

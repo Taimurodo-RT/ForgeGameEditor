@@ -2310,7 +2310,6 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     sounds_.set_volumes(settings.master_volume, settings.sound_volume, settings.music_volume);
     sounds_.tick(dt);
     if (!running_) {
-        ++logic_runs_; // the backdrop's: no scheme hears a scene
         drift_camera(dt);
         level_->sim->update(dt, focus());
         build_sprites();
