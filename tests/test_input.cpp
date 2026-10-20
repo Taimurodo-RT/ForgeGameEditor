@@ -1,6 +1,6 @@
 // Actions and their binds (the tab «Ввод», editors/ввод-модель.md): a bind as text and in words, the module's
 // defaults under the author's and the player's choices, what is held and what went down from SDL's events, a gamepad
-// (SDL's virtual one) held and let go.
+// (SDL's virtual one) held and let go, a press a waiting scene took (swallowed) no action's until let go.
 
 #include "forge/input/input.h"
 
@@ -269,6 +269,134 @@ TEST_CASE("input: a gamepad (SDL's virtual one) is opened when it comes, read, a
         pump();
         CHECK(in.gamepads() == 0);
         CHECK_FALSE(in.down("talk"));
+    }
+    SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+}
+
+TEST_CASE("input: a swallowed press is no action's until let go (a scene moved on by it, part 6г3)") {
+    Input in;
+    in.set(resolve(kDefs, {}, {}, nullptr));
+    // E moves a waiting scene on: the world sees it neither pressed nor held, other keys as ever.
+    in.handle_event(key(SDL_SCANCODE_A, true));
+    const SDL_Event e = key(SDL_SCANCODE_E, true);
+    in.handle_event(e);
+    in.swallow(e);
+    CHECK_FALSE(in.pressed("talk"));
+    CHECK_FALSE(in.down("talk"));
+    CHECK(in.pressed("left"));
+    CHECK(in.down("left"));
+    in.end_frame();
+    in.handle_event(key(SDL_SCANCODE_E, true, true)); // its repeats too
+    CHECK_FALSE(in.pressed("talk"));
+    CHECK_FALSE(in.down("talk"));
+    in.handle_event(key(SDL_SCANCODE_E, false));
+    CHECK_FALSE(in.down("talk"));
+    // Let go and pressed again: the world's.
+    in.handle_event(e);
+    CHECK(in.pressed("talk"));
+    CHECK(in.down("talk"));
+    in.handle_event(key(SDL_SCANCODE_E, false));
+    in.end_frame();
+    // Space swallowed, W of the same action held: the action is held by W.
+    const SDL_Event space = key(SDL_SCANCODE_SPACE, true);
+    in.handle_event(space);
+    in.swallow(space);
+    CHECK_FALSE(in.down("jump"));
+    in.handle_event(key(SDL_SCANCODE_W, true));
+    CHECK(in.down("jump"));
+    CHECK(in.pressed("jump"));
+    in.handle_event(key(SDL_SCANCODE_W, false));
+    CHECK_FALSE(in.down("jump"));
+    in.end_frame();
+    // The window losing the keyboard forgets it: Space down again is pressed.
+    SDL_Event lost{};
+    lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+    in.handle_event(lost);
+    in.handle_event(space);
+    CHECK(in.pressed("jump"));
+    CHECK(in.down("jump"));
+    in.release_all();
+    // A mouse button, swallowed, until it is let go; a new game forgets it too.
+    in.set(resolve(kDefs, {{"jump", {"mouse:left"}}}, {}, nullptr));
+    const SDL_Event click = mouse(SDL_BUTTON_LEFT, true);
+    in.handle_event(click);
+    in.swallow(click);
+    CHECK_FALSE(in.pressed("jump"));
+    CHECK_FALSE(in.down("jump"));
+    in.handle_event(mouse(SDL_BUTTON_LEFT, false));
+    in.end_frame();
+    in.handle_event(click);
+    CHECK(in.down("jump"));
+    in.swallow(click);
+    CHECK_FALSE(in.down("jump"));
+    in.release_all();
+    in.handle_event(click);
+    CHECK(in.down("jump"));
+    // What presses nothing swallows nothing.
+    in.swallow(key(SDL_SCANCODE_K, false));
+    CHECK(in.down("jump"));
+}
+
+TEST_CASE("input: a swallowed gamepad button and stick (SDL's virtual pad)") {
+    REQUIRE(SDL_InitSubSystem(SDL_INIT_GAMEPAD));
+    {
+        Input in;
+        in.set(resolve(kDefs, {}, {}, nullptr));
+        SDL_VirtualJoystickDesc desc;
+        SDL_INIT_INTERFACE(&desc);
+        desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+        desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+        desc.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+        desc.name = "Forge test pad";
+        const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
+        REQUIRE(id != 0);
+        SDL_Joystick* joy = SDL_OpenJoystick(id);
+        REQUIRE(joy);
+        // The events SDL makes; the shell swallows the ones `eat` says.
+        const auto pump = [&](bool (*eat)(const SDL_Event&)) {
+            SDL_UpdateJoysticks();
+            SDL_Event e;
+            while (SDL_PollEvent(&e)) {
+                in.handle_event(e);
+                if (eat && eat(e)) in.swallow(e);
+            }
+        };
+        pump(nullptr);
+        REQUIRE(in.gamepads() == 1);
+        const auto south = [](const SDL_Event& e) { return e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN; };
+        SDL_SetJoystickVirtualButton(joy, SDL_GAMEPAD_BUTTON_SOUTH, true);
+        pump(south);
+        CHECK_FALSE(in.pressed("jump"));
+        CHECK_FALSE(in.down("jump"));
+        in.end_frame();
+        SDL_SetJoystickVirtualButton(joy, SDL_GAMEPAD_BUTTON_SOUTH, false);
+        pump(nullptr);
+        SDL_SetJoystickVirtualButton(joy, SDL_GAMEPAD_BUTTON_SOUTH, true);
+        pump(nullptr);
+        CHECK(in.pressed("jump"));
+        CHECK(in.down("jump"));
+        SDL_SetJoystickVirtualButton(joy, SDL_GAMEPAD_BUTTON_SOUTH, false);
+        pump(nullptr);
+        in.end_frame();
+        // The stick past half way, swallowed: not held while it stays there, held again after it came back.
+        const auto stick = [](const SDL_Event& e) { return e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && e.gaxis.value < -16384; };
+        SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -30000);
+        pump(stick);
+        CHECK_FALSE(in.pressed("left"));
+        CHECK_FALSE(in.down("left"));
+        in.end_frame();
+        SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -31000);
+        pump(nullptr);
+        CHECK_FALSE(in.down("left"));
+        SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, 0);
+        pump(nullptr);
+        SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFTX, -30000);
+        pump(nullptr);
+        CHECK(in.pressed("left"));
+        CHECK(in.down("left"));
+        SDL_CloseJoystick(joy);
+        SDL_DetachVirtualJoystick(id);
+        pump(nullptr);
     }
     SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
 }

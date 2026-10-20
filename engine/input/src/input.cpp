@@ -354,17 +354,22 @@ void Input::handle_event(const SDL_Event& e) {
         went_down_.push_back({Device::Key, sc, 0});
         break;
     }
-    case SDL_EVENT_KEY_UP: std::erase(keys_, scancode_of(e.key)); break;
+    case SDL_EVENT_KEY_UP:
+        std::erase(keys_, scancode_of(e.key));
+        std::erase(swallowed_, Bind{Device::Key, scancode_of(e.key), 0});
+        break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
         if (e.button.button < 32) mouse_ |= 1u << e.button.button;
         went_down_.push_back({Device::Mouse, e.button.button, 0});
         break;
     case SDL_EVENT_MOUSE_BUTTON_UP:
         if (e.button.button < 32) mouse_ &= ~(1u << e.button.button);
+        std::erase(swallowed_, Bind{Device::Mouse, e.button.button, 0});
         break;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
         keys_.clear();
         mouse_ = 0;
+        swallowed_.clear();
         break;
     case SDL_EVENT_GAMEPAD_ADDED:
         if (!pads_.count(e.gdevice.which))
@@ -383,15 +388,20 @@ void Input::handle_event(const SDL_Event& e) {
             if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
                 it->second.buttons |= bit;
                 went_down_.push_back({Device::Pad, e.gbutton.button, 0});
-            } else it->second.buttons &= ~bit;
+            } else {
+                it->second.buttons &= ~bit;
+                std::erase(swallowed_, Bind{Device::Pad, e.gbutton.button, 0});
+            }
         }
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
         if (auto it = pads_.find(e.gaxis.which); it != pads_.end() && e.gaxis.axis < 8) {
             const i32 before = it->second.axes[e.gaxis.axis], now = e.gaxis.value;
             it->second.axes[e.gaxis.axis] = e.gaxis.value;
-            for (i8 dir : {i8(-1), i8(1)})
+            for (i8 dir : {i8(-1), i8(1)}) {
                 if (before * dir < kHalf && now * dir >= kHalf) went_down_.push_back({Device::PadAxis, e.gaxis.axis, dir});
+                if (now * dir < kHalf) std::erase(swallowed_, Bind{Device::PadAxis, e.gaxis.axis, dir});
+            }
         }
         break;
     default: break;
@@ -410,6 +420,7 @@ bool Input::presses(const SDL_Event& e, std::string_view id) const {
 }
 
 bool Input::held(const Bind& b) const {
+    if (std::find(swallowed_.begin(), swallowed_.end(), b) != swallowed_.end()) return false;
     switch (b.device) {
     case Device::Key: return std::find(keys_.begin(), keys_.end(), b.code) != keys_.end();
     case Device::Mouse: return b.code >= 0 && b.code < 32 && (mouse_ >> b.code & 1u);
@@ -441,6 +452,17 @@ bool Input::pressed(std::string_view id) const {
 
 void Input::end_frame() { went_down_.clear(); }
 
+void Input::swallow(const SDL_Event& e) {
+    std::optional<Bind> b = bind_of(e);
+    if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) // the stick or trigger crossing half way, as handle_event saw it
+        b = !went_down_.empty() && went_down_.back().device == Device::PadAxis && went_down_.back().code == e.gaxis.axis
+                ? std::optional<Bind>(went_down_.back())
+                : std::nullopt;
+    if (!b) return;
+    std::erase(went_down_, *b);
+    if (std::find(swallowed_.begin(), swallowed_.end(), *b) == swallowed_.end()) swallowed_.push_back(*b);
+}
+
 void Input::release_all() {
     keys_.clear();
     mouse_ = 0;
@@ -449,6 +471,7 @@ void Input::release_all() {
         std::fill(std::begin(p.axes), std::end(p.axes), i16(0));
     }
     went_down_.clear();
+    swallowed_.clear();
 }
 
 std::string Input::first_words(std::string_view id) const {

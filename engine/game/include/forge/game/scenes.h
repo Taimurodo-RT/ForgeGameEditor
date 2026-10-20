@@ -12,10 +12,12 @@
 // the box its drawing reaches). Where each picture and actor stands is where the stage's picture in the pose of that
 // moment puts its group (ui::SvgPlaces): the same code as the runs, so what hangs on an actor does not part from it.
 //
-// Its time goes by what the shell gives it: only while the game is on the screen (a menu up stands it). Its marks
-// go as their moments pass: an emit to on_message, a sound (name, name.wav or name.ogg of the game's sounds) to
-// on_sound. Its music: the tunes it plays now and how loud the game's own is under them, to on_music. At its end, or
-// skipped, on_end.
+// Its time goes by what the shell gives it: only while the game is on the screen (a menu up stands it). It stands at its
+// waits (part 6г3): at a wait_action until the shell, hearing the player, says go_on; at a talk while the dialogue it
+// opens (on_talk) is open, after one open already ends; its actors' clips and its music go on meanwhile. Its marks go as
+// the time it lived (its waits counted) passes them: an emit to on_message, a sound (name, name.wav or name.ogg of the
+// game's sounds) to on_sound. Its music: the tunes it plays now and how loud the game's own is under them, to on_music.
+// At its end, or skipped, on_end.
 
 #include "forge/core/types.h"
 #include "forge/vector/scene_file.h"
@@ -82,6 +84,16 @@ public:
     const std::string& name() const;
     const SceneHow& how() const;
     f64 time() const;
+    // Part 6г3: the wait or talk it stands at now (null while its time goes), its place in the scene's stops (-1).
+    const vector::SceneStop* waiting() const;
+    i32 waiting_index() const;
+    // The player did what it waits for: its time goes on from the same moment in the next frame.
+    void go_on();
+    // For checks: how long it stood at each of its stops, and the time it lived (its waits counted).
+    std::vector<f64> held() const;
+    f64 lived() const;
+    // A line about it in the log and in problems(), once.
+    void note(const std::string& line);
     // Each play's own number (from 1): on_end's, and over() for the logic waiting on it.
     u64 serial() const;
     // The play with this number has ended (or never began).
@@ -94,6 +106,11 @@ public:
     std::function<void(const std::string& file)> on_sound;
     std::function<void(const std::vector<SceneTune>& tunes, f64 game_share)> on_music;
     std::function<void(const std::string& name, bool skipped, u64 serial)> on_end;
+    // Its talk("…"): opens the game's dialogue, false when it did not begin (none such, none of its starts fits); whether
+    // a dialogue is open; closes the one open (its own, when it is skipped or dropped).
+    std::function<bool(const std::string& dialogue)> on_talk;
+    std::function<bool()> talking;
+    std::function<void()> end_talk;
 
     // What the scene does not draw or play, each line once (also in the log).
     const std::vector<std::string>& problems() const;

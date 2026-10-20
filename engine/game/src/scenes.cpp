@@ -144,11 +144,17 @@ struct GameScene::Impl {
     SceneHow how;
     vector::SceneMotion scene;
     std::vector<std::vector<ui::SvgDrawing>> drawings; // each actor's other drawings, by scene.file.actors
-    std::vector<vector::SceneMark> marks;
-    usize next_mark = 0;
     // Its moment: the clock (the frames' steps summed) read to the nanosecond, so 90 steps of 1/60 are 1.5, where the tab's
     // frame 90 has a clip begun, and not 1.4999999999999996, a hair before it.
     f64 t = 0, clock = 0;
+    // Part 6г3: how long it stood at each of its stops (the frames' steps summed), the one it stands at (-1: none), the
+    // next it comes to and whether its talk is open; where it was a frame ago, its marks had up to there.
+    std::vector<f64> held;
+    i32 waiting = -1;
+    usize next_stop = 0;
+    bool talk_begun = false;
+    vector::SceneAt was;
+    bool has_was = false;
     bool going = false, fresh = false;
     u64 serial = 0, serials = 0;
     std::map<u64, bool> ends; // the plays over: skipped?
@@ -202,13 +208,75 @@ struct GameScene::Impl {
         if (self->on_music) self->on_music(tunes, share);
     }
 
+    // Where it is in its time, its waits read to the nanosecond as its moment is.
+    vector::SceneAt at() const {
+        vector::SceneAt a;
+        a.t = t;
+        a.held.reserve(held.size());
+        for (const f64 h : held) a.held.push_back(std::round(h * 1e9) / 1e9);
+        a.waiting = waiting;
+        return a;
+    }
+
+    // Its time goes on from the stop it stands at.
+    void go_on() {
+        if (waiting < 0) return;
+        next_stop = static_cast<usize>(waiting) + 1;
+        waiting = -1;
+        talk_begun = false;
+    }
+
+    // dt seconds of it pass: its time goes to the next stop and stands there, the rest of the frame waiting at it; a talk
+    // opens when it comes to one (after a dialogue open already ends), and it goes on when that ends or did not begin.
+    void advance(f64 dt) {
+        const std::vector<vector::SceneStop>& stops = scene.file.stops;
+        const f64 length = scene.file.length;
+        f64 rest = dt;
+        for (;;) {
+            if (waiting >= 0) {
+                const vector::SceneStop& s = stops[static_cast<usize>(waiting)];
+                if (s.talk) {
+                    const bool open = self->talking && self->talking();
+                    if (talk_begun && !open) {
+                        go_on();
+                        continue;
+                    }
+                    if (!talk_begun && !open) {
+                        talk_begun = self->on_talk && self->on_talk(s.name);
+                        if (!talk_begun) {
+                            say("сцена «" + name + "»: разговор «" + s.name + "» не начался (его нет в игре или ни одно начало не подошло) — сцена идёт дальше");
+                            go_on();
+                            continue;
+                        }
+                    }
+                }
+                held[static_cast<usize>(waiting)] += rest;
+                return;
+            }
+            const f64 ahead = std::min(clock + rest, length);
+            if (next_stop < stops.size() && stops[next_stop].at <= std::round(ahead * 1e9) / 1e9 + 1e-9) {
+                const f64 to = stops[next_stop].at;
+                rest = std::max(0.0, clock + rest - to);
+                clock = std::max(clock, to);
+                t = to;
+                waiting = static_cast<i32>(next_stop);
+                talk_begun = false;
+                continue;
+            }
+            clock = ahead;
+            t = clock < length ? std::min(std::round(clock * 1e9) / 1e9, length) : length;
+            return;
+        }
+    }
+
     // The scene's tunes at its moment t and how loud the game's music is under them: as it is until the first call of
-    // `music`, then going out over that call's fade.
+    // `music`, then going out over that call's fade (its waits counted: music goes on while it waits).
     void music_now() {
         const vector::SceneFile& f = scene.file;
         if (f.music.empty()) return;
+        const vector::SceneAt now = at();
         std::vector<SceneTune> want;
-        for (const vector::SceneMusicVoice& v : vector::scene_music_at(f, t)) {
+        for (const vector::SceneMusicVoice& v : vector::scene_music_at(f, t, now.held, now.waiting)) {
             const std::string file = scene_sound_file(sounds, v.name);
             if (file.empty()) {
                 say("сцена «" + name + "»: музыки «" + v.name + "» нет в звуках игры");
@@ -220,7 +288,8 @@ struct GameScene::Impl {
         for (const vector::SceneMusicCall& c : f.music)
             if (c.at < first->at || (c.at == first->at && c.order < first->order)) first = &c;
         f64 game = 1;
-        if (t >= first->at) game = first->fade > 0 ? std::clamp(1 - (t - first->at) / first->fade, 0.0, 1.0) : 0.0;
+        if (const f64 since = vector::scene_since(f, now, first->at, first->order); since >= 0)
+            game = first->fade > 0 ? std::clamp(1 - since / first->fade, 0.0, 1.0) : 0.0;
         hear(std::move(want), game);
     }
 
@@ -234,10 +303,30 @@ struct GameScene::Impl {
         else if (self->on_sound) self->on_sound(file);
     }
 
+    // Its talk open now closes (it is skipped or dropped).
+    void close_talk() {
+        if (talk_begun && self->talking && self->talking() && self->end_talk) self->end_talk();
+        talk_begun = false;
+    }
+
     // The scene is over: its document goes, its music goes out while the game's comes back.
     void finish(bool skipped) {
         const u64 me = serial;
-        const std::string was = name;
+        const std::string whose = name;
+        // What it had left to say, in order, as its time would have gone on from here without waiting; its sounds are not
+        // heard.
+        std::vector<std::string> left;
+        if (skipped) {
+            vector::SceneAt end = at();
+            end.t = scene.file.length;
+            end.waiting = -1;
+            std::vector<vector::SceneMark> rest;
+            std::string why;
+            if (!vector::scene_marks_between(scene, has_was ? &was : nullptr, end, rest, why)) say("сцена «" + name + "»: " + why);
+            for (const vector::SceneMark& m : rest)
+                if (!m.sound) left.push_back(m.name);
+        }
+        close_talk();
         going = false;
         close();
         ends[me] = skipped;
@@ -248,16 +337,9 @@ struct GameScene::Impl {
             tail_share = share;
             tail_tunes = tunes;
         }
-        if (skipped) {
-            // What it had left to say, in order; its sounds are not heard.
-            std::vector<std::string> left;
-            for (usize i = next_mark; i < marks.size(); ++i)
-                if (!marks[i].sound) left.push_back(marks[i].name);
-            next_mark = marks.size();
-            for (const std::string& m : left)
-                if (self->on_message) self->on_message(m);
-        }
-        if (self->on_end) self->on_end(was, skipped, me);
+        for (const std::string& m : left)
+            if (self->on_message) self->on_message(m);
+        if (self->on_end) self->on_end(whose, skipped, me);
     }
 
     void fit(int w, int h) {
@@ -380,7 +462,8 @@ struct GameScene::Impl {
         if (!doc) return;
         fit(width, height);
         const vector::SceneFile& f = scene.file;
-        const vector::ScenePose pose = vector::scene_pose(scene, t);
+        const vector::SceneAt now = at();
+        const vector::ScenePose pose = vector::scene_pose(scene, t, now.held, now.waiting);
         const vector::MotionMatrix cam = vector::scene_camera_matrix(pose.camera, f.width, f.height);
         char buf[220];
         std::snprintf(buf, sizeof buf, "scale(%.7f) translate(%.4fpx, %.4fpx) matrix(%.7f, %.7f, %.7f, %.7f, 0, 0)", fit_scale, cam.e, cam.f, cam.a,
@@ -512,9 +595,12 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     im.how = how;
     im.scene = std::move(scene);
     im.drawings = std::move(drawings);
-    im.marks = std::move(marks);
-    im.next_mark = 0;
     im.t = im.clock = 0;
+    im.held.assign(im.scene.file.stops.size(), 0);
+    im.waiting = -1;
+    im.next_stop = 0;
+    im.talk_begun = false;
+    im.has_was = false;
     im.going = true;
     im.fresh = true;
     im.serial = ++im.serials;
@@ -546,18 +632,25 @@ void GameScene::update(f64 dt, int width, int height) {
         im.fresh = false;
         dt = 0;
     }
-    const f64 length = im.scene.file.length;
-    im.clock = std::min(im.clock + dt, length);
-    im.t = im.clock < length ? std::min(std::round(im.clock * 1e9) / 1e9, length) : length;
     const u64 me = im.serial;
-    while (im.going && im.serial == me && im.next_mark < im.marks.size() && im.marks[im.next_mark].at <= im.t + 1e-9) {
-        const vector::SceneMark mk = im.marks[im.next_mark++];
-        im.fire(mk);
+    im.advance(dt);
+    // Its marks passed since the last frame (part 6г3: by the time it lived, its waits counted).
+    const vector::SceneAt now = im.at();
+    std::vector<vector::SceneMark> passed;
+    std::string why;
+    if (!vector::scene_marks_between(im.scene, im.has_was ? &im.was : nullptr, now, passed, why)) {
+        im.say("сцена «" + im.name + "»: " + why);
+        passed.clear();
     }
-    if (!im.going || im.serial != me) return; // its logic stopped it, or began another
+    im.was = now;
+    im.has_was = true;
+    for (const vector::SceneMark& mk : passed) {
+        im.fire(mk);
+        if (!im.going || im.serial != me) return; // its logic stopped it, or began another
+    }
     im.music_now();
     im.draw(width, height);
-    if (im.t >= im.scene.file.length) im.finish(false);
+    if (im.t >= im.scene.file.length && im.waiting < 0 && im.next_stop >= im.scene.file.stops.size()) im.finish(false);
 }
 
 void GameScene::skip() {
@@ -567,6 +660,7 @@ void GameScene::skip() {
 void GameScene::drop() {
     Impl& im = *impl_;
     if (im.going) {
+        im.close_talk();
         im.ends[im.serial] = false;
         im.going = false;
     }
@@ -579,6 +673,17 @@ bool GameScene::going() const { return impl_->going; }
 const std::string& GameScene::name() const { return impl_->name; }
 const SceneHow& GameScene::how() const { return impl_->how; }
 f64 GameScene::time() const { return impl_->t; }
+const vector::SceneStop* GameScene::waiting() const {
+    const Impl& im = *impl_;
+    return im.going && im.waiting >= 0 ? &im.scene.file.stops[static_cast<usize>(im.waiting)] : nullptr;
+}
+i32 GameScene::waiting_index() const { return impl_->going ? impl_->waiting : -1; }
+void GameScene::go_on() {
+    if (impl_->going) impl_->go_on();
+}
+std::vector<f64> GameScene::held() const { return impl_->at().held; }
+f64 GameScene::lived() const { return vector::scene_lived(impl_->at()); }
+void GameScene::note(const std::string& line) { impl_->say(line); }
 u64 GameScene::serial() const { return impl_->serial; }
 bool GameScene::over(u64 serial) const { return !(impl_->going && impl_->serial == serial); }
 bool GameScene::skipped(u64 serial) const {

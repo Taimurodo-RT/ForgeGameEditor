@@ -580,6 +580,10 @@ struct Reader {
                     return fail(at, "at: нужен миг метки в клипе, от 0 до его длины");
                 if (yyjson_val* l = yyjson_obj_get(item, "length"))
                     if (!number(l, m.length) || m.length < 0) return fail(at, "length: нужно число от 0 — окно метки");
+                if (yyjson_val* o = yyjson_obj_get(item, "order")) {
+                    if (!yyjson_is_uint(o) || yyjson_get_uint(o) > 0xffffffffu) return fail(at, "order: нужен номер метки среди вызовов сцены, целое от 0");
+                    m.order = static_cast<u32>(yyjson_get_uint(o));
+                }
                 if (!out.marks.empty() && m.at < out.marks.back().at) return fail(at, "метки не по времени");
                 out.marks.push_back(std::move(m));
             }
@@ -1040,6 +1044,7 @@ std::string write_motion_file(const MotionFile& f) {
                 out += ", \"length\": ";
                 put_number(out, mk.length);
             }
+            if (mk.order > 0) out += ", \"order\": " + std::to_string(mk.order);
             out += '}';
         }
         out += "],\n      \"not_drawn\": [";

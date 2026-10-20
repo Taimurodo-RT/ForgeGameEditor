@@ -207,4 +207,25 @@ struct SceneMark {
 // than 100 000 (a loop too short).
 bool scene_marks(const SceneMotion& scene, std::vector<SceneMark>& out, std::string& why);
 
+// Where a scene is in its time as a game plays it (part 6г3): its moment t, how long it stood at each of file.stops (a
+// missing one: not at all) and the one it stands at now (-1: none).
+struct SceneAt {
+    f64 t = 0;
+    std::vector<f64> held;
+    i32 waiting = -1;
+};
+// The time it has lived then: seconds since it began, its waits counted.
+f64 scene_lived(const SceneAt& at);
+// How long it has lived since a thing made at `when` (`order`: a play's, music's or stop's own, a mark's the next one's)
+// began, -1 when that has not begun.
+f64 scene_since(const SceneFile& file, const SceneAt& at, f64 when, u32 order);
+// The marks passed from `from` to `to` (later in the same play; null `from`: from before its start, so its marks at 0
+// too), each once, by the time the scene lived (SceneMark::at): its own mark at its moment and the waits made before it
+// (a stop of its moment made before it when the stop's order is less than the mark's); an actor's mark at the time lived
+// when its play began and its moment in the clip after (a clip goes on while the scene waits), a loop's once each round, up
+// to the actor's next play, loop or stop (not at it) or the scene's end. A thing made after the stop the scene stands at,
+// at its moment, has not begun. In one moment as scene_marks has them; without waits the same marks at the same moments.
+// False with why when more than 100 000 pass at once (a loop too short).
+bool scene_marks_between(const SceneMotion& scene, const SceneAt* from, const SceneAt& to, std::vector<SceneMark>& out, std::string& why);
+
 } // namespace forge::vector

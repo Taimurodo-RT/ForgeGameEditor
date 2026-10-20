@@ -120,6 +120,9 @@ public:
     void end_frame();
     // Nothing held (a new game, a lost window).
     void release_all();
+    // The button this event pressed is neither held nor pressed for any action until it is let go: a press that moves a
+    // scene on is the scene's, not the world's (part 6г3 of docs/models/сцены-модель.md).
+    void swallow(const SDL_Event& e);
     u32 gamepads() const { return static_cast<u32>(pads_.size()); }
     // The action's first keyboard or mouse bind in words, or its first gamepad bind; "" when it has none.
     std::string first_words(std::string_view action) const;
@@ -136,6 +139,7 @@ private:
     u32 mouse_ = 0;            // bit per SDL_BUTTON_*
     std::unordered_map<u32, Pad> pads_; // by SDL_JoystickID
     std::vector<Bind> went_down_;
+    std::vector<Bind> swallowed_; // held, but no action's until let go
 };
 
 } // namespace forge::input

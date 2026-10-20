@@ -155,11 +155,14 @@ inline constexpr const char* kMotionNotDrawn[] = {"dash", "draw", "tint", "flash
 // Its words for the author: "пунктир", "прорисовка", …; null for a word that is none of them.
 const char* motion_not_drawn_words(std::string_view word);
 
-// sound("шаг") and emit("удар", 0.1) of the code.
+// sound("шаг") and emit("удар", 0.1) of the code. A mark of a scene's clip (part 6г3 of docs/models/сцены-модель.md)
+// has its place among the scene's calls that take one (its plays, music, waits and talks): the number the next of them
+// takes, so a wait at the mark's moment was made before it when the wait's order is less (written when not 0).
 struct MotionMark {
     bool sound = false;
     std::string name;
     f64 at = 0, length = 0;
+    u32 order = 0;
     bool operator==(const MotionMark&) const = default;
 };
 
