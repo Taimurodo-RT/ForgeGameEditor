@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -87,7 +88,7 @@ usize curve_index(MotionFile& file, const std::vector<f64>& curve) {
     return file.curves.size() - 1;
 }
 
-// What a recording's track does that a screen does not draw (since part 5г: the blur, the shadow and the swap).
+// What a recording's track does that a screen does not draw (since part 5д: the blur and the shadow).
 const char* not_drawn_of(Prop p) {
     switch (p) {
     case Prop::Blur: return "blur";
@@ -95,23 +96,99 @@ const char* not_drawn_of(Prop p) {
     case Prop::ShadowX:
     case Prop::ShadowY:
     case Prop::ShadowBlur: return "shadow";
-    case Prop::Drawing: return "drawing";
     default: return nullptr;
     }
 }
 
 // The same of a frame.
-void not_drawn_in(const Rig& rig, const Pose& pose, std::set<std::string>& out) {
+void not_drawn_in(const Pose& pose, std::set<std::string>& out) {
     for (const auto& [id, pp] : pose.parts) {
         if (pp.blur > 0) out.insert("blur");
         if (pp.has_shadow && pp.shadow_k > 0) out.insert("shadow");
     }
-    if (!pose.drawing.empty() || pose.swap) out.insert("drawing");
-    for (const auto& [id, m] : pose.morphs)
-        if (m.k > 0 && !rig.holder_name(m.target).empty()) out.insert("morph_drawing");
+}
+
+// A drawing's name as the file has it: "draw" for the main one (a frame's "", a value's "draw" or "").
+std::string file_drawing(const std::string& name) { return name.empty() ? vector::kMotionMainDrawing : name; }
+
+// What a frame shows of the drawings, as the file's motion_shown has it.
+vector::MotionShown shown_of(const Pose& pose) {
+    vector::MotionShown out;
+    out.drawing = file_drawing(pose.drawing);
+    if (pose.swap) {
+        out.swap = true;
+        out.from = file_drawing(pose.swap_from);
+        out.k = pose.swap_k;
+    }
+    return out;
+}
+
+bool same_shown(const vector::MotionShown& a, const vector::MotionShown& b) {
+    return a.drawing == b.drawing && a.swap == b.swap && a.from == b.from &&
+           std::abs(a.k - b.k) <= 1e-9 * std::max({1.0, std::abs(a.k), std::abs(b.k)});
+}
+
+// 0.35 → "0,35".
+std::string seconds_words(f64 v) {
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%g", v);
+    std::string out = buf;
+    std::replace(out.begin(), out.end(), '.', ',');
+    return out;
 }
 
 vector::MotionMatrix matrix_of(const Affine& a) { return {a.a, a.b, a.c, a.d, a.e, a.f}; }
+
+// Whether a drawing's name makes a file name everywhere: not empty, none of / \ : * ? " < > | or a control character,
+// not ending in a dot or a space.
+bool file_name_ok(std::string_view name) {
+    if (name.empty() || name.back() == '.' || name.back() == ' ') return false;
+    for (const char ch : name) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c < 0x20 || c == 0x7f || std::string_view("/\\:*?\"<>|").find(ch) != std::string_view::npos) return false;
+    }
+    return true;
+}
+
+// A name with its Latin and Cyrillic capitals small: two names Windows keeps as one file.
+std::string folded(std::string_view name) {
+    std::string out;
+    for (usize i = 0; i < name.size(); ++i) {
+        const auto c = static_cast<unsigned char>(name[i]);
+        const auto n = i + 1 < name.size() ? static_cast<unsigned char>(name[i + 1]) : 0;
+        if (c >= 'A' && c <= 'Z') out += static_cast<char>(c - 'A' + 'a');
+        else if (c == 0xd0 && n >= 0x90 && n <= 0x9f) out += "\xd0", out += static_cast<char>(n + 0x20), ++i; // А … П
+        else if (c == 0xd0 && n >= 0xa0 && n <= 0xaf) out += "\xd1", out += static_cast<char>(n - 0x20), ++i; // Р … Я
+        else if (c == 0xd0 && n == 0x81) out += "\xd1\x91", ++i;                                           // Ё
+        else out += static_cast<char>(c);
+    }
+    return out;
+}
+
+std::string xml_escaped(std::string_view s) {
+    std::string out;
+    for (const char c : s) {
+        if (c == '&') out += "&amp;";
+        else if (c == '<') out += "&lt;";
+        else if (c == '>') out += "&gt;";
+        else if (c == '"') out += "&quot;";
+        else out += c;
+    }
+    return out;
+}
+
+// A drawing's text with the main picture's root size (part 5д): its width, height, viewBox and preserveAspectRatio. The
+// tab draws every drawing in the main picture's units, so the drawing stands on the screen where it stands in the tab,
+// and a layer that shows it keeps its size.
+std::string with_root_of(const std::string& text, std::string_view main) {
+    const vector::SvgOutline mo = vector::scan_svg(main), o = vector::scan_svg(text);
+    if (mo.elements.empty() || o.elements.empty()) return text;
+    std::string tag = "<svg xmlns=\"http://www.w3.org/2000/svg\"";
+    for (const char* name : {"width", "height", "viewBox", "preserveAspectRatio"})
+        if (const std::string* v = mo.elements.front().attr(name)) tag += std::string(" ") + name + "=\"" + xml_escaped(*v) + "\"";
+    tag += '>';
+    return text.substr(0, o.elements.front().begin) + tag + text.substr(o.elements.front().open_end);
+}
 
 } // namespace
 
@@ -163,6 +240,7 @@ vector::MotionValue screen_value(const Pose& pose, const std::string& id, vector
         out.target = pp.carry_by;
         out.m = matrix_of(pp.carry);
         break;
+    case MotionProp::Drawing: break; // the character's, not a part's: shown_of
     }
     return vector::motion_plain(p, out);
 }
@@ -184,24 +262,33 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             if (rec->parts[i] == id) return static_cast<i32>(i);
         return -1;
     };
-    // The copies the screen draws (part 5г): of parts of the picture, born within the clip.
+    // The parts of the character's drawings (part 5д): the main picture's, then those only other drawings have, by the
+    // drawings' names and their order in each.
+    std::vector<std::string> drawn_parts;
+    for (const Part& p : rig.parts()) drawn_parts.push_back(p.id);
+    for (const std::string& name : rig.drawings())
+        for (const Part& p : rig.drawing(name)->parts())
+            if (std::find(drawn_parts.begin(), drawn_parts.end(), p.id) == drawn_parts.end()) drawn_parts.push_back(p.id);
+    auto drawn_part = [&](const std::string& id) { return std::find(drawn_parts.begin(), drawn_parts.end(), id) != drawn_parts.end(); };
+    // The copies the screen draws (part 5г): of parts of a drawing, born within the clip.
     std::vector<char> drawn_copy(rec->copies.size(), 0);
     for (usize i = 0; i < rec->copies.size(); ++i) {
         const Copy& c = rec->copies[i];
-        drawn_copy[i] = rig.part(c.source) >= 0 && ns_of(c.born) <= length;
+        drawn_copy[i] = drawn_part(c.source) && ns_of(c.born) <= length;
         if (drawn_copy[i]) out.copies.push_back({c.id, c.source, c.number, c.born});
     }
     std::stable_sort(out.copies.begin(), out.copies.end(), [](const vector::MotionCopy& a, const vector::MotionCopy& b) { return a.born < b.born; });
-    // The parts the SVG the screen shows has, by rank: the picture's, then the copies by their calls; not the other
-    // drawings' parts. -1 for none of them.
-    const auto picture = static_cast<i32>(rig.parts().size());
+    // The parts the screen's pictures have, by rank: the drawings' parts, then the copies by their calls. -1 for none of
+    // them.
+    const auto picture = static_cast<i32>(drawn_parts.size());
     auto rank_of = [&](const std::string& id) -> i32 {
-        if (const i32 pi = rig.part(id); pi >= 0) return pi;
+        if (const auto it = std::find(drawn_parts.begin(), drawn_parts.end(), id); it != drawn_parts.end())
+            return static_cast<i32>(it - drawn_parts.begin());
         const i32 ci = copy_of(*rec, id);
         return ci >= 0 && drawn_copy[static_cast<usize>(ci)] ? picture + ci : -1;
     };
     auto id_of = [&](i32 rank) -> const std::string& {
-        return rank < picture ? rig.parts()[static_cast<usize>(rank)].id : rec->copies[static_cast<usize>(rank - picture)].id;
+        return rank < picture ? drawn_parts[static_cast<usize>(rank)] : rec->copies[static_cast<usize>(rank - picture)].id;
     };
 
     // The tracks: each property of each part the clip ever takes from its rest, by blocks, start_from or pose(t).
@@ -210,9 +297,6 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
     for (const Recording::Track& tr : rec->tracks) {
         const std::string& id = rec->parts[tr.part];
         if (const char* w = not_drawn_of(tr.prop)) not_drawn.insert(w);
-        if (tr.prop == Prop::Morph)
-            for (const u32 bi : tr.blocks)
-                if (!rig.holder_name(rec->blocks[bi].value.target).empty()) not_drawn.insert("morph_drawing");
         MotionProp mp;
         if (motion_prop_of(tr.prop, mp) && rank_of(id) >= 0) wanted.insert({rank_of(id), static_cast<usize>(mp)});
     }
@@ -223,10 +307,12 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
     }
     std::vector<i64> whole = moments(0, length);
     if (length > 0) whole.push_back(length);
+    bool drawings = false; // a frame shows another drawing than the main one, or a swap
     for (const i64 t : whole) {
         const Pose* pose = frames.at(t, why);
         if (!pose) return false;
-        not_drawn_in(rig, *pose, not_drawn);
+        not_drawn_in(*pose, not_drawn);
+        drawings = drawings || !pose->drawing.empty() || pose->swap;
         for (const auto& [id, pp] : pose->parts) {
             const i32 rank = rank_of(id);
             if (rank < 0) continue;
@@ -335,9 +421,118 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
             kept.push_back(std::move(pc));
         }
         tr.pieces = std::move(kept);
+        // The clip's last moment, where a clip that does not loop stays: a call at its very end changes the frame there
+        // only, and the pieces look at the moments before their ends. A hold of it when they give another value there.
+        if (length > 0) {
+            const Pose* pose = frames.at(length, why);
+            if (!pose) return false;
+            const MotionValue last = screen_value(*pose, id, mp);
+            if (!vector::motion_same(mp, vector::motion_track_value(file, tr, out.length, out.length), last)) {
+                MotionPiece h;
+                h.kind = MotionPiece::Kind::Hold;
+                h.at = std::min(seconds(length), out.length);
+                h.value = last;
+                tr.pieces.push_back(std::move(h));
+            }
+        }
         const bool at_rest = tr.pieces.size() == 1 && tr.pieces.front().kind == MotionPiece::Kind::Hold &&
                              vector::motion_same(mp, tr.pieces.front().value, vector::motion_rest(mp));
         if (!at_rest) out.tracks.push_back(std::move(tr));
+    }
+
+    // The drawing's track (part 5д), first: a hold of the drawing shown, or a swap's transition, checked at each moment
+    // against the frame as the other transitions are.
+    if (drawings) {
+        const i32 dp = rec_part(kDrawingPart);
+        const i32 track = dp < 0 ? -1 : rec->track(static_cast<u32>(dp), Prop::Drawing);
+        std::set<i64> cuts{0};
+        if (track >= 0) {
+            const std::vector<u32>& bs = rec->tracks[static_cast<usize>(track)].blocks;
+            for (usize i = 0; i < bs.size(); ++i) {
+                const Block& b = rec->blocks[bs[i]];
+                const i64 s = ns_of(b.start), e = ns_of(b.start + b.length);
+                if (s < length) cuts.insert(s);
+                const bool cut = i + 1 < bs.size() && ns_of(rec->blocks[bs[i + 1]].start) < e;
+                if (b.length > 0 && !cut && e < length) cuts.insert(e);
+            }
+        }
+        vector::MotionTrack tr;
+        tr.part = kDrawingPart;
+        tr.prop = MotionProp::Drawing;
+        const std::vector<i64> starts(cuts.begin(), cuts.end());
+        for (usize k = 0; k < starts.size(); ++k) {
+            const i64 s = starts[k], e = k + 1 < starts.size() ? starts[k + 1] : length;
+            const std::vector<i64> ms = moments(s, e);
+            std::vector<vector::MotionShown> vs;
+            for (const i64 m : ms) {
+                const Pose* pose = frames.at(m, why);
+                if (!pose) return false;
+                vs.push_back(shown_of(*pose));
+            }
+            MotionPiece pc;
+            pc.at = seconds(s);
+            if (std::all_of(vs.begin(), vs.end(), [&](const vector::MotionShown& v) { return !v.swap && v.drawing == vs.front().drawing; })) {
+                // A hold after a hold or a transition that ends on its drawing says nothing new.
+                const MotionPiece* last = tr.pieces.empty() ? nullptr : &tr.pieces.back();
+                if (last && ((last->kind == MotionPiece::Kind::Hold && last->value.target == vs.front().drawing) ||
+                             (last->kind == MotionPiece::Kind::Ease && s >= ns_of(last->at + last->length) && last->to.target == vs.front().drawing)))
+                    continue;
+                pc.value.target = vs.front().drawing;
+                tr.pieces.push_back(std::move(pc));
+                continue;
+            }
+            const i32 d = track < 0 ? -1 : deciding_block(*rec, static_cast<u32>(track), seconds(s));
+            const Block* b = d >= 0 && ns_of(rec->blocks[static_cast<usize>(d)].start) == s ? &rec->blocks[static_cast<usize>(d)] : nullptr;
+            usize wrong = 0;
+            if (b) {
+                pc.kind = MotionPiece::Kind::Ease;
+                pc.length = b->length;
+                pc.from.target = file_drawing(b->from.target);
+                pc.to.target = file_drawing(b->end.target);
+                MotionFile probe; // its own easing alone, so a curve that does not fit leaves the file as it was
+                if (b->bezier >= 0 && static_cast<usize>(b->bezier) < rec->beziers.size()) {
+                    pc.has_bezier = true;
+                    pc.bezier = rec->beziers[static_cast<usize>(b->bezier)].curve;
+                } else if (b->curve >= 0 && static_cast<usize>(b->curve) < rec->curves.size()) {
+                    probe.curves.push_back(rec->curves[static_cast<usize>(b->curve)]);
+                    pc.curve = 0;
+                } else pc.timing = b->timing;
+                vector::MotionClip one;
+                one.length = out.length;
+                one.tracks.push_back({std::string(kDrawingPart), MotionProp::Drawing, {pc}});
+                while (wrong < ms.size() && same_shown(vector::motion_shown(probe, one, seconds(ms[wrong])), vs[wrong])) ++wrong;
+                if (wrong == ms.size()) {
+                    if (pc.curve >= 0) pc.curve = static_cast<i32>(curve_index(file, probe.curves.front()));
+                    tr.pieces.push_back(std::move(pc));
+                    continue;
+                }
+            } else {
+                while (wrong < ms.size() && !vs[wrong].swap) ++wrong;
+            }
+            why = "клип «" + out.name + "»: смена рисунка в " + seconds_words(seconds(ms[std::min(wrong, ms.size() - 1)])) +
+                  " с не записывается переходом";
+            return false;
+        }
+        // The clip's last moment, as for the parts: a hold of the drawing it shows when the pieces end on another.
+        if (length > 0) {
+            const Pose* pose = frames.at(length, why);
+            if (!pose) return false;
+            const vector::MotionShown last = shown_of(*pose);
+            vector::MotionClip one;
+            one.length = out.length;
+            one.tracks.push_back(tr);
+            if (!same_shown(vector::motion_shown(file, one, out.length), last)) {
+                if (last.swap)
+                    return why = "клип «" + out.name + "»: смена рисунка в " + seconds_words(out.length) + " с не записывается переходом", false;
+                MotionPiece h;
+                h.kind = MotionPiece::Kind::Hold;
+                h.at = std::min(seconds(length), out.length);
+                h.value.target = last.drawing;
+                tr.pieces.push_back(std::move(h));
+            }
+        }
+        // Not a hold of the main drawing alone: the frames (with the last moment's) showed another or a swap.
+        out.tracks.insert(out.tracks.begin(), std::move(tr));
     }
 
     // The order (part 5г): what start_from left, at 0, then the clip's calls by time (start, then as made), of the parts
@@ -351,7 +546,7 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
         return st;
     };
     auto drawn_step = [&](const OrderStep& o) {
-        return rank_of(o.part) >= 0 && ((o.kind != OrderStep::Kind::Above && o.kind != OrderStep::Kind::Below) || rig.part(o.other) >= 0);
+        return rank_of(o.part) >= 0 && ((o.kind != OrderStep::Kind::Above && o.kind != OrderStep::Kind::Below) || drawn_part(o.other));
     };
     for (const OrderStep& o : rec->start.order)
         if (drawn_step(o)) out.order.push_back(step_of(o, 0));
@@ -411,9 +606,23 @@ Drawing drawing_with_paths(const Drawing& d, const std::vector<std::string>& ids
 }
 
 bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::string_view character, std::string_view from,
-                  std::string_view svg, const Drawing* drawn, ScreenGift& out, std::string& why) {
+                  std::string_view svg, const Drawing* drawn, const std::vector<NamedDrawing>& drawings, ScreenGift& out, std::string& why) {
     out = {};
     if (script.clips().empty()) return why = "В коде нет клипов: экрану нечего играть", false;
+    // The other drawings' files (part 5д): Ёжик.angry.svg, a name that makes a file and one file a name.
+    std::map<std::string, std::string> folds;
+    for (const NamedDrawing& d : drawings) {
+        if (!file_name_ok(d.name)) return why = "рисунок «" + d.name + "»: такое имя не годится для имени файла", false;
+        if (!rig.drawing(d.name) || rig.drawing(d.name) == &rig) return why = "рисунок «" + d.name + "» не стоит на персонаже: откройте его снова", false;
+        auto [it, fresh] = folds.emplace(folded(d.name), d.name);
+        if (!fresh) {
+            const auto [a, b] = std::minmax(it->second, d.name);
+            return why = "рисунки «" + a + "» и «" + b + "» дали бы один файл", false;
+        }
+    }
+    for (const std::string& name : rig.drawings())
+        if (std::none_of(drawings.begin(), drawings.end(), [&](const NamedDrawing& d) { return d.name == name; }))
+            return why = "у персонажа есть рисунок «" + name + "», а его текста нет: откройте персонажа снова", false;
     MotionFile& f = out.motion;
     f.character = std::string(character);
     f.from = std::string(from);
@@ -423,38 +632,55 @@ bool build_screen(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::
         if (!screen_clip(script, rig, doc, name, f, c, why)) return false;
         f.clips.push_back(std::move(c));
     }
-    // The parts the clips move or link, in the picture's order, then every copy (a copy's numbers are its source's);
-    // the shapes they morph, a copy's by its source.
-    std::set<i32> moved, morphed;
+    // The parts the clips move or link, then every copy (a copy's numbers are its source's), as each drawing has them
+    // and in its order; the shapes they morph, a copy's by its source.
+    std::set<std::string> moved, morphed;
     std::vector<vector::MotionCopy> copies;
     auto source_of = [&](const MotionClip& c, const std::string& id) {
         for (const vector::MotionCopy& k : c.copies)
-            if (k.id == id) return rig.part(k.source);
-        return rig.part(id);
+            if (k.id == id) return k.source;
+        return id;
     };
     for (const MotionClip& c : f.clips) {
         for (const vector::MotionTrack& t : c.tracks) {
-            if ((vector::motion_prop_moves(t.prop) || t.prop == MotionProp::Link) && rig.part(t.part) >= 0) moved.insert(rig.part(t.part));
+            if (vector::motion_prop_moves(t.prop) || t.prop == MotionProp::Link) moved.insert(t.part);
             if (t.prop == MotionProp::Morph) morphed.insert(source_of(c, t.part));
         }
         for (const vector::MotionCopy& k : c.copies)
             if (std::none_of(copies.begin(), copies.end(), [&](const vector::MotionCopy& o) { return o.id == k.id; })) copies.push_back(k);
     }
-    auto part_of = [&](const std::string& id, i32 pi) {
-        vector::MotionPart p;
-        p.id = id;
-        p.pivot = rig.pivot(pi);
-        p.frame = matrix_of(rig.rest_frame(pi));
-        p.own = matrix_of(rig.rest_local(pi));
-        f.parts.push_back(std::move(p));
+    auto parts_of = [&](const Rig& r) {
+        std::vector<vector::MotionPart> ps;
+        auto part_of = [&](const std::string& id, i32 pi) {
+            vector::MotionPart p;
+            p.id = id;
+            p.pivot = r.pivot(pi);
+            p.frame = matrix_of(r.rest_frame(pi));
+            p.own = matrix_of(r.rest_local(pi));
+            ps.push_back(std::move(p));
+        };
+        for (const Part& p : r.parts())
+            if (moved.count(p.id)) part_of(p.id, r.part(p.id));
+        for (const vector::MotionCopy& k : copies)
+            if (r.part(k.source) >= 0) part_of(k.id, r.part(k.source));
+        return ps;
     };
-    for (const i32 pi : moved) part_of(rig.parts()[static_cast<usize>(pi)].id, pi);
-    for (const vector::MotionCopy& k : copies) part_of(k.id, rig.part(k.source));
-    std::vector<std::string> morph_ids;
-    for (const i32 pi : morphed)
-        if (pi >= 0) morph_ids.push_back(rig.parts()[static_cast<usize>(pi)].id);
+    f.parts = parts_of(rig);
+    const std::vector<std::string> morph_ids(morphed.begin(), morphed.end());
     // A morphed shape that is no path in the picture of «Ресурсы» the screen's stage writes as one (part 5г).
     out.svg = drawn ? drawing_svg(drawing_with_paths(*drawn, morph_ids), doc.frame_w, doc.frame_h) : std::string(svg);
+    // The other drawings (part 5д), by name: their parts as they stand in them, their text with the main root's size.
+    std::vector<const NamedDrawing*> named;
+    for (const NamedDrawing& d : drawings) named.push_back(&d);
+    std::sort(named.begin(), named.end(), [](const NamedDrawing* a, const NamedDrawing* b) { return a->name < b->name; });
+    for (const NamedDrawing* d : named) {
+        vector::MotionDrawing md;
+        md.name = d->name;
+        md.picture = std::string(character) + "." + d->name + ".svg";
+        md.parts = parts_of(*rig.drawing(d->name));
+        out.drawings.push_back({md.picture, with_root_of(drawing_svg(drawing_with_paths(d->drawing, morph_ids), doc.frame_w, doc.frame_h), out.svg)});
+        f.drawings.push_back(std::move(md));
+    }
     // What the screen does not draw yet, by word with its clips.
     std::string left;
     for (const char* w : vector::kMotionNotDrawn) {

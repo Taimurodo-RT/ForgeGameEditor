@@ -18,7 +18,7 @@ namespace {
 
 constexpr const char* kWords[] = {"x",       "y",       "rot",  "scale",  "sx",           "sy",      "skew_x",    "skew_y",
                                   "opacity", "fill",    "stroke", "stroke_width", "visible", "morph", "dash", "draw_from",
-                                  "draw_to", "tint",    "flash", "flash_color",  "mask",    "link"};
+                                  "draw_to", "tint",    "flash", "flash_color",  "mask",    "link", "drawing"};
 static_assert(std::size(kWords) == kMotionPropCount);
 
 constexpr f64 kMaxSkew = 89; // forge::pixel::kMaxSkew: past it a skew's tangent runs off to infinity
@@ -92,6 +92,10 @@ void put_value(std::string& out, MotionProp p, const MotionValue& v) {
         put_number(out, v.v);
         return;
     }
+    if (p == MotionProp::Drawing) {
+        put_string(out, v.target);
+        return;
+    }
     if (p == MotionProp::Link) {
         out += '[';
         put_string(out, v.target);
@@ -120,6 +124,26 @@ void put_matrix(std::string& out, const MotionMatrix& m) {
         put_number(out, v[i]);
     }
     out += ']';
+}
+
+// {"id": {"pivot": …, "frame": …, "own": …}, …}, a part a line, at `indent` and two more.
+void put_parts(std::string& out, const std::vector<MotionPart>& parts, const std::string& indent) {
+    out += '{';
+    for (usize i = 0; i < parts.size(); ++i) {
+        const MotionPart& p = parts[i];
+        out += (i ? ",\n  " : "\n  ") + indent;
+        put_string(out, p.id);
+        out += ": {\"pivot\": [";
+        put_number(out, p.pivot.x);
+        out += ", ";
+        put_number(out, p.pivot.y);
+        out += "], \"frame\": ";
+        put_matrix(out, p.frame);
+        out += ", \"own\": ";
+        put_matrix(out, p.own);
+        out += '}';
+    }
+    out += parts.empty() ? "}" : "\n" + indent + "}";
 }
 
 void put_piece(std::string& out, const MotionFile& f, MotionProp p, const MotionPiece& pc) {
@@ -218,6 +242,7 @@ const char* value_shape(MotionProp p) {
     if (p == MotionProp::StrokeWidth) return "[доля, толщина]";
     if (p == MotionProp::Mask) return "[0, \"\"] (без маски), [1, \"id части\"] (внутри) или [2, \"id части\"] (снаружи)";
     if (p == MotionProp::Link) return "[\"id части\" (или \"\", отпущена), a, b, c, d, e, f]";
+    if (p == MotionProp::Drawing) return "имя рисунка строкой (\"draw\" — главный)";
     return "[доля, \"id фигуры\"]";
 }
 
@@ -229,6 +254,7 @@ bool value(yyjson_val* v, MotionProp p, MotionValue& out) {
         return true;
     }
     if (is_number(p)) return number(v, out.v);
+    if (p == MotionProp::Drawing) return text(v, out.target) && !out.target.empty();
     if (p == MotionProp::Link) {
         if (!yyjson_is_arr(v) || yyjson_arr_size(v) != 7 || !text(yyjson_arr_get(v, 0), out.target)) return false;
         f64 m[6];
@@ -256,6 +282,35 @@ struct Reader {
     bool fail(const std::string& where, const std::string& what) {
         why = where + ": " + what;
         return false;
+    }
+
+    // A part with a record in some drawing's parts, the main one's or another's.
+    bool any_part(std::string_view id) const {
+        if (f.part(id)) return true;
+        return std::any_of(f.drawings.begin(), f.drawings.end(), [&](const MotionDrawing& d) {
+            return std::any_of(d.parts.begin(), d.parts.end(), [&](const MotionPart& p) { return p.id == id; });
+        });
+    }
+    bool known_drawing(const std::string& name) const { return name == kMotionMainDrawing || f.drawing(name); }
+
+    bool parts(yyjson_val* v, const std::string& where, std::vector<MotionPart>& out) {
+        if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"id\": {\"pivot\": …}}");
+        usize i, n;
+        yyjson_val *key, *pv_;
+        yyjson_obj_foreach(v, i, n, key, pv_) {
+            MotionPart p;
+            p.id.assign(yyjson_get_str(key), yyjson_get_len(key));
+            const std::string at = where + "." + p.id;
+            if (std::any_of(out.begin(), out.end(), [&](const MotionPart& o) { return o.id == p.id; })) return fail(at, "часть дважды");
+            if (!yyjson_is_obj(pv_)) return fail(at, "нужен объект {\"pivot\": [x, y], \"frame\": […], \"own\": […]}");
+            yyjson_val* pv = yyjson_obj_get(pv_, "pivot");
+            if (!yyjson_is_arr(pv) || yyjson_arr_size(pv) != 2 || !number(yyjson_arr_get(pv, 0), p.pivot.x) || !number(yyjson_arr_get(pv, 1), p.pivot.y))
+                return fail(at, "pivot: нужна опорная точка [x, y]");
+            if (!matrix(yyjson_obj_get(pv_, "frame"), p.frame)) return fail(at, "frame: нужна матрица [a, b, c, d, e, f] — где стоит родитель части");
+            if (!matrix(yyjson_obj_get(pv_, "own"), p.own)) return fail(at, "own: нужна матрица [a, b, c, d, e, f] — свой transform части");
+            out.push_back(std::move(p));
+        }
+        return true;
     }
 
     bool piece(yyjson_val* v, const std::string& where, MotionProp p, MotionPiece& out) {
@@ -318,16 +373,24 @@ struct Reader {
         return true;
     }
 
+    std::string drawing_names() const {
+        std::string out;
+        for (const MotionDrawing& d : f.drawings) out += ", " + d.name;
+        return out;
+    }
+
     bool track(yyjson_val* v, const std::string& where, const MotionClip& c, MotionTrack& out) {
         if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"part\": …, \"prop\": …, \"pieces\": […]}");
         out = {};
-        if (!text(yyjson_obj_get(v, "part"), out.part) || out.part.empty()) return fail(where, "part: нужен id части строкой");
+        if (!text(yyjson_obj_get(v, "part"), out.part)) return fail(where, "part: нужен id части строкой");
         std::string w;
         if (!text(yyjson_obj_get(v, "prop"), w) || !motion_prop_from_word(w, out.prop))
             return fail(where, "prop: нет такого свойства «" + w +
                                    "»: x, y, rot, scale, sx, sy, skew_x, skew_y, opacity, fill, stroke, stroke_width, visible, morph, dash, draw_from, "
-                                   "draw_to, tint, flash, flash_color, mask, link");
-        if ((motion_prop_moves(out.prop) || out.prop == MotionProp::Link) && !f.part(out.part))
+                                   "draw_to, tint, flash, flash_color, mask, link, drawing");
+        if (out.prop == MotionProp::Drawing && !out.part.empty()) return fail(where, "part: у дорожки рисунка часть \"\" — это рисунок всего персонажа");
+        if (out.prop != MotionProp::Drawing && out.part.empty()) return fail(where, "part: нужен id части строкой");
+        if ((motion_prop_moves(out.prop) || out.prop == MotionProp::Link) && !any_part(out.part))
             return fail(where, "части «" + out.part + "» нет в parts, а её " + w + " без опоры и рамки не посчитать");
         yyjson_val* pieces = yyjson_obj_get(v, "pieces");
         if (!yyjson_is_arr(pieces) || yyjson_arr_size(pieces) == 0) return fail(where, "pieces: нужен непустой список кусков");
@@ -339,6 +402,14 @@ struct Reader {
             if (!piece(item, at, out.prop, pc)) return false;
             if (motion_prop_held(out.prop) && pc.kind != MotionPiece::Kind::Hold)
                 return fail(at, std::string("у ") + w + " только hold: она меняется вызовом в миг, а не переходом");
+            if (out.prop == MotionProp::Drawing) {
+                if (pc.kind == MotionPiece::Kind::Frames) return fail(at, "у дорожки рисунка только hold и переход");
+                const std::vector<const std::string*> names = pc.kind == MotionPiece::Kind::Hold
+                                                                  ? std::vector<const std::string*>{&pc.value.target}
+                                                                  : std::vector<const std::string*>{&pc.from.target, &pc.to.target};
+                for (const std::string* name : names)
+                    if (!known_drawing(*name)) return fail(at, "нет рисунка «" + *name + "»: есть draw" + drawing_names());
+            }
             if (i == 0 && pc.at != 0) return fail(at, "первый кусок — с 0");
             if (i > 0 && pc.at <= out.pieces.back().at) return fail(at, "куски не по времени: at не больше, чем у куска перед ним");
             if (pc.at > c.length) return fail(at, "at за концом клипа");
@@ -405,7 +476,7 @@ struct Reader {
                 if (!number(yyjson_obj_get(item, "born"), c.born) || c.born < 0 || c.born > out.length)
                     return fail(at, "born: нужен миг рождения в клипе, от 0 до его длины");
                 if (!out.copies.empty() && c.born < out.copies.back().born) return fail(at, "копии не по времени рождения");
-                if (!f.part(c.id)) return fail(at, "копии «" + c.id + "» нет в parts: нужны её опорная точка и рамка (у неё они части «" + c.source + "»)");
+                if (!any_part(c.id)) return fail(at, "копии «" + c.id + "» нет в parts: нужны её опорная точка и рамка (у неё они части «" + c.source + "»)");
                 for (const MotionCopy& o : out.copies) {
                     if (o.id == c.id) return fail(at, "копия «" + c.id + "» дважды");
                     if (o.source == c.source && o.number == c.number) return fail(at, "у части «" + c.source + "» уже есть копия " + std::to_string(c.number));
@@ -468,23 +539,30 @@ struct Reader {
         if (yyjson_val* v = yyjson_obj_get(r, "character"); v && !text(v, f.character)) return why = "character: нужно имя строкой", false;
         if (yyjson_val* v = yyjson_obj_get(r, "from"); v && !text(v, f.from)) return why = "from: нужен файл персонажа строкой", false;
         if (!text(yyjson_obj_get(r, "picture"), f.picture) || f.picture.empty()) return why = "picture: нужно имя SVG-картинки строкой", false;
-        if (yyjson_val* parts = yyjson_obj_get(r, "parts")) {
-            if (!yyjson_is_obj(parts)) return why = "parts: нужен объект {\"id\": {\"pivot\": …}}", false;
+        if (yyjson_val* ps = yyjson_obj_get(r, "parts"))
+            if (!parts(ps, "parts", f.parts)) return false;
+        if (yyjson_val* ds = yyjson_obj_get(r, "drawings")) {
+            if (!yyjson_is_obj(ds)) return why = "drawings: нужен объект {\"рисунок\": {\"picture\": …, \"parts\": {…}}}", false;
             usize i, n;
             yyjson_val *key, *v;
-            yyjson_obj_foreach(parts, i, n, key, v) {
-                MotionPart p;
-                p.id.assign(yyjson_get_str(key), yyjson_get_len(key));
-                const std::string where = "parts." + p.id;
-                if (f.part(p.id)) return fail(where, "часть дважды");
-                if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"pivot\": [x, y], \"frame\": […], \"own\": […]}");
-                yyjson_val* pv = yyjson_obj_get(v, "pivot");
-                if (!yyjson_is_arr(pv) || yyjson_arr_size(pv) != 2 || !number(yyjson_arr_get(pv, 0), p.pivot.x) || !number(yyjson_arr_get(pv, 1), p.pivot.y))
-                    return fail(where, "pivot: нужна опорная точка [x, y]");
-                if (!matrix(yyjson_obj_get(v, "frame"), p.frame)) return fail(where, "frame: нужна матрица [a, b, c, d, e, f] — где стоит родитель части");
-                if (!matrix(yyjson_obj_get(v, "own"), p.own)) return fail(where, "own: нужна матрица [a, b, c, d, e, f] — свой transform части");
-                f.parts.push_back(std::move(p));
+            yyjson_obj_foreach(ds, i, n, key, v) {
+                MotionDrawing d;
+                d.name.assign(yyjson_get_str(key), yyjson_get_len(key));
+                const std::string where = "drawings." + d.name;
+                if (d.name.empty()) return fail(where, "у рисунка нужно имя");
+                if (d.name == kMotionMainDrawing) return fail(where, "так зовут главный рисунок");
+                if (f.drawing(d.name)) return fail(where, "рисунок дважды");
+                if (!yyjson_is_obj(v)) return fail(where, "нужен объект {\"picture\": …, \"parts\": {…}}");
+                if (!text(yyjson_obj_get(v, "picture"), d.picture) || d.picture.empty()) return fail(where, "picture: нужно имя SVG-картинки рисунка строкой");
+                // Beside the picture: a game reads it from the picture's folder, never another.
+                if (d.picture.find_first_of("/\\") != std::string::npos || d.picture == "." || d.picture == "..")
+                    return fail(where, "picture: имя файла рядом с картинкой, без папок");
+                if (yyjson_val* ps = yyjson_obj_get(v, "parts"))
+                    if (!parts(ps, where + ".parts", d.parts)) return false;
+                f.drawings.push_back(std::move(d));
             }
+            // By name, as the tab keeps them: a morph's target is looked for in them in this order.
+            std::sort(f.drawings.begin(), f.drawings.end(), [](const MotionDrawing& a, const MotionDrawing& b) { return a.name < b.name; });
         }
         if (yyjson_val* curves = yyjson_obj_get(r, "curves")) {
             if (!yyjson_is_arr(curves)) return why = "curves: нужен список сглаживаний", false;
@@ -557,6 +635,7 @@ MotionValue motion_rest(MotionProp p) {
            p == MotionProp::Visible)
               ? 1
               : 0;
+    if (p == MotionProp::Drawing) v.target = kMotionMainDrawing;
     return v;
 }
 
@@ -568,7 +647,7 @@ MotionValue motion_mix(MotionProp p, const MotionValue& a, const MotionValue& b,
         r.v = a.v + (b.v - a.v) * k; // past 0 … 1 too: back and elastic overshoot
         return r;
     }
-    if (p == MotionProp::Visible || motion_prop_held(p)) return k >= 1 ? b : a; // no values between
+    if (p == MotionProp::Visible || motion_prop_held(p) || p == MotionProp::Drawing) return k >= 1 ? b : a; // no values between
     if (p == MotionProp::StrokeWidth && a.v == 1 && b.v == 1) {
         r.v = 1;
         r.n = a.n + (b.n - a.n) * k; // two widths given: as numbers, past them too
@@ -627,6 +706,10 @@ MotionValue motion_plain(MotionProp p, const MotionValue& v) {
         r.m = v.m;
         return r;
     }
+    if (p == MotionProp::Drawing) {
+        r.target = v.target;
+        return r;
+    }
     if (v.v <= 0) return motion_rest(p);
     r.v = v.v;
     if (is_color(p)) r.color = v.color;
@@ -677,6 +760,21 @@ const MotionPart* MotionFile::part(std::string_view id) const {
     return nullptr;
 }
 
+const MotionPart* MotionFile::part(std::string_view id, std::string_view name) const {
+    if (name.empty() || name == kMotionMainDrawing) return part(id);
+    const MotionDrawing* d = drawing(name);
+    if (!d) return nullptr;
+    for (const MotionPart& p : d->parts)
+        if (p.id == id) return &p;
+    return nullptr;
+}
+
+const MotionDrawing* MotionFile::drawing(std::string_view name) const {
+    for (const MotionDrawing& d : drawings)
+        if (d.name == name) return &d;
+    return nullptr;
+}
+
 bool read_motion_file(std::string_view json, MotionFile& out, std::string& why) {
     out = {};
     why.clear();
@@ -694,6 +792,10 @@ bool read_motion_file(std::string_view json, MotionFile& out, std::string& why) 
 }
 
 u32 motion_file_version(const MotionFile& f) {
+    if (!f.drawings.empty()) return 3;
+    for (const MotionClip& c : f.clips)
+        for (const MotionTrack& t : c.tracks)
+            if (t.prop == MotionProp::Drawing) return 3;
     for (const MotionClip& c : f.clips) {
         if (!c.copies.empty() || !c.order.empty()) return 2;
         for (const MotionTrack& t : c.tracks)
@@ -709,22 +811,23 @@ std::string write_motion_file(const MotionFile& f) {
     put_string(out, f.from);
     out += ",\n  \"picture\": ";
     put_string(out, f.picture);
-    out += ",\n  \"parts\": {";
-    for (usize i = 0; i < f.parts.size(); ++i) {
-        const MotionPart& p = f.parts[i];
-        out += i ? ",\n    " : "\n    ";
-        put_string(out, p.id);
-        out += ": {\"pivot\": [";
-        put_number(out, p.pivot.x);
-        out += ", ";
-        put_number(out, p.pivot.y);
-        out += "], \"frame\": ";
-        put_matrix(out, p.frame);
-        out += ", \"own\": ";
-        put_matrix(out, p.own);
-        out += '}';
+    out += ",\n  \"parts\": ";
+    put_parts(out, f.parts, "  ");
+    out += ",\n";
+    if (!f.drawings.empty()) {
+        out += "  \"drawings\": {";
+        for (usize i = 0; i < f.drawings.size(); ++i) {
+            const MotionDrawing& d = f.drawings[i];
+            out += i ? ",\n    " : "\n    ";
+            put_string(out, d.name);
+            out += ": {\"picture\": ";
+            put_string(out, d.picture);
+            out += ", \"parts\": ";
+            put_parts(out, d.parts, "    ");
+            out += '}';
+        }
+        out += "\n  },\n";
     }
-    out += f.parts.empty() ? "},\n" : "\n  },\n";
     out += "  \"curves\": [";
     for (usize i = 0; i < f.curves.size(); ++i) {
         out += i ? ",\n    [" : "\n    [";
@@ -880,14 +983,43 @@ MotionMatrix motion_matrix(f64 x, f64 y, f64 rot, f64 scale, f64 sx, f64 sy, f64
     return MotionMatrix{1, 0, 0, 1, x + pv.x, y + pv.y} * rs * MotionMatrix{1, 0, 0, 1, -pv.x, -pv.y};
 }
 
-std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t) {
+MotionShown motion_shown(const MotionFile& file, const MotionClip& clip, f64 t) {
+    MotionShown out;
+    const auto track = std::find_if(clip.tracks.begin(), clip.tracks.end(), [](const MotionTrack& tr) { return tr.prop == MotionProp::Drawing; });
+    if (track == clip.tracks.end() || track->pieces.empty()) return out;
+    t = snap_ns(std::clamp(t, 0.0, std::max(clip.length, 0.0)));
+    auto it = std::upper_bound(track->pieces.begin(), track->pieces.end(), t, [](f64 x, const MotionPiece& p) { return x < p.at; });
+    if (it != track->pieces.begin()) --it;
+    const MotionPiece& pc = *it;
+    if (pc.kind != MotionPiece::Kind::Ease) {
+        out.drawing = pc.kind == MotionPiece::Kind::Hold ? pc.value.target : kMotionMainDrawing;
+        return out;
+    }
+    // As the tab's frame takes a swap's share (forge::pixel::block_share): its easing on nanoseconds.
+    const f64 local = snap_ns(t - pc.at);
+    f64 k = 0;
+    if (pc.length <= 0) k = local < 0 ? 0 : 1;
+    else if (local <= 0) k = 0;
+    else if (local >= pc.length) k = 1;
+    else k = motion_ease(file, pc, local / pc.length);
+    out.drawing = k >= 1 ? pc.to.target : pc.from.target;
+    if (k > 0 && k < 1 && pc.from.target != pc.to.target) {
+        out.drawing = pc.to.target;
+        out.swap = true;
+        out.from = pc.from.target;
+        out.k = k;
+    }
+    return out;
+}
+
+std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip& clip, f64 t, std::string_view drawing) {
     std::vector<MotionPartPose> out;
     std::map<std::string, usize, std::less<>> at;
     std::set<std::string_view> unborn; // a copy not born yet has no element to pose
     for (const MotionCopy& c : clip.copies)
         if (!motion_copy_drawn(c, t)) unborn.insert(c.id);
     for (const MotionTrack& tr : clip.tracks) {
-        if (unborn.count(tr.part)) continue;
+        if (unborn.count(tr.part) || tr.prop == MotionProp::Drawing) continue;
         auto [it, fresh] = at.try_emplace(tr.part, out.size());
         if (fresh) {
             out.emplace_back();
@@ -901,7 +1033,7 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
     }
     for (MotionPartPose& pp : out) {
         for (usize p = 0; p < kMotionPropCount; ++p) pp.moves = pp.moves || (pp.has[p] && motion_prop_moves(static_cast<MotionProp>(p)));
-        const MotionPart* part = pp.moves ? file.part(pp.id) : nullptr;
+        const MotionPart* part = pp.moves ? file.part(pp.id, drawing) : nullptr;
         if (!part) {
             pp.moves = false;
             continue;
@@ -915,12 +1047,17 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
 }
 
 bool motion_clip_missing(const MotionClip& clip, const SvgOutline& svg, std::string& part, std::string& role) {
+    return motion_clip_missing(clip, std::vector<const SvgOutline*>{&svg}, part, role);
+}
+
+bool motion_clip_missing(const MotionClip& clip, const std::vector<const SvgOutline*>& svgs, std::string& part, std::string& role) {
     auto drawn = [&](std::string_view id) {
-        for (const SvgElement& e : svg.elements)
-            if (e.id == id)
-                if (e.tag == "g" || e.tag == "use" || e.tag == "path" || e.tag == "rect" || e.tag == "circle" || e.tag == "ellipse" ||
-                    e.tag == "line" || e.tag == "polyline" || e.tag == "polygon")
-                    return true;
+        for (const SvgOutline* svg : svgs)
+            for (const SvgElement& e : svg->elements)
+                if (e.id == id)
+                    if (e.tag == "g" || e.tag == "use" || e.tag == "path" || e.tag == "rect" || e.tag == "circle" || e.tag == "ellipse" ||
+                        e.tag == "line" || e.tag == "polyline" || e.tag == "polygon")
+                        return true;
         return false;
     };
     auto copy = [&](std::string_view id) {

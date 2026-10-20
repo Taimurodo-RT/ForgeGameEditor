@@ -24,10 +24,15 @@
 // Since part 5г the clip draws everything the tab's main picture draws but blur and shadow: dashes, outlines drawn along
 // their length, tints and flashes (gradients too), masks, links, copies and the parts' order. The element then draws
 // the picture from a stage of it (engine/ui/src/svg_stage.h), made again when the clip needs what it has not.
+//
+// Since part 5д the clip shows the character's other drawings too: the element draws the drawing shown in place of its
+// file, and in a swap two documents into one picture, the old drawing and the new one over it. Parts with one id in
+// both (shapes) morph from the old one's to the new one's, the other shapes fade out of the old one and into the new.
 
 #include "forge/core/types.h"
 #include "forge/vector/motion_file.h"
 
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,13 +71,32 @@ const SvgPart* svg_part(Rml::Element* element, std::string_view part);
 // comes once however often the script says it.
 std::vector<std::string> svg_problems();
 
+// Another drawing of a character (part 5д): its name, its file beside the picture and the file's text.
+struct SvgDrawing {
+    std::string name;    // "angry"
+    std::string picture; // "Ёжик.angry.svg"
+    std::shared_ptr<const std::string> text;
+};
+
 // What a clip shows at a moment on an element's picture `picture` (its file name, "Ёжик.svg"): motion_pose's parts.
 struct SvgPose {
     std::string picture;
-    std::vector<vector::MotionPartPose> parts;
+    std::vector<vector::MotionPartPose> parts;   // as they stand in the drawing shown
     std::vector<vector::MotionCopy> copies;      // the copies drawn now (motion_copy_drawn)
     std::vector<vector::MotionOrderStep> order;  // the order's steps up to now (motion_order_at)
+    // Part 5д: the character's other drawings, by name; the one shown (motion_shown: "draw" or "" the main one, the
+    // picture's file); in a swap the one it comes from, how far, and the parts as they stand in that one.
+    std::vector<SvgDrawing> drawings;
+    std::string drawing;
+    bool swap = false;
+    std::string swap_from;
+    f64 swap_k = 0;
+    std::vector<vector::MotionPartPose> from_parts;
 };
+// What a clip of a character's file shows on its picture `picture` at a moment (a game's screen poses each frame of a
+// clip so): its parts, its copies drawn, its order's steps (part 5г); the drawing shown with the others' texts, in a swap
+// the one it comes from, how far and the parts as they stand in that one (part 5д).
+SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings = {});
 // The element shows the pose on its next frame; another pose of the same parts replaces it.
 void svg_pose(Rml::Element* element, SvgPose pose);
 // The pose goes and the element's pictures are made again from their files, with what the changes above said: what a
@@ -80,13 +104,15 @@ void svg_pose(Rml::Element* element, SvgPose pose);
 void svg_unpose(Rml::Element* element);
 // The pose the element shows (nullptr: none).
 const SvgPose* svg_posed(Rml::Element* element);
-// A picture's text with a pose on it, drawn w × h as an element draws it (the picture fitted in, centred), straight
-// RGBA: what a screen shows, without one. False with why when the text is not SVG.
+// A picture's text with a pose on it, drawn w × h as an element of that size draws it (stretched to it, as the SVG plugin
+// does), straight RGBA: what a screen shows, without one. False with why when the text is not SVG.
 bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why);
-// The attributes the pose gives an element of the picture after it is applied, for checks: "" when none was given.
-std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name);
-// The text of the stage a pose draws the picture from, for checks: "" when it draws the file itself.
-std::string posed_stage(std::string_view svg, const SvgPose& pose);
+// The attributes the pose gives an element of the picture after it is applied, for checks: "" when none was given. `over`:
+// of the document drawn over it in a swap (part 5д).
+std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name, bool over = false);
+// The text of the stage a pose draws the picture from, for checks: "" when it draws the file itself. `over`: the
+// stage (or the drawing's text) of the document over it in a swap.
+std::string posed_stage(std::string_view svg, const SvgPose& pose, bool over = false);
 
 // Ui::init calls it: the SVG plugin asks this file what a live element's pictures are.
 void install_live_svg();

@@ -195,6 +195,8 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("ms_layer", &forge::edits::ProjectEdits::ms_layer);
     t.field("ms_layer_box", &forge::edits::ProjectEdits::ms_layer_box);
     t.field("ms_tab", &forge::edits::ProjectEdits::ms_tab);
+    t.field("ms_drawing_file", &forge::edits::ProjectEdits::ms_drawing_file);
+    t.field("ms_drawing_svg", &forge::edits::ProjectEdits::ms_drawing_svg);
 }
 
 namespace forge::edits {

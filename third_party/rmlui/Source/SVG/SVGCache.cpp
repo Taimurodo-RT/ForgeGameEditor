@@ -94,8 +94,10 @@ namespace SVG {
 		UniquePtr<lunasvg::Document> svg_document;
 		// Forge: the picture uses currentColor, so its textures differ by the element's 'color'.
 		bool uses_current_color = false;
-		// Forge: a live element's own document: the file (or inline key) and the text it was read from.
+		// Forge: a live element's own document: the file (or inline key) and the text it was read from; the document its
+		// apply draws over it, at its scale.
 		String live_path, live_text;
+		UniquePtr<lunasvg::Document> live_over;
 		// List of textures using this document, one entry for each unique render dimension plus meta-data.
 		Vector<SVGTexture> textures;
 	};
@@ -256,7 +258,7 @@ namespace SVG {
 
 			// Forge: a live element's document starts as the element's script has it (maybe another one in its place).
 			if (live_element && live_apply)
-				live_apply(live_element, doc.live_path, doc.live_text, doc.svg_document, true);
+				live_apply(live_element, doc.live_path, doc.live_text, doc.svg_document, doc.live_over, true);
 			if (!doc.svg_document)
 				return {};
 
@@ -314,6 +316,7 @@ namespace SVG {
 				if (it_doc == svg_cache_data->documents.end() || !it_doc->second.svg_document)
 					return false;
 				lunasvg::Document* svg_document = it_doc->second.svg_document.get();
+				lunasvg::Document* over = it_doc->second.live_over.get(); // Forge
 				RMLUI_SVG_DEBUG_LOG("Generating texture: %s, (%d, %d), %s", GetSourceOr(svg_document, "").c_str(), dimensions.x, dimensions.y,
 					crop_to_content ? "crop_to_content" : "crop_none");
 
@@ -327,6 +330,8 @@ namespace SVG {
 					std::snprintf(value, sizeof(value), "rgba(%d,%d,%d,%.4f)", current_color.red, current_color.green, current_color.blue,
 						current_color.alpha / 255.0);
 					svg_document->documentElement().setAttribute("color", value);
+					if (over)
+						over->documentElement().setAttribute("color", value);
 				}
 
 				lunasvg::Bitmap bitmap;
@@ -341,10 +346,16 @@ namespace SVG {
 					bitmap = lunasvg::Bitmap(dimensions.x, dimensions.y);
 					bitmap.clear(0x00000000);
 					svg_document->render(bitmap, matrix);
+					if (over) // Forge
+						over->render(bitmap, matrix);
 				}
 				else
 				{
 					bitmap = svg_document->renderToBitmap(dimensions.x, dimensions.y);
+					// Forge: the second document over it, at its scale (renderToBitmap's).
+					if (over && bitmap.valid() && svg_document->width() > 0 && svg_document->height() > 0)
+						over->render(bitmap,
+							lunasvg::Matrix(dimensions.x / svg_document->width(), 0, 0, dimensions.y / svg_document->height(), 0, 0));
 				}
 
 				if (!bitmap.valid() || !bitmap.data())
@@ -566,7 +577,7 @@ namespace SVG {
 				continue;
 			SVGDocument& doc = entry.second;
 			if (live_apply && doc.svg_document)
-				live_apply(element, doc.live_path, doc.live_text, doc.svg_document, false);
+				live_apply(element, doc.live_path, doc.live_text, doc.svg_document, doc.live_over, false);
 			for (SVGTexture& texture : doc.textures)
 				texture.texture.Regenerate();
 		}

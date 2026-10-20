@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
 #include <vector>
@@ -159,6 +160,8 @@ std::string said(MotionProp p, const MotionValue& v) {
            std::to_string(v.n);
 }
 
+const MotionTrack* track_of(const MotionClip& c, std::string_view part, MotionProp p);
+
 // A clip as the screen plays it, checked against the tab's frame: every piece at its moments, its holds and transitions
 // between them too, every property no track has at rest; written and read back the same.
 MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std::string& clip, MotionFile* file_out = nullptr) {
@@ -176,12 +179,14 @@ MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std
         return p;
     };
     for (const MotionTrack& tr : c.tracks) {
+        if (tr.prop == MotionProp::Drawing) continue; // the drawing shown: below
         for (usize k = 0; k < tr.pieces.size(); ++k) {
             const MotionPiece& pc = tr.pieces[k];
             const f64 end = k + 1 < tr.pieces.size() ? tr.pieces[k + 1].at : c.length;
             std::vector<f64> ts = piece_moments(pc.at, end);
             if (pc.kind != MotionPiece::Kind::Frames) // a hold or a transition is the frame at any moment
                 for (f64 t = pc.at + 1.0 / 337; t < end; t += 1.0 / 337) ts.push_back(t);
+            if (k + 1 == tr.pieces.size()) ts.push_back(c.length); // the end, where a clip that does not loop stays
             for (const f64 t : ts) {
                 const MotionValue game = vector::motion_track_value(file, tr, t, c.length);
                 const MotionValue want = screen_value(tab(t), tr.part, tr.prop);
@@ -190,12 +195,34 @@ MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std
             }
         }
     }
+    // The drawing shown, in a swap the one it comes from and how far (part 5д): the tab's frame at each 120th of a second
+    // and in between.
+    {
+        std::vector<f64> ts = piece_moments(0, c.length);
+        for (f64 t = 1.0 / 337; t < c.length; t += 1.0 / 337) ts.push_back(t);
+        ts.push_back(c.length);
+        auto named = [](const std::string& d) { return d.empty() ? std::string(vector::kMotionMainDrawing) : d; };
+        for (const f64 t : ts) {
+            const vector::MotionShown game = vector::motion_shown(file, c, t);
+            const Pose p = tab(t);
+            INFO(clip, " drawing at ", t, ": ", game.drawing, " ", game.swap, " ", game.from, " ", game.k, " / ", named(p.drawing), " ", p.swap, " ",
+                 named(p.swap_from), " ", p.swap_k);
+            CHECK(game.drawing == named(p.drawing));
+            CHECK(game.swap == p.swap);
+            if (p.swap) {
+                CHECK(game.from == named(p.swap_from));
+                CHECK(std::abs(game.k - p.swap_k) <= 1e-12);
+            }
+        }
+    }
     // What no track has stays at rest, of the picture's parts and the copies; the copies drawn and the order are the
     // tab's (part 5г).
     std::vector<std::string> ids;
     for (const Part& part : rig.parts()) ids.push_back(part.id);
     for (const vector::MotionCopy& k : c.copies) ids.push_back(k.id);
-    for (const f64 t : piece_moments(0, c.length)) {
+    std::vector<f64> rest_ts = piece_moments(0, c.length);
+    rest_ts.push_back(c.length);
+    for (const f64 t : rest_ts) {
         const Pose p = tab(t);
         for (const std::string& id : ids)
             for (usize i = 0; i < vector::kMotionPropCount; ++i) {
@@ -234,6 +261,17 @@ MotionClip checked(PoseScript& s, const Rig& rig, const PixelDoc& doc, const std
             part.id = k.id;
             file.parts.push_back(part);
         }
+    // The drawings the clip shows (part 5д).
+    if (const MotionTrack* d = track_of(c, "", MotionProp::Drawing))
+        for (const MotionPiece& pc : d->pieces)
+            for (const MotionValue* v : {&pc.value, &pc.from, &pc.to})
+                if (!v->target.empty() && v->target != vector::kMotionMainDrawing && !file.drawing(v->target)) {
+                    vector::MotionDrawing md;
+                    md.name = v->target;
+                    md.picture = "Ёжик." + v->target + ".svg";
+                    file.drawings.push_back(md);
+                    std::sort(file.drawings.begin(), file.drawings.end(), [](const auto& a, const auto& b) { return a.name < b.name; });
+                }
     const std::string text = vector::write_motion_file(file);
     MotionFile back;
     const bool read = vector::read_motion_file(text, back, why);
@@ -273,22 +311,31 @@ std::string one_track(std::string_view track, std::string_view clip_rest = "", s
 }
 
 
-// What a screen draws a clip from at t (GameScreens does the same): the parts' pose, the copies born, the order.
-ui::SvgPose screen_pose(const MotionFile& f, const MotionClip& c, f64 t) {
-    ui::SvgPose p{f.picture, vector::motion_pose(f, c, t), {}, vector::motion_order_at(c, t)};
-    for (const vector::MotionCopy& k : c.copies)
-        if (vector::motion_copy_drawn(k, t)) p.copies.push_back(k);
-    return p;
+// What a screen draws a clip from at t (ui::clip_pose, as GameScreens poses each frame): the parts' pose, the copies
+// born, the order.
+ui::SvgPose screen_pose(const MotionFile& f, const MotionClip& c, f64 t) { return ui::clip_pose(f.picture, f, c, t); }
+
+// The same with the character's other drawings (part 5д), the texts given beside the picture, as GameScreens reads them.
+ui::SvgPose screen_pose(const ScreenGift& g, const MotionClip& c, f64 t) {
+    std::vector<ui::SvgDrawing> drawings;
+    for (const vector::MotionDrawing& d : g.motion.drawings)
+        for (const ScreenGift::File& file : g.drawings)
+            if (file.name == d.picture) drawings.push_back({d.name, d.picture, std::make_shared<const std::string>(file.text)});
+    return ui::clip_pose(g.motion.picture, g.motion, c, t, std::move(drawings));
 }
 
 // The screen's picture of a clip (lunasvg with the attributes and the stage the game gives it) against the tab's
 // (ThorVG) at these moments: inside the shapes (a pixel and its neighbours fully covered, one colour in the tab) the
 // colours within 2; where a gradient goes (fully covered, each neighbour within 4 of it in the tab) within 6; where
 // nothing is (the pixel and its neighbours bare in the tab) its cover within 24 (lunasvg draws a sliver of a dash that
-// ThorVG leaves out); what is covered at all within 1%.
+// ThorVG leaves out); what is covered at all within 1%. A picture that is not square is drawn at a whole multiple of its
+// size, as an element of its own proportions shows it (the screen stretches the picture to the element).
 void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc& doc, const char* name, std::vector<f64> times,
                  usize min_inside = 500) {
     constexpr u32 kSide = 128;
+    const u32 pw = static_cast<u32>(std::lround(rig.width())), ph = static_cast<u32>(std::lround(rig.height()));
+    const u32 times_size = pw == ph ? 0 : (kSide + std::max(pw, ph) - 1) / std::max(pw, ph);
+    const u32 w = times_size ? pw * times_size : kSide, h = times_size ? ph * times_size : kSide;
     const MotionClip* c = gift.motion.clip(name);
     REQUIRE(c);
     std::string why;
@@ -297,16 +344,16 @@ void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc
         Pose pose;
         REQUIRE(s.pose(rig, t, name, doc.params, doc.seed, pose));
         REQUIRE(rig.pose(pose, why));
-        const assets::CookedTexture tab = rig.draw(kSide, kSide);
+        const assets::CookedTexture tab = rig.draw(w, h);
         std::vector<u8> screen;
-        const bool drew = ui::render_posed_svg(gift.svg, screen_pose(gift.motion, *c, t), kSide, kSide, screen, why);
+        const bool drew = ui::render_posed_svg(gift.svg, screen_pose(gift, *c, t), w, h, screen, why);
         INFO(why);
         REQUIRE(drew);
         REQUIRE(screen.size() == tab.rgba8.size());
         f64 cover_tab = 0, cover_screen = 0;
         usize inside = 0, graded = 0, bare = 0, off = 0;
         std::string where;
-        auto at = [&](const std::vector<u8>& px, u32 x, u32 y, u32 ch) { return px[(static_cast<usize>(y) * kSide + x) * 4 + ch]; };
+        auto at = [&](const std::vector<u8>& px, u32 x, u32 y, u32 ch) { return px[(static_cast<usize>(y) * w + x) * 4 + ch]; };
         auto differs = [&](u32 x, u32 y, int slack, u32 channels) {
             for (u32 ch = 0; ch < 4; ++ch)
                 if ((channels >> ch & 1) && std::abs(int(at(tab.rgba8, x, y, ch)) - int(at(screen, x, y, ch))) > slack) {
@@ -319,11 +366,11 @@ void same_as_tab(const ScreenGift& gift, PoseScript& s, Rig& rig, const PixelDoc
                     return;
                 }
         };
-        for (u32 y = 0; y < kSide; ++y)
-            for (u32 x = 0; x < kSide; ++x) {
+        for (u32 y = 0; y < h; ++y)
+            for (u32 x = 0; x < w; ++x) {
                 cover_tab += at(tab.rgba8, x, y, 3);
                 cover_screen += at(screen, x, y, 3);
-                if (x == 0 || y == 0 || x + 1 == kSide || y + 1 == kSide) continue;
+                if (x == 0 || y == 0 || x + 1 == w || y + 1 == h) continue;
                 bool solid = at(tab.rgba8, x, y, 3) == 255, smooth = solid, empty = at(tab.rgba8, x, y, 3) == 0;
                 for (int dy = -1; dy <= 1; ++dy)
                     for (int dx = -1; dx <= 1; ++dx) {
@@ -455,7 +502,7 @@ TEST_CASE("Screen clips file: what it cannot read names the field") {
     CHECK(read_error("не JSON").find("JSON") != std::string::npos);
     CHECK(read_error(R"({"forge": "motion"})").find("version") != std::string::npos);
     CHECK(read_error(R"({"forge": "picture", "version": 1})").find("forge") != std::string::npos);
-    CHECK(read_error(R"({"forge": "motion", "version": 3, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
+    CHECK(read_error(R"({"forge": "motion", "version": 4, "character": "a", "from": "", "picture": "a.svg", "parts": {}, "curves": [], "clips": {}})")
               .find("version") != std::string::npos);
     // A field not of its kind.
     std::string looped = one_track(hold);
@@ -786,7 +833,7 @@ TEST_CASE("Screen clips: the screen's picture (lunasvg) is the tab's (ThorVG)") 
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.svg == kPicture);
@@ -976,7 +1023,7 @@ TEST_CASE("Screen clips: what a clip does that the screen does not draw, each fr
 
     // The line of the tab: each word with its clips.
     ScreenGift gift;
-    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     REQUIRE_FALSE(gift.notes.empty());
     CHECK(gift.notes[0] == "На экране пока не рисуются: размытие («blur»), тень («shadow»)");
 }
@@ -1022,7 +1069,10 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     apply_pivots(rig, doc, &main, &others);
 
     ScreenGift gift;
-    REQUIRE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, gift, why));
+    // The rig's drawings go with their texts (part 5д).
+    CHECK_FALSE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, {}, gift, why));
+    CHECK(why == "у персонажа есть рисунок «angry», а его текста нет: откройте персонажа снова");
+    REQUIRE(build_screen(s, rig, doc, "Персонаж", "персонажи/Персонаж.pixel.json", "", &main, others, gift, why));
     // The mouth morphs: a <path> of the same outline; the nose does not: a <rect> still.
     CHECK(gift.svg.find("<path id=\"mouth\"") != std::string::npos);
     CHECK(gift.svg.find("<rect id=\"mouth\"") == std::string::npos);
@@ -1038,28 +1088,52 @@ TEST_CASE("Screen clips: a character the code draws, its swaps and morphs into a
     CHECK(gift.motion.picture == "Персонаж.svg");
     CHECK(gift.motion.from == "персонажи/Персонаж.pixel.json");
     REQUIRE(gift.motion.part("nose"));
-    CHECK(gift.motion.clip("angry")->not_drawn == std::vector<std::string>{"drawing"});
-    // A step of another drawing's part: not in the SVG the screen shows, so not given.
-    CHECK(gift.motion.clip("angry_top")->not_drawn == std::vector<std::string>{"drawing"});
-    CHECK(gift.motion.clip("angry_top")->order.empty());
-    CHECK(gift.motion.clip("brow")->not_drawn == std::vector<std::string>{"morph_drawing"});
+    // Part 5д: the swaps and the morphs into another drawing's shape are drawn; the drawing goes beside the picture.
+    for (const char* c : {"angry", "angry_top", "brow", "brow_on", "open"}) {
+        INFO(c);
+        CHECK(gift.motion.clip(c)->not_drawn.empty());
+    }
+    REQUIRE(gift.motion.drawings.size() == 1);
+    CHECK(gift.motion.drawings[0].name == "angry");
+    CHECK(gift.motion.drawings[0].picture == "Персонаж.angry.svg");
+    REQUIRE(gift.drawings.size() == 1);
+    CHECK(gift.drawings[0].name == "Персонаж.angry.svg");
+    // The mouth morphs (into the brow): the angry drawing as the tab draws it, its root the main one's.
+    CHECK(gift.drawings[0].text == drawing_svg(drawing_with_paths(others[0].drawing, {"mouth"}), 64, 64));
+    auto drawing_track = [&](const char* c) {
+        const MotionClip* clip = gift.motion.clip(c);
+        const auto t = std::find_if(clip->tracks.begin(), clip->tracks.end(), [](const vector::MotionTrack& k) { return k.prop == MotionProp::Drawing; });
+        return t == clip->tracks.end() ? nullptr : &*t;
+    };
+    REQUIRE(drawing_track("angry"));
+    CHECK(drawing_track("angry")->part.empty());
+    CHECK(drawing_track("open") == nullptr);
+    // A step of another drawing's part: given now, the drawing has it.
+    REQUIRE(gift.motion.clip("angry_top")->order.size() == 1);
+    CHECK(gift.motion.clip("angry_top")->order[0].part == "brow");
     // From the frames: start_from leaves the mouth morphed into the brow, by no track of the clip's own.
-    CHECK(gift.motion.clip("brow_on")->not_drawn == std::vector<std::string>{"morph_drawing"});
-    CHECK(gift.motion.clip("open")->not_drawn.empty());
+    const MotionClip& brow_on = *gift.motion.clip("brow_on");
+    CHECK(std::any_of(brow_on.tracks.begin(), brow_on.tracks.end(), [](const vector::MotionTrack& k) { return k.prop == MotionProp::Morph && k.part == "mouth"; }));
+    // The file reads back as it was written: version 3.
+    const std::string text = vector::write_motion_file(gift.motion);
+    CHECK(text.find("\"version\": 3") != std::string::npos);
+    MotionFile back;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == gift.motion);
 
     // A file's SVG: written as it is, a morph of a shape that is not a <path> drawn (its stage makes it one, part 5г).
     PoseScript rect_morph = script_of(R"(return { clips = { c = function(p) part("box"):morph("mouth_o", 0.2) end } })");
     const Rig file_rig = loaded();
-    REQUIRE(build_screen(rect_morph, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    REQUIRE(build_screen(rect_morph, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(gift.svg == kPicture);
     CHECK(gift.notes.empty());
 
     // No clips, a clip that fails.
     PoseScript none = script_of(R"(return { pose = function(t) end })");
-    CHECK_FALSE(build_screen(none, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    CHECK_FALSE(build_screen(none, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(why == "В коде нет клипов: экрану нечего играть");
     PoseScript bad = script_of("return { clips = {\n  ok = function(p) part('ball').x(1, 0.1) end,\n  jump = function(p)\n    part('nope').x(1, 0.1)\n  end,\n} }");
-    CHECK_FALSE(build_screen(bad, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, gift, why));
+    CHECK_FALSE(build_screen(bad, file_rig, doc, "Ёжик", "Ёжик.pixel.json", kPicture, nullptr, {}, gift, why));
     CHECK(why.rfind("клип «jump», строка 4: ", 0) == 0);
 }
 
@@ -1312,7 +1386,7 @@ TEST_CASE("Screen clips, part 5г: the screen's picture (lunasvg) is the tab's (
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.svg == kStage);
@@ -1405,7 +1479,7 @@ TEST_CASE("Screen clips, part 5г: the stage a pose draws the picture from") {
     const PixelDoc doc = doc64();
     ScreenGift gift;
     std::string why;
-    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why));
     auto stage = [&](const char* clip, f64 t) { return ui::posed_stage(kStage, screen_pose(gift.motion, *gift.motion.clip(clip), t)); };
     auto count = [](const std::string& text, const std::string& what) {
         usize n = 0;
@@ -1620,7 +1694,7 @@ TEST_CASE("Screen clips, part 5г: tones of gradients and see-through colours, a
     }
     ScreenGift gift;
     std::string why;
-    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kMore, nullptr, gift, why);
+    const bool built = build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", kMore, nullptr, {}, gift, why);
     INFO(why);
     REQUIRE(built);
     CHECK(gift.notes.empty());
@@ -1658,7 +1732,7 @@ TEST_CASE("Screen clips, part 5г: poses by hand: below in the order, an outline
     PoseScript s = script_of(kStageCode);
     ScreenGift gift;
     std::string why;
-    REQUIRE(build_screen(s, rig, doc64(), "Ёжик", "Ёжик.pixel.json", kStage, nullptr, gift, why));
+    REQUIRE(build_screen(s, rig, doc64(), "Ёжик", "Ёжик.pixel.json", kStage, nullptr, {}, gift, why));
     ui::SvgPose pose = screen_pose(gift.motion, *gift.motion.clip("link"), 0.25);
     REQUIRE(pose.parts.size() >= 3);
     const std::vector<u8> as_given = screen_of(kStage, pose);
@@ -1696,4 +1770,779 @@ TEST_CASE("Screen clips, part 5г: a copy born after the clip's end is not given
     REQUIRE(m->pieces.size() <= 2);
     CHECK(m->pieces.back().value.target == "lid");
     CHECK(m->pieces.back().at <= 0.2 + 1e-9);
+}
+
+// --- part 5д: the character's other drawings on the screen -------------------------------------------------------
+
+namespace {
+
+// The hedgehog of the swap tests (test_motion_swap.cpp): a face of a head and a mouth (and a hidden open mouth to morph
+// into), a nose and an unnamed patch of grass. «angry»: the face moved and twice as big (its strokes half as wide), a
+// brow and an unnamed square, no nose. «sleepy»: the face lower.
+const char* kHedge = R"(    canvas(64, 64)
+    group("face", { y = 2 }, function()
+      circle("head", { x = 32, y = 28, r = 14, fill = "#c09060", stroke = "#402010", stroke_width = 1.5 })
+      path("mouth", { d = "M 26 34 Q 32 38 38 34", fill = "none", stroke = "#402010", stroke_width = 1.5 })
+      path("mouth_o", { d = "M 27 33 Q 32 40 37 33 Z", fill = "#802020", hidden = true })
+    end)
+    rect("nose", { x = 30, y = 26, w = 4, h = 3, fill = "#a06040" })
+    ellipse({ x = 12, y = 57, rx = 6, ry = 3, fill = "#406020" }))";
+const char* kHedgeAngry = R"(      canvas(64, 64)
+      group("face", { x = 1, scale = 2 }, function()
+        path("head", { d = "M 15.5 1 C 23 1 23 1 30 14 C 23 27 8 27 1 14 C 8 1 8 1 15.5 1 Z", fill = "#e06040", stroke = "#401010", stroke_width = 0.75 })
+        path("mouth", { d = "M 13 19 Q 15.5 16 18 19", fill = "none", stroke = "#401010", stroke_width = 0.75 })
+      end)
+      path("brow", { d = "M 22 18 L 30 22 M 42 18 L 34 22", fill = "none", stroke = "#401010", stroke_width = 2, pivot = { 32, 20 } })
+      rect({ x = 50, y = 52, w = 8, h = 6, fill = "#2040a0" }))";
+const char* kHedgeSleepy = R"(      canvas(64, 64)
+      group("face", { y = 4, rot = 8 }, function()
+        circle("head", { x = 32, y = 28, r = 13, fill = "#a08070" })
+        path("mouth", { d = "M 28 36 L 36 36", fill = "none", stroke = "#402010" })
+      end)
+      rect("nose", { x = 30, y = 26, w = 4, h = 2, fill = "#806050" }))";
+
+std::string hedgehog_code(std::string_view clips, std::string_view draw = kHedge, std::string_view angry = kHedgeAngry,
+                          std::string_view sleepy = kHedgeSleepy) {
+    std::string s = "return {\n  clips = {\n" + std::string(clips) + "\n  },\n";
+    if (!draw.empty()) s += "  draw = function(p, rng)\n" + std::string(draw) + "\n  end,\n";
+    return s + "  drawings = {\n    angry = function(p, rng)\n" + std::string(angry) + "\n    end,\n    sleepy = function(p, rng)\n" +
+           std::string(sleepy) + "\n    end,\n  },\n}\n";
+}
+
+// A character with drawings as the tab makes it (the main one drawn by its code, or `svg`), given to the screen.
+struct Hedgehog {
+    PoseScript script;
+    Drawing main;
+    std::vector<NamedDrawing> others;
+    Rig rig;
+    ScreenGift gift;
+    PixelDoc doc = doc64();
+
+    explicit Hedgehog(std::string_view code, std::string_view svg = {}, u32 w = 64, u32 h = 64) {
+        doc.frame_w = w;
+        doc.frame_h = h;
+        bool ok = script.load(code);
+        INFO(script.error());
+        REQUIRE(ok);
+        std::string why;
+        u32 line = 0;
+        if (svg.empty()) REQUIRE(script.draw({}, 1, main));
+        ok = draw_drawings(script, doc, others, why, line);
+        INFO(why);
+        REQUIRE(ok);
+        ok = rig.load(svg.empty() ? drawing_svg(main, w, h) : std::string(svg), why) && add_drawings(rig, others, why, line);
+        INFO(why);
+        REQUIRE(ok);
+        apply_pivots(rig, doc, svg.empty() ? &main : nullptr, &others);
+        script.set_lengths(doc.lengths);
+        ok = build_screen(script, rig, doc, "Ёжик", "Ёжик.pixel.json", svg, svg.empty() ? &main : nullptr, others, gift, why);
+        INFO(why);
+        REQUIRE(ok);
+    }
+};
+
+const char* kSwapClips = R"(    mad = function(p, rng)
+      part("nose").x(3, 0.2)
+      swap("angry", 0.4, "linear")
+      part("brow").rot(12, 0.3)
+      swap("draw", 0.3)
+    end,
+    sleep = function(p, rng)
+      swap("sleepy", 0.3, "in_out_cubic")
+      swap("angry", 0.3, bezier(0.3, 0, 0.2, 1))
+      swap("draw", 0.2, function(k) return k * k * k end)
+    end,
+    over = function(p, rng)
+      swap("angry", 0.4, "in_out_back")
+      wait(0.1)
+      swap("draw", 0.4, "out_back")
+    end,
+    at_once = function(p, rng)
+      wait(0.1)
+      swap("sleepy", 0)
+      wait(0.1)
+    end,
+    cut = function(p, rng)
+      spawn(swap("angry", 0.4))
+      wait(0.2)
+      swap("sleepy", 0.3)
+    end,
+    open = function(p, rng)
+      all(part("mouth"):morph("mouth_o", 0.4), swap("angry", 0.4))
+      wait(0.1)
+    end,
+    angry_end = function(p, rng) swap("angry", 0.2) end,
+    calm = function(p, rng)
+      start_from("angry_end")
+      swap("draw", 0.2)
+    end,
+    copied = function(p, rng)
+      copies("head", 1, function(i, c) all(c.scale(0.3, 0.1), c.x(-22, 0.1), c.y(-20, 0.1)) end)
+      copies("mouth", 1, function(i, c) c.y(16, 0.1) end)
+      swap("angry", 0.3)
+      wait(0.1)
+    end,
+    lacks = function(p, rng)
+      swap("angry", 0)
+      part("brow"):mask("nose")
+      part("head"):attach("nose")
+      part("face"):above("nose")
+      part("nose").x(4, 0.2)
+      swap("draw", 0.3)
+    end,
+    cross = function(p, rng)
+      swap("angry", 0)
+      part("mouth"):morph("mouth_o", 0.3)
+      swap("draw", 0.3)
+      part("mouth"):morph("mouth", 0.2)
+    end,)";
+
+const char* kSwapNames[] = {"mad", "sleep", "over", "at_once", "cut", "open", "angry_end", "calm", "copied", "lacks", "cross"};
+
+} // namespace
+
+TEST_CASE("Screen clips, part 5д: the drawing a clip shows, its swaps and their shares are the tab's frame") {
+    Hedgehog h(hedgehog_code(kSwapClips));
+    for (const char* name : kSwapNames) {
+        INFO(name);
+        const MotionClip c = checked(h.script, h.rig, h.doc, name);
+        CHECK(c.not_drawn.empty());
+        CHECK(*h.gift.motion.clip(name) == c);
+    }
+    // The drawing track: the first, of no part, holds and transitions only.
+    for (const MotionClip& c : h.gift.motion.clips) {
+        INFO(c.name);
+        REQUIRE_FALSE(c.tracks.empty());
+        CHECK(c.tracks.front().prop == MotionProp::Drawing);
+        CHECK(c.tracks.front().part.empty());
+        for (const MotionPiece& pc : c.tracks.front().pieces) CHECK(pc.kind != MotionPiece::Kind::Frames);
+    }
+    const MotionTrack* mad = track_of(*h.gift.motion.clip("mad"), "", MotionProp::Drawing);
+    REQUIRE(mad);
+    // The hold of angry while the brow turns says nothing the transition before it did not: not written.
+    REQUIRE(mad->pieces.size() == 3);
+    CHECK(mad->pieces[0].kind == MotionPiece::Kind::Hold);
+    CHECK(mad->pieces[0].value.target == "draw");
+    CHECK(mad->pieces[1].kind == MotionPiece::Kind::Ease);
+    CHECK(mad->pieces[1].at == doctest::Approx(0.2));
+    CHECK(mad->pieces[1].length == doctest::Approx(0.4));
+    CHECK(mad->pieces[1].from.target == "draw");
+    CHECK(mad->pieces[1].to.target == "angry");
+    CHECK(mad->pieces[1].timing == vector::Timing::Linear);
+    CHECK(mad->pieces[2].kind == MotionPiece::Kind::Ease);
+    CHECK(mad->pieces[2].at == doctest::Approx(0.9));
+    CHECK(mad->pieces[2].from.target == "angry");
+    CHECK(mad->pieces[2].to.target == "draw");
+    // The brow is only angry's: its track is written, its part in angry's record with the pivot it has there.
+    CHECK(track_of(*h.gift.motion.clip("mad"), "brow", MotionProp::Rot) != nullptr);
+    CHECK(h.gift.motion.part("brow") == nullptr);
+    CHECK(h.gift.motion.part("brow", "angry") != nullptr);
+    CHECK(h.gift.motion.part("brow", "angry")->pivot.x == 32);
+    CHECK(h.gift.motion.part("brow", "angry")->pivot.y == 20);
+    // An author's easing goes into the file's curves as a part's does.
+    const MotionTrack* sleep = track_of(*h.gift.motion.clip("sleep"), "", MotionProp::Drawing);
+    REQUIRE(sleep);
+    REQUIRE(sleep->pieces.size() == 3); // from 0: no hold before the first
+    CHECK(sleep->pieces[0].timing == vector::Timing::InOutCubic);
+    CHECK(sleep->pieces[1].has_bezier);
+    CHECK(sleep->pieces[2].curve >= 0);
+    CHECK(sleep->pieces[2].from.target == "angry");
+    CHECK(sleep->pieces[2].to.target == "draw");
+    // A part with one id, its own frame and transform in each drawing.
+    REQUIRE(h.gift.motion.part("head", "angry"));
+    REQUIRE(h.gift.motion.part("head"));
+    CHECK_FALSE(h.gift.motion.part("head", "angry")->frame == h.gift.motion.part("head")->frame);
+    // Every drawing is given, its file beside the picture with the main one's root.
+    REQUIRE(h.gift.drawings.size() == 2);
+    CHECK(h.gift.drawings[0].name == "Ёжик.angry.svg");
+    CHECK(h.gift.drawings[1].name == "Ёжик.sleepy.svg");
+    CHECK(h.gift.motion.drawings[1].picture == "Ёжик.sleepy.svg");
+    // The file there and back, version 3.
+    const std::string text = vector::write_motion_file(h.gift.motion);
+    CHECK(text.find("\"version\": 3") != std::string::npos);
+    MotionFile back;
+    std::string why;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == h.gift.motion);
+    CHECK(vector::write_motion_file(back) == text);
+}
+
+TEST_CASE("Screen clips, part 5д: the screen's picture of a swap (lunasvg) is the tab's (ThorVG)") {
+    Hedgehog h(hedgehog_code(kSwapClips));
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "mad", {0, 0.1, 0.25, 0.4, 0.55, 0.6, 0.75, 0.95, 1.05, 1.15, 1.2});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "sleep", {0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "over", {0.1, 0.3, 0.38, 0.45, 0.6, 0.7, 0.8, 0.9});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "at_once", {0.05, 0.1, 0.15});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "cut", {0.1, 0.2, 0.3, 0.4, 0.5});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "open", {0.1, 0.2, 0.3, 0.45});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "calm", {0, 0.05, 0.1, 0.15, 0.2});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "copied", {0.05, 0.1, 0.15, 0.25, 0.35, 0.45});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "lacks", {0, 0.1, 0.2, 0.25, 0.35, 0.5});
+    // angry's mouth into the main drawing's mouth_o: not shown, then shown in the swap back, then its own again.
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "cross", {0.05, 0.15, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8});
+}
+
+TEST_CASE("Screen clips, part 5д: in a swap two documents, the old one's pairs morphing, the new one over it") {
+    Hedgehog h(hedgehog_code(kSwapClips));
+    const MotionClip& mad = *h.gift.motion.clip("mad");
+    // Halfway from the main drawing to angry: the old one's head a path of its stage, the new one's hidden; the nose (no
+    // pair) half gone in the old, the brow half come in the new.
+    const ui::SvgPose mid = screen_pose(h.gift, mad, 0.4);
+    REQUIRE(mid.swap);
+    CHECK(mid.swap_from == "draw");
+    CHECK(mid.drawing == "angry");
+    CHECK(mid.swap_k == doctest::Approx(0.5));
+    CHECK(ui::posed_stage(h.gift.svg, mid).find("<path id=\"head\"") != std::string::npos);
+    CHECK(ui::posed_stage(h.gift.svg, mid, true).empty()); // angry needs no stage
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "head", "display", true) == "none");
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "mouth", "display", true) == "none");
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "head", "display").empty());
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "brow", "opacity", true) == "0.5");
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "nose", "opacity") == "0.5");
+    CHECK(ui::posed_attribute(h.gift.svg, mid, "brow", "opacity").empty()); // the old drawing has none
+    // The old head goes to the new one's shape in its units: not its own.
+    const std::string half = ui::posed_attribute(h.gift.svg, mid, "head", "d");
+    const ui::SvgPose before = screen_pose(h.gift, mad, 0.1);
+    CHECK_FALSE(before.swap);
+    CHECK_FALSE(half.empty());
+    CHECK(half != ui::posed_attribute(h.gift.svg, screen_pose(h.gift, mad, 0.25), "head", "d"));
+    // After it angry alone, its brow turning: the picture's file has no brow; nothing over it.
+    const ui::SvgPose after = screen_pose(h.gift, mad, 0.75);
+    CHECK_FALSE(after.swap);
+    CHECK(after.drawing == "angry");
+    CHECK_FALSE(ui::posed_attribute(h.gift.svg, after, "brow", "transform").empty());
+    CHECK(ui::posed_attribute(h.gift.svg, after, "brow", "transform", true).empty());
+    CHECK(ui::posed_attribute(h.gift.svg, after, "nose", "opacity").empty());
+    // Before it the main drawing, the nose moving.
+    CHECK_FALSE(ui::posed_attribute(h.gift.svg, before, "nose", "transform").empty());
+    // angry's mouth morphing into the main drawing's mouth_o, which angry has not: the target from the main drawing in
+    // angry's units, nothing said.
+    (void)ui::svg_problems();
+    const MotionClip& cross = *h.gift.motion.clip("cross");
+    const ui::SvgPose alone = screen_pose(h.gift, cross, 0.15);
+    CHECK_FALSE(alone.swap);
+    CHECK(alone.drawing == "angry");
+    const std::string own = ui::posed_attribute(h.gift.svg, screen_pose(h.gift, cross, 0), "mouth", "d");
+    const std::string morphing = ui::posed_attribute(h.gift.svg, alone, "mouth", "d");
+    CHECK_FALSE(morphing.empty());
+    CHECK(morphing != own);
+    CHECK(ui::posed_attribute(h.gift.svg, alone, "mouth", "fill") != "none");
+    CHECK(ui::svg_problems().empty());
+    // A drawing the pose does not carry: said, and the main drawing drawn.
+    ui::SvgPose lost = after;
+    lost.drawings.clear();
+    (void)ui::svg_problems();
+    std::vector<u8> px;
+    std::string why;
+    REQUIRE(ui::render_posed_svg(h.gift.svg, lost, 32, 32, px, why));
+    const std::vector<std::string> said = ui::svg_problems();
+    CHECK(std::count(said.begin(), said.end(), "«Ёжик.svg»: нет рисунка «angry»") == 1);
+}
+
+TEST_CASE("Screen clips, part 5д: a main picture from «Ресурсы» with a viewBox of its own, the drawings in its units") {
+    const char* kShifted = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="10 5 64 64" preserveAspectRatio="xMidYMid meet">
+  <g id="face" transform="translate(0 2)">
+    <circle id="head" cx="42" cy="33" r="14" fill="#c09060" stroke="#402010" stroke-width="1.5"/>
+    <path id="mouth" d="M 36 39 Q 42 43 48 39" fill="none" stroke="#402010" stroke-width="1.5"/>
+  </g>
+  <rect id="nose" x="40" y="31" width="4" height="3" fill="#a06040"/>
+</svg>
+)svg";
+    const char* kAngryShifted = R"(      canvas(64, 64)
+      group("face", { x = 4, scale = 1.5 }, function()
+        circle("head", { x = 25, y = 20, r = 10, fill = "#e06040", stroke = "#401010", stroke_width = 1 })
+        path("mouth", { d = "M 21 26 Q 25 23 29 26", fill = "none", stroke = "#401010", stroke_width = 1 })
+      end)
+      path("brow", { d = "M 32 22 L 40 26 M 52 22 L 44 26", fill = "none", stroke = "#401010", stroke_width = 2 }))";
+    Hedgehog h(hedgehog_code(R"(    mad = function(p, rng)
+      swap("angry", 0.4)
+      wait(0.1)
+    end,)",
+                             "", kAngryShifted, kAngryShifted),
+               kShifted);
+    REQUIRE(h.gift.drawings.size() == 2);
+    // The drawing's root is the main file's: its size, viewBox and fit.
+    const std::string& angry = h.gift.drawings[0].text;
+    CHECK(angry.find("viewBox=\"10 5 64 64\"") != std::string::npos);
+    CHECK(angry.find("preserveAspectRatio=\"xMidYMid meet\"") != std::string::npos);
+    CHECK(h.gift.svg == kShifted);
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "mad", {0, 0.1, 0.2, 0.3, 0.4, 0.45});
+}
+
+TEST_CASE("Screen clips, part 5д: a drawing's name that makes no file, or the same file as another's") {
+    auto refused = [](std::string_view drawings) {
+        PoseScript s = script_of("return {\n  clips = { c = function(p) wait(0.1) end },\n  draw = function(p, rng)\n" + std::string(kHedge) +
+                                 "\n  end,\n  drawings = {\n" + std::string(drawings) + "  },\n}\n");
+        Drawing main;
+        REQUIRE(s.draw({}, 1, main));
+        std::vector<NamedDrawing> others;
+        std::string why;
+        u32 line = 0;
+        const PixelDoc doc = doc64();
+        REQUIRE(draw_drawings(s, doc, others, why, line));
+        Rig rig;
+        REQUIRE(rig.load(drawing_svg(main, 64, 64), why));
+        REQUIRE(add_drawings(rig, others, why, line));
+        ScreenGift gift;
+        CHECK_FALSE(build_screen(s, rig, doc, "Ёжик", "Ёжик.pixel.json", "", &main, others, gift, why));
+        CHECK(gift.drawings.empty());
+        return why;
+    };
+    auto drawing = [](std::string_view name) {
+        return "    [\"" + std::string(name) + "\"] = function(p, rng)\n" + std::string(kHedgeSleepy) + "\n    end,\n";
+    };
+    CHECK(refused(drawing("a/b")) == "рисунок «a/b»: такое имя не годится для имени файла");
+    CHECK(refused(drawing("ok") + drawing("злой?")) == "рисунок «злой?»: такое имя не годится для имени файла");
+    CHECK(refused(drawing("sleepy.")) == "рисунок «sleepy.»: такое имя не годится для имени файла");
+    CHECK(refused(drawing("Angry") + drawing("angry")) == "рисунки «Angry» и «angry» дали бы один файл");
+    CHECK(refused(drawing("Злой") + drawing("злой")) == "рисунки «Злой» и «злой» дали бы один файл");
+    CHECK(refused(drawing("ЁЖ") + drawing("ёж")) == "рисунки «ЁЖ» и «ёж» дали бы один файл");
+}
+
+TEST_CASE("Screen clips file, part 5д: the drawings and the drawing track there and back, what it cannot read names the field") {
+    const std::string kPartA = R"({"a": {"pivot": [0, 0], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 0, 0]}})";
+    auto file = [&](std::string_view drawings, std::string_view tracks) {
+        return R"({"forge": "motion", "version": 3, "character": "Ёжик", "from": "Ёжик.pixel.json", "picture": "Ёжик.svg", "parts": )" + kPartA +
+               R"(, "drawings": )" + std::string(drawings) + R"(, "curves": [], "clips": {"c": {"length": 1, "loop": false, "tracks": [)" +
+               std::string(tracks) + R"(], "marks": [], "not_drawn": []}}})";
+    };
+    const std::string angry =
+        R"({"sleepy": {"picture": "Ёжик.sleepy.svg"}, "angry": {"picture": "Ёжик.angry.svg", "parts": {"brow": {"pivot": [32, 20], "frame": [1, 0, 0, 1, 0, 0], "own": [1, 0, 0, 1, 2, 0]}}}})";
+    const std::string swap =
+        R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "hold": "draw"}, {"at": 0.5, "length": 0.4, "from": "draw", "to": "angry", "ease": "out_back"}]})";
+    const std::string brow = R"(, {"part": "brow", "prop": "rot", "pieces": [{"at": 0, "hold": 3}]})";
+    MotionFile f;
+    std::string why;
+    const bool read = vector::read_motion_file(file(angry, swap + brow), f, why);
+    INFO(why);
+    REQUIRE(read);
+    // The drawings by name, the main one's parts apart.
+    REQUIRE(f.drawings.size() == 2);
+    CHECK(f.drawings[0].name == "angry");
+    CHECK(f.drawings[1].name == "sleepy");
+    CHECK(f.drawings[1].parts.empty());
+    REQUIRE(f.part("brow", "angry"));
+    CHECK(f.part("brow", "angry")->own.e == 2);
+    CHECK(f.part("brow") == nullptr);
+    CHECK(f.part("a", "angry") == nullptr);
+    CHECK(f.part("a", "draw") == f.part("a"));
+    CHECK(f.drawing("angry") == &f.drawings[0]);
+    CHECK(f.drawing("draw") == nullptr);
+    const MotionTrack& d = f.clips[0].tracks[0];
+    CHECK(d.prop == MotionProp::Drawing);
+    CHECK(d.pieces[0].value.target == "draw");
+    CHECK(d.pieces[1].to.target == "angry");
+    CHECK(d.pieces[1].timing == vector::Timing::OutBack);
+    // There and back, version 3; without the drawings and their track as before.
+    const std::string text = vector::write_motion_file(f);
+    CHECK(text.find("\"version\": 3") != std::string::npos);
+    MotionFile back;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_motion_file(back) == text);
+    MotionFile plain = f;
+    plain.drawings.clear();
+    plain.clips[0].tracks.clear();
+    CHECK(vector::motion_file_version(plain) == 1);
+    plain.clips[0].tracks.push_back(d);
+    CHECK(vector::motion_file_version(plain) == 3);
+    MotionFile drawings_only = f; // no clip swaps, the drawings are there: their parts are not the main one's
+    drawings_only.clips[0].tracks.clear();
+    CHECK(vector::motion_file_version(drawings_only) == 3);
+    // At rest a clip shows the main drawing.
+    CHECK(vector::motion_rest(MotionProp::Drawing).target == "draw");
+
+    // The drawing at each moment: before, in and after the transition; the back easing past 1 shows angry alone.
+    const MotionClip& c = f.clips[0];
+    CHECK(vector::motion_shown(f, c, 0.3) == vector::MotionShown{});
+    const vector::MotionShown in = vector::motion_shown(f, c, 0.6);
+    CHECK(in.drawing == "angry");
+    CHECK(in.swap);
+    CHECK(in.from == "draw");
+    CHECK(in.k == doctest::Approx(vector::timing(vector::Timing::OutBack, 0.25)));
+    bool alone_past_one = false;
+    for (f64 t = 0.5; t < 0.9; t += 0.001) {
+        const vector::MotionShown at = vector::motion_shown(f, c, t);
+        const f64 k = vector::timing(vector::Timing::OutBack, (t - 0.5) / 0.4);
+        if (k >= 1) alone_past_one = alone_past_one || (!at.swap && at.drawing == "angry");
+        CHECK((at.swap || k >= 1 || k <= 0));
+    }
+    CHECK(alone_past_one);
+    CHECK(vector::motion_shown(f, c, 0.95).drawing == "angry");
+    CHECK_FALSE(vector::motion_shown(f, c, 0.95).swap);
+    // A transition's end on nanoseconds (0.1 + 0.2 is not 0.3 in doubles), one of length 0 shows its drawing from its
+    // start, one to the drawing it comes from is no swap.
+    MotionFile g;
+    REQUIRE(vector::read_motion_file(
+        file(angry, R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "hold": "angry"}, {"at": 0.1, "length": 0.2, "from": "angry", "to": "sleepy", "ease": "linear"}, )"
+                    R"({"at": 0.4, "length": 0, "from": "sleepy", "to": "angry", "ease": "linear"}, {"at": 0.5, "length": 0.3, "from": "angry", "to": "angry", "ease": "linear"}]})"),
+        g, why));
+    const MotionClip& gc = g.clips[0];
+    const vector::MotionShown half_way = vector::motion_shown(g, gc, 0.2);
+    CHECK(half_way.drawing == "sleepy");
+    CHECK(half_way.swap);
+    CHECK(half_way.from == "angry");
+    CHECK(half_way.k == doctest::Approx(0.5));
+    CHECK(vector::motion_shown(g, gc, 0.3) == vector::MotionShown{"sleepy", false, "", 0});
+    CHECK(vector::motion_shown(g, gc, 0.35) == vector::MotionShown{"sleepy", false, "", 0});
+    CHECK(vector::motion_shown(g, gc, 0.4) == vector::MotionShown{"angry", false, "", 0});
+    CHECK(vector::motion_shown(g, gc, 0.45) == vector::MotionShown{"angry", false, "", 0});
+    CHECK(vector::motion_shown(g, gc, 0.65) == vector::MotionShown{"angry", false, "", 0});
+    // Each part as it stands in a drawing.
+    const std::vector<vector::MotionPartPose> in_angry = vector::motion_pose(f, c, 0.2, "angry");
+    REQUIRE(in_angry.size() == 1);
+    CHECK(in_angry[0].id == "brow");
+    CHECK(in_angry[0].moves);
+
+    // What it cannot read.
+    const std::string hold = R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "hold": "draw"}]})";
+    CHECK(read_error(file(R"({"angry": {"parts": {}}})", hold)) == "drawings.angry: picture: нужно имя SVG-картинки рисунка строкой");
+    CHECK(read_error(file(R"({"draw": {"picture": "Ёжик.svg"}})", hold)) == "drawings.draw: так зовут главный рисунок");
+    CHECK(read_error(file(R"({"": {"picture": "Ёжик..svg"}})", hold)) == "drawings.: у рисунка нужно имя");
+    CHECK(read_error(file(R"({"angry": {"picture": "../Ёжик.angry.svg"}})", hold)) == "drawings.angry: picture: имя файла рядом с картинкой, без папок");
+    CHECK(read_error(file(R"({"angry": {"picture": "a\\b.svg"}})", hold)) == "drawings.angry: picture: имя файла рядом с картинкой, без папок");
+    CHECK(read_error(file(R"({"angry": {"picture": "Ёжик.angry.svg"}, "angry": {"picture": "Ёжик.mad.svg"}})", hold)) == "drawings.angry: рисунок дважды");
+    CHECK(read_error(file(angry, R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "hold": ""}]})")) ==
+          "clips.c.tracks[0].pieces[0]: hold: нужно имя рисунка строкой (\"draw\" — главный)");
+    CHECK(read_error(file(R"([])", hold)).rfind("drawings: нужен объект", 0) == 0);
+    CHECK(read_error(file(angry, R"({"part": "a", "prop": "drawing", "pieces": [{"at": 0, "hold": "draw"}]})")) ==
+          "clips.c.tracks[0]: part: у дорожки рисунка часть \"\" — это рисунок всего персонажа");
+    CHECK(read_error(file(angry, R"({"part": "", "prop": "y", "pieces": [{"at": 0, "hold": 1}]})")) == "clips.c.tracks[0]: part: нужен id части строкой");
+    std::string frames = R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "end": 1, "frames": [)";
+    for (usize i = 0; i < vector::motion_frame_count(0, 1); ++i) frames += i ? ", \"draw\"" : "\"draw\"";
+    CHECK(read_error(file(angry, frames + "]}]}")) == "clips.c.tracks[0].pieces[0]: у дорожки рисунка только hold и переход");
+    CHECK(read_error(file(angry, R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "hold": "sad"}]})")) ==
+          "clips.c.tracks[0].pieces[0]: нет рисунка «sad»: есть draw, angry, sleepy");
+    CHECK(read_error(file(angry, R"({"part": "", "prop": "drawing", "pieces": [{"at": 0, "length": 0.2, "from": "angry", "to": "sad", "ease": "linear"}]})")) ==
+          "clips.c.tracks[0].pieces[0]: нет рисунка «sad»: есть draw, angry, sleepy");
+    CHECK(read_error(file(angry, R"({"part": "tail", "prop": "x", "pieces": [{"at": 0, "hold": 1}]})"))
+              .find("части «tail» нет в parts") != std::string::npos);
+}
+
+// «Скакун» of the editor's self-test pixel-motion-m with its drawing «air» (part 5д): «jump» swaps to it on the way
+// down; every part of the main drawing is in «air» too, the cap only there.
+const char* kJumper = R"lua(return {
+  draw = function(p, rng)
+    canvas(32, 48)
+    group("body", function()
+      rect("torso", { x = 9, y = 16, w = 14, h = 18, r = 3, fill = "#4a7bd0" })
+      circle("shine", { x = 21, y = 19, r = 4, fill = "#ffffff" })
+      path("belt", { d = "M 9 27 L 23 27", stroke = "#f0f0f0", stroke_width = 2, dash = { 3, 2 } })
+      circle("head", { x = 16, y = 10, r = 7, fill = "#f0c090" })
+      rect("mouth", { x = 13, y = 12, w = 6, h = 2, fill = "#602020" })
+      path("mouth_o", { d = "M 13 12 Q 16 17 19 12 Z", fill = "#802020", hidden = true })
+    end)
+    rect("legs", { x = 11, y = 34, w = 10, h = 10, fill = "#303040", pivot = { 16, 34 } })
+    circle("dust", { x = 16, y = 44, r = 3, fill = "#a08060" })
+  end,
+  clips = {
+    jump = function(p)
+      part("shine"):mask("torso")
+      part("dust"):attach("body")
+      part("dust"):below("legs")
+      all(part("body").y(-10, 0.2, "out_quad"), part("mouth"):morph("mouth_o", 0.2), part("belt").dash(5, 0.2, "linear"),
+          part("belt").draw_to(0.6, 0.2), part("head").flash(0.5, 0.2), copies("dust", 2, function(i, c) c.x(i * 8 - 12, 0.2) end),
+          part("torso").tint("#ff4040", 0.2))
+      part("dust"):detach()
+      all(part("body").y(0, 0.2, "in_quad"), swap("air", 0.2, "linear"))
+      emit("приземлился")
+    end,
+  },
+  drawings = {
+    air = function(p, rng)
+      canvas(32, 48)
+      group("body", function()
+        rect("torso", { x = 9, y = 15, w = 14, h = 20, r = 5, fill = "#5a8be0" })
+        circle("shine", { x = 20, y = 19, r = 3, fill = "#ffffff" })
+        path("belt", { d = "M 9 28 L 23 28", stroke = "#f0f0f0", stroke_width = 2, dash = { 3, 2 } })
+        circle("head", { x = 16, y = 9, r = 8, fill = "#f0b080" })
+        rect("mouth", { x = 12, y = 11, w = 8, h = 3, fill = "#602020" })
+        path("mouth_o", { d = "M 12 11 Q 16 18 20 11 Z", fill = "#802020", hidden = true })
+        path("cap", { d = "M 9 6 Q 16 -1 23 6 Z", fill = "#d04040" })
+      end)
+      rect("legs", { x = 10, y = 34, w = 12, h = 9, fill = "#303040", pivot = { 16, 34 } })
+      circle("dust", { x = 16, y = 44, r = 3, fill = "#a08060" })
+    end,
+  },
+}
+)lua";
+
+TEST_CASE("Screen clips, part 5д: the self-test's «Скакун» swapping to «air» on the way down is the tab's frame") {
+    Hedgehog h(kJumper, {}, 32, 48);
+    const MotionClip c = checked(h.script, h.rig, h.doc, "jump");
+    CHECK(c.not_drawn.empty());
+    CHECK(*h.gift.motion.clip("jump") == c);
+    REQUIRE(h.gift.drawings.size() == 1);
+    CHECK(h.gift.drawings[0].name == "Ёжик.air.svg");
+    const MotionTrack* d = track_of(c, "", MotionProp::Drawing);
+    REQUIRE(d);
+    REQUIRE(d->pieces.size() == 2);
+    CHECK(d->pieces[1].at == doctest::Approx(0.2));
+    CHECK(d->pieces[1].to.target == "air");
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "jump", {0, 0.1, 0.2, 0.25, 0.3, 0.35, 0.4});
+}
+
+TEST_CASE("Screen clips, part 5д: a clip that keeps the main drawing all along writes no drawing track; a shape a clip morphs is a <path> in every file") {
+    const char* clips = R"(    still = function(p, rng) part("nose").x(3, 0.2) end,
+    same = function(p, rng)
+      wait(0.1)
+      swap("draw", 0.2)
+      wait(0.1)
+    end,
+    round = function(p, rng)
+      swap("sleepy", 0)
+      part("head"):morph("mouth_o", 0.3)
+    end,)";
+    Hedgehog h(hedgehog_code(clips));
+    for (const char* name : {"still", "same", "round"}) {
+        INFO(name);
+        const MotionClip c = checked(h.script, h.rig, h.doc, name);
+        CHECK(c.not_drawn.empty());
+        CHECK(*h.gift.motion.clip(name) == c);
+    }
+    // A swap to the drawing shown changes nothing the tab draws: no track, as for a clip that never swaps.
+    CHECK(track_of(*h.gift.motion.clip("still"), "", MotionProp::Drawing) == nullptr);
+    CHECK(track_of(*h.gift.motion.clip("same"), "", MotionProp::Drawing) == nullptr);
+    const MotionTrack* round = track_of(*h.gift.motion.clip("round"), "", MotionProp::Drawing);
+    REQUIRE(round);
+    REQUIRE(round->pieces.size() == 1);
+    CHECK(round->pieces[0].kind == MotionPiece::Kind::Hold);
+    CHECK(round->pieces[0].value.target == "sleepy");
+    // The head a circle in the main drawing and in «sleepy»: a <path> in both files, as the morph needs it (into the main
+    // drawing's open mouth, which «sleepy» has not).
+    REQUIRE(h.gift.drawings.size() == 2);
+    CHECK(h.gift.svg.find("<path id=\"head\"") != std::string::npos);
+    CHECK(h.gift.drawings[1].name == "Ёжик.sleepy.svg");
+    CHECK(h.gift.drawings[1].text.find("<path id=\"head\"") != std::string::npos);
+    CHECK(h.gift.drawings[1].text.find("<circle") == std::string::npos);
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "round", {0, 0.1, 0.2, 0.3}, 40); // the head small at the end
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "same", {0.05, 0.15, 0.25, 0.35});
+}
+
+TEST_CASE("Screen clips, part 5д: a call at the clip's very end, where a clip that does not loop stays, is a hold there") {
+    const char* clips = R"(    late = function(p, rng)
+      wait(0.3)
+      swap("sleepy", 0)
+    end,
+    back = function(p, rng)
+      swap("angry", 0.1)
+      wait(0.2)
+      swap("draw", 0)
+    end,
+    nose_late = function(p, rng)
+      wait(0.3)
+      part("nose").x(5, 0)
+    end,)";
+    Hedgehog h(hedgehog_code(clips));
+    for (const char* name : {"late", "back", "nose_late"}) {
+        INFO(name);
+        const MotionClip c = checked(h.script, h.rig, h.doc, name); // the end too
+        CHECK(c.not_drawn.empty());
+        CHECK(*h.gift.motion.clip(name) == c);
+    }
+    // The main drawing until the end, «sleepy» at it: what the game shows when the clip has played.
+    const MotionClip& late_clip = *h.gift.motion.clip("late");
+    CHECK(late_clip.length == doctest::Approx(0.3));
+    const MotionTrack* late = track_of(late_clip, "", MotionProp::Drawing);
+    REQUIRE(late);
+    REQUIRE(late->pieces.size() == 2);
+    CHECK(late->pieces[0].kind == MotionPiece::Kind::Hold);
+    CHECK(late->pieces[0].value.target == "draw");
+    CHECK(late->pieces[1].kind == MotionPiece::Kind::Hold);
+    CHECK(late->pieces[1].at == late_clip.length);
+    CHECK(late->pieces[1].value.target == "sleepy");
+    const f64 played = vector::motion_clip_time(late_clip, 5, false);
+    CHECK(vector::motion_shown(h.gift.motion, late_clip, played).drawing == "sleepy");
+    CHECK(vector::motion_shown(h.gift.motion, late_clip, late_clip.length - 0.001).drawing == "draw");
+    // «angry» from its transition to the end, the main one again at it.
+    const MotionClip& back_clip = *h.gift.motion.clip("back");
+    const MotionTrack* back = track_of(back_clip, "", MotionProp::Drawing);
+    REQUIRE(back);
+    REQUIRE(back->pieces.size() >= 2);
+    CHECK(back->pieces.back().kind == MotionPiece::Kind::Hold);
+    CHECK(back->pieces.back().at == back_clip.length);
+    CHECK(back->pieces.back().value.target == "draw");
+    CHECK(vector::motion_shown(h.gift.motion, back_clip, back_clip.length - 0.001).drawing == "angry");
+    // The nose at rest until the end, 5 to the right at it: a track of two holds, not none.
+    const MotionClip& nose_clip = *h.gift.motion.clip("nose_late");
+    const MotionTrack* nose = track_of(nose_clip, "nose", MotionProp::X);
+    REQUIRE(nose);
+    REQUIRE(nose->pieces.size() == 2);
+    CHECK(nose->pieces[0].value.v == 0);
+    CHECK(nose->pieces[1].kind == MotionPiece::Kind::Hold);
+    CHECK(nose->pieces[1].at == nose_clip.length);
+    CHECK(nose->pieces[1].value.v == 5);
+    // The file there and back with a piece at the clip's length.
+    const std::string text = vector::write_motion_file(h.gift.motion);
+    MotionFile again;
+    std::string why;
+    REQUIRE(vector::read_motion_file(text, again, why));
+    CHECK(again == h.gift.motion);
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "late", {0.2, 0.3});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "back", {back_clip.length - 0.001, back_clip.length});
+    same_as_tab(h.gift, h.script, h.rig, h.doc, "nose_late", {0.3});
+}
+
+namespace {
+
+// «Крот» drawn by hand, for what each drawing takes of a pose (part 5д): the main picture a face (a head, a mouth and an
+// eye in a moved group), a nose and a spot of its own opacity; «a» its own face with a lid in it, the nose hidden, and a
+// hook, a badge and a spark only it has; «b» and «c» each a blob of their own shape.
+const char* kMole = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="face" transform="translate(0 2)">
+    <circle id="head" cx="32" cy="30" r="16" fill="#c09060"/>
+    <path id="mouth" d="M 24 36 L 40 36 L 40 40 L 24 40 Z" fill="#602020"/>
+    <circle id="eye" cx="26" cy="26" r="3" fill="#202020"/>
+  </g>
+  <rect id="nose" x="29" y="30" width="6" height="4" fill="#a04040"/>
+  <circle id="spot" cx="50" cy="52" r="5" fill="#40a040" opacity="0.6"/>
+</svg>
+)svg";
+const char* kMoleA = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <g id="face" transform="translate(1 0)">
+    <circle id="head" cx="32" cy="30" r="18" fill="#d07050"/>
+    <path id="mouth" d="M 22 38 L 42 38 L 42 41 L 22 41 Z" fill="#401010"/>
+    <circle id="eye" cx="26" cy="25" r="3" fill="#202020"/>
+    <rect id="lid" x="22" y="20" width="10" height="6" fill="#806040"/>
+  </g>
+  <rect id="nose" x="29" y="30" width="6" height="4" fill="#a04040" display="none"/>
+  <circle id="hook" cx="10" cy="10" r="2" fill="#808080"/>
+  <rect id="badge" x="44" y="8" width="8" height="8" fill="#e0c020"/>
+  <circle id="spark" cx="12" cy="52" r="3" fill="#ffff40"/>
+</svg>
+)svg";
+const char* kMoleB = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <path id="blob" d="M 20 30 L 44 30 L 44 46 L 20 46 Z" fill="#2040c0"/>
+</svg>
+)svg";
+const char* kMoleC = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <path id="blob" d="M 32 18 L 50 46 L 14 46 Z" fill="#c02040"/>
+</svg>
+)svg";
+
+// A part of a pose at rest, then with a value of one property.
+vector::MotionPartPose rest_part(std::string id) {
+    vector::MotionPartPose pp;
+    pp.id = std::move(id);
+    for (usize p = 0; p < vector::kMotionPropCount; ++p) pp.values[p] = vector::motion_rest(static_cast<MotionProp>(p));
+    return pp;
+}
+vector::MotionPartPose with(vector::MotionPartPose pp, MotionProp p, f64 v, std::string target = {}) {
+    pp.has[static_cast<usize>(p)] = true;
+    pp.values[static_cast<usize>(p)].v = v;
+    pp.values[static_cast<usize>(p)].target = std::move(target);
+    return pp;
+}
+vector::MotionPartPose moved(std::string id, f64 x) {
+    vector::MotionPartPose pp = with(rest_part(std::move(id)), MotionProp::X, x);
+    pp.moves = true;
+    pp.local = {1, 0, 0, 1, x, 0};
+    return pp;
+}
+
+} // namespace
+
+TEST_CASE("Screen clips, part 5д: each drawing takes the parts of a pose it has; pairs, fading and a morph into another drawing's shape") {
+    auto text = [](const char* s) { return std::make_shared<const std::string>(s); };
+    const ui::SvgDrawing a{"a", "Крот.a.svg", text(kMoleA)}, b{"b", "Крот.b.svg", text(kMoleB)}, c{"c", "Крот.c.svg", text(kMoleC)};
+    auto pose_of = [](std::string drawing, std::vector<ui::SvgDrawing> ds) {
+        ui::SvgPose p;
+        p.picture = "Крот.svg";
+        p.drawings = std::move(ds);
+        p.drawing = std::move(drawing);
+        return p;
+    };
+    auto swap_of = [&](std::string from, std::string to, f64 k, std::vector<ui::SvgDrawing> ds) {
+        ui::SvgPose p = pose_of(std::move(to), std::move(ds));
+        p.swap = true;
+        p.swap_from = std::move(from);
+        p.swap_k = k;
+        return p;
+    };
+    std::vector<u8> px, again;
+    std::string why;
+    (void)ui::svg_problems();
+
+    // Parts only «a» has and the calls that name them: the main drawing takes none of them and says nothing of them; a
+    // part no drawing has is said, as before 5д.
+    ui::SvgPose calls = pose_of("draw", {a, b, c});
+    calls.parts = {moved("lid", 3), moved("призрак", 1), with(with(rest_part("eye"), MotionProp::Mask, 1, "lid"), MotionProp::Link, 0, "hook")};
+    calls.order = {{0, "nose", vector::MotionOrder::Above, "badge"}, {0, "badge", vector::MotionOrder::Above, "nose"}};
+    calls.copies = {{"spark[1]", "spark", 1, 0}};
+    REQUIRE(ui::render_posed_svg(kMole, calls, 64, 64, px, why));
+    CHECK(ui::posed_stage(kMole, calls).empty()); // no mask, step nor copy to make a stage for
+    CHECK(ui::svg_problems() == std::vector<std::string>{"«Крот.svg»: нет части с id «призрак»"});
+    // «a» shown: they all act there, on a stage with the mask; the part no drawing has said of «a».
+    ui::SvgPose in_a = calls;
+    in_a.drawing = "a";
+    REQUIRE(ui::render_posed_svg(kMole, in_a, 64, 64, px, why));
+    CHECK(ui::posed_stage(kMole, in_a).find("<mask") != std::string::npos);
+    CHECK(ui::svg_problems() == std::vector<std::string>{"«Крот.a.svg»: нет части с id «призрак»"});
+
+    // From the main drawing to «a», a quarter of the way: the nose hidden in «a» is no pair, so it fades out of the old
+    // one with the opacity the pose gave it; the spot with its own.
+    ui::SvgPose quarter = swap_of("draw", "a", 0.25, {a});
+    quarter.from_parts = {with(rest_part("nose"), MotionProp::Opacity, 0.5)};
+    auto opacity = [&](const ui::SvgPose& p, const char* id) {
+        const std::string v = ui::posed_attribute(kMole, p, id, "opacity");
+        return v.empty() ? -1.0 : std::stod(v);
+    };
+    CHECK(opacity(quarter, "nose") == doctest::Approx(0.375));
+    CHECK(ui::posed_attribute(kMole, quarter, "nose", "display", true) == "none"); // hidden in «a» as it was
+    CHECK(opacity(quarter, "spot") == doctest::Approx(0.45));
+    CHECK(ui::posed_attribute(kMole, quarter, "head", "display", true) == "none"); // a pair: the old one draws it
+    // A copy of a group is no pair: each drawing draws its own, fading.
+    ui::SvgPose faces = swap_of("draw", "a", 0.5, {a});
+    faces.copies = {{"face[1]", "face", 1, 0}};
+    REQUIRE(ui::render_posed_svg(kMole, faces, 64, 64, px, why));
+    CHECK(ui::svg_problems().empty());
+
+    // «a»'s mouth into a blob, which neither it nor the main drawing has: «b»'s, the first other by name, not «c»'s.
+    auto mouth_into_blob = [&](std::vector<ui::SvgDrawing> ds) {
+        ui::SvgPose p = pose_of("a", std::move(ds));
+        p.parts = {with(rest_part("mouth"), MotionProp::Morph, 0.5, "blob")};
+        return ui::posed_attribute(kMole, p, "mouth", "d");
+    };
+    const std::string by_b = mouth_into_blob({a, b});
+    CHECK_FALSE(by_b.empty());
+    CHECK(by_b != mouth_into_blob({a, c}));
+    CHECK(mouth_into_blob({c, a, b}) == by_b);
+    CHECK(ui::svg_problems().empty());
+
+    // A pair's morph made ready once while neither side morphs; morphed by the clip on either side, made anew: what the
+    // picture drawn after it shows is what a picture never drawn shows.
+    const ui::SvgPose plain = swap_of("draw", "a", 0.5, {a});
+    const std::string at_rest = ui::posed_attribute(kMole, plain, "mouth", "d");
+    ui::SvgPose new_morphs = plain, old_morphs = plain;
+    new_morphs.parts = {with(rest_part("mouth"), MotionProp::Morph, 0.5, "eye")};
+    old_morphs.from_parts = {with(rest_part("mouth"), MotionProp::Morph, 0.5, "eye")};
+    for (const ui::SvgPose* p : {&new_morphs, &old_morphs}) {
+        ui::SvgPose never = *p;
+        never.picture = p == &new_morphs ? "Крот2.svg" : "Крот3.svg";
+        const std::string drawn_after = ui::posed_attribute(kMole, *p, "mouth", "d");
+        CHECK(drawn_after != at_rest);
+        CHECK(drawn_after == ui::posed_attribute(kMole, never, "mouth", "d"));
+    }
+    CHECK(ui::svg_problems().empty());
+
+    // A swap to the drawing it comes from is none: one document; one from a drawing there is not is said.
+    ui::SvgPose alone = pose_of("a", {a});
+    REQUIRE(ui::render_posed_svg(kMole, alone, 64, 64, px, why));
+    const ui::SvgPose to_itself = swap_of("a", "a", 0.5, {a});
+    REQUIRE(ui::render_posed_svg(kMole, to_itself, 64, 64, again, why));
+    CHECK(again == px);
+    CHECK(ui::posed_attribute(kMole, to_itself, "head", "display", true).empty());
+    REQUIRE(ui::render_posed_svg(kMole, swap_of("нет", "a", 0.5, {a}), 64, 64, again, why));
+    CHECK(again == px);
+    CHECK(ui::svg_problems() == std::vector<std::string>{"«Крот.svg»: нет рисунка «нет»"});
+
+    // Two drawings of one file: a stage each, the new one's never the old one's.
+    ui::SvgPose one_file = swap_of("a", "a2", 0.5, {a, {"a2", "Крот.a.svg", a.text}});
+    one_file.from_parts = {with(rest_part("eye"), MotionProp::Mask, 1, "lid")};
+    one_file.parts = {with(rest_part("head"), MotionProp::Morph, 0.5, "eye")};
+    const std::string old_stage = ui::posed_stage(kMole, one_file), new_stage = ui::posed_stage(kMole, one_file, true);
+    CHECK(old_stage.find("<mask") != std::string::npos);
+    CHECK_FALSE(new_stage.empty());
+    CHECK(new_stage.find("<mask") == std::string::npos);
+    CHECK(ui::svg_problems().empty());
 }

@@ -208,6 +208,9 @@ struct ProjectEdits {
     // ms_tab: the tab's frame of each clip at each 120th of a second, one line each:
     // "clip k part a b c d e f" (the part's matrix as the tab's picture has it) or "clip k part morph share target".
     // The sound mark is the game's sound ms_sound; ms_not_drawn: the line the game says once of what it does not draw.
+    // Part 5д: the character's drawing beside the picture, the game's ms_drawing_file, says ms_drawing_svg; «jump»
+    // swaps to it. ms_tab has "clip k - drawing name swap from share" for the clips that swap.
+    std::string ms_drawing_file, ms_drawing_svg;
     std::string ms_screen, ms_layer_name, ms_other_name, ms_file, ms_svg, ms_sound, ms_scheme_error, ms_code, ms_code_error, ms_not_drawn;
     std::string ms_rename_from, ms_rename_to;
     forge::u32 ms_layer = 0;

@@ -19005,7 +19005,7 @@ return {
     // The open character as the files on disk have it, apart from the tab: its file, a rig of its picture with the
     // pivots, a script with the game's modules; and, when asked, the code's drawing and the picture's text.
     bool mo_load(pixel::PixelDoc& doc, pixel::Rig& rig, pixel::PoseScript& script, std::string& why, pixel::Drawing* drawn = nullptr,
-                 std::string* picture = nullptr) {
+                 std::string* picture = nullptr, std::vector<pixel::NamedDrawing>* drawings = nullptr) {
         namespace fs = std::filesystem;
         const fs::path doc_file = as().abs(px().opened());
         std::vector<u8> bytes, svg, lua;
@@ -19033,6 +19033,7 @@ return {
         pixel::apply_pivots(rig, doc, script.has_draw() ? &drawing : nullptr, &others);
         if (drawn) *drawn = drawing;
         if (picture) picture->assign(svg.begin(), svg.end());
+        if (drawings) *drawings = std::move(others);
         return true;
     }
     // Frame k of a clip as the files on disk bake it, made apart from the tab (mo_load); by the clip's range, or all of
@@ -19211,10 +19212,11 @@ return {
         const int given = pj_run({exe, "--project", project, "--self-test", "pixel-motion-m"}, twenty_three);
         check(given == 0, "«Скакун»: «Отдать экрану», «Скакун.svg» and «Скакун.motion.json» as the library builds them of the files, the mouth "
                           "a <path>, the tint said; undone and done again byte for byte, «Уже отдано так»; a picture and a file of clips not its "
-                          "own and a clip that fails refused; the code changed and given over the pair, undone to it (pixel-motion-m: exit " +
-                              std::to_string(given) + ")");
+                          "own and a clip that fails refused; the code changed and given over the pair, undone to it; part 5д: a drawing «air» "
+                          "given beside the pair, given anew when only it changed, the file of clips alone when only the clip changed, names that make no file and a picture of the game's own "
+                          "refused, renamed with its old file taken away (pixel-motion-m: exit " + std::to_string(given) + ")");
         const int given_again = pj_run({exe, "--project", project, "--self-test", "pixel-motion-m-again"}, twenty_four);
-        check(given_again == 0, "opened from another working folder: the pair as pixel-motion-m left it and as the library builds it there, "
+        check(given_again == 0, "opened from another working folder: the pair and the drawing as pixel-motion-m left them and as the library builds them there, "
                                 "«Уже отдано так» (pixel-motion-m-again: exit " + std::to_string(given_again) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
@@ -19229,10 +19231,10 @@ return {
                   fs::exists(a / "game" / "pictures" / utf8_path("Тележка.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Искры.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Ларец.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Маятник.png"), ec) &&
                   fs::exists(a / "game" / "pictures" / utf8_path("Барабан.png"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Скакун.svg"), ec) &&
-                  fs::exists(a / "game" / "pictures" / utf8_path("Скакун.motion.json"), ec),
+                  fs::exists(a / "game" / "pictures" / utf8_path("Скакун.motion.json"), ec) && fs::exists(a / "game" / "pictures" / utf8_path("Скакун.air.svg"), ec),
               "A: the sounds in its sounds/, «pictures/Шкала.png», «pictures/Знак.png», «pictures/Маяк.png», «pictures/Тележка.png», "
               "«pictures/Искры.png», «pictures/Ларец.png», «pictures/Маятник.png» and «pictures/Барабан.png» given to the flag, "
-              "«pictures/Скакун.svg» and «pictures/Скакун.motion.json» given to a screen");
+              "«pictures/Скакун.svg», «pictures/Скакун.motion.json» and «pictures/Скакун.air.svg» given to a screen");
         const fs::path chars = a / "assets" / utf8_path("персонажи");
         check(fs::exists(a / "game" / "animations" / utf8_path("движения.luau"), ec) && fs::exists(chars / utf8_path("Ёжик.luau"), ec) &&
                   fs::exists(chars / utf8_path("Персонаж.luau"), ec) && fs::exists(chars / utf8_path("Персонаж.png"), ec) &&
@@ -26611,7 +26613,7 @@ return {
     // «jump» named «hop» just before. «Играть со стартового»: the scene project with --edits ms_* compares each frame
     // of the clips with the tab's.
     int mm_step_ = 0;
-    std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_;
+    std::vector<u8> mm_doc_, mm_svg_, mm_motion_, mm_other_, mm_svg3_, mm_motion3_, mm_air_;
     std::string mm_label_;
     static constexpr const char* kMmRunner = R"lua(-- «Скакун»: на экран игры, части 5в и 5г. «Стоит» качается и топает, «Прыжок» прыгает, открывает рот, краснеет и пылит.
 return {
@@ -26656,6 +26658,29 @@ return {
         if (at != std::string::npos) code.replace(at, what.size(), with);
         return code;
     }
+    // Part 5д: «Скакун» with drawings of these names (each the same: in the air, a cap on), «jump» swapping to the
+    // first on the way down.
+    static constexpr const char* kMmAir = R"lua(function(p, rng)
+      canvas(32, 48)
+      group("body", function()
+        rect("torso", { x = 9, y = 15, w = 14, h = 20, r = 5, fill = "#5a8be0" })
+        circle("shine", { x = 20, y = 19, r = 3, fill = "#ffffff" })
+        path("belt", { d = "M 9 28 L 23 28", stroke = "#f0f0f0", stroke_width = 2, dash = { 3, 2 } })
+        circle("head", { x = 16, y = 9, r = 8, fill = "#f0b080" })
+        rect("mouth", { x = 12, y = 11, w = 8, h = 3, fill = "#602020" })
+        path("mouth_o", { d = "M 12 11 Q 16 18 20 11 Z", fill = "#802020", hidden = true })
+        path("cap", { d = "M 9 6 Q 16 -1 23 6 Z", fill = "#d04040" })
+      end)
+      rect("legs", { x = 10, y = 34, w = 12, h = 9, fill = "#303040", pivot = { 16, 34 } })
+      circle("dust", { x = 16, y = 44, r = 3, fill = "#a08060" })
+    end)lua";
+    static std::string mm_drawn(const std::vector<std::string>& names) {
+        std::string code = mm_replaced(kMmRunner, "      part(\"body\").y(0, 0.2, \"in_quad\")\n",
+                                       "      all(part(\"body\").y(0, 0.2, \"in_quad\"), swap(\"" + names[0] + "\", 0.2, \"linear\"))\n");
+        std::string list = "  drawings = {\n";
+        for (const std::string& n : names) list += "    [\"" + n + "\"] = " + std::string(kMmAir) + ",\n";
+        return mm_replaced(code, "  },\n}\n", "  },\n" + list + "  },\n}\n");
+    }
     f32 mm_width(const char* id) {
         Rml::Element* e = ed_.find_element(id);
         return e && e->IsVisible(true) ? e->GetBox().GetSize(Rml::BoxArea::Border).x : 0;
@@ -26667,9 +26692,10 @@ return {
         pixel::PoseScript script;
         pixel::Drawing drawing;
         std::string picture;
-        if (!mo_load(doc, rig, script, why, &drawing, &picture)) return false;
+        std::vector<pixel::NamedDrawing> drawings;
+        if (!mo_load(doc, rig, script, why, &drawing, &picture, &drawings)) return false;
         script.set_lengths(doc.lengths);
-        return pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, out, why);
+        return pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, drawings, out, why);
     }
 
     // In an editor for «Движение А» after pixel-motion-l-again (--self-test pixel-motion-m).
@@ -26705,6 +26731,8 @@ return {
             if (!mm_gift(gift, why)) return false;
             if (tg_bytes(svg) != bytes(gift.svg)) return why = "«Скакун.svg» не тот", false;
             if (tg_bytes(motion) != bytes(vector::write_motion_file(gift.motion))) return why = "«Скакун.motion.json» не тот", false;
+            for (const pixel::ScreenGift::File& d : gift.drawings)
+                if (tg_bytes(pictures / utf8_path(d.name)) != bytes(d.text)) return why = "«" + d.name + "» не тот", false;
             return true;
         };
         auto pair_untouched = [&] { return tg_bytes(svg) == mm_svg_ && tg_bytes(motion) == mm_motion_; };
@@ -26714,6 +26742,16 @@ return {
                           blur_note = " На экране пока не рисуются: размытие («jump»).",
                           foreign = "В картинках игры уже есть «%s» не от этого персонажа: переименуйте персонажа или ту картинку";
         auto foreign_of = [&](const char* name) { return mm_replaced(foreign, "%s", name); };
+        // Part 5д: the three files as «Скакун» with «air» gave them.
+        const std::string drawn = mm_drawn({"air"});
+        const fs::path air = pictures / utf8_path("Скакун.air.svg");
+        auto three_untouched = [&] { return tg_bytes(svg) == mm_svg3_ && tg_bytes(motion) == mm_motion3_ && tg_bytes(air) == mm_air_; };
+        auto one_file = [&](const fs::path& x, const fs::path& y) { // what Windows keeps as one file, by its capitals
+            std::error_code ec;
+            return fs::equivalent(x, y, ec);
+        };
+        auto note_with = [&](const std::string& drawing) { return mm_replaced(note, "«Скакун.svg» и", "«Скакун.svg», «" + drawing + "» и"); };
+        const usize steps = an().history().cursor();
         switch (mm_step_) {
         case 0: {
             check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
@@ -26874,21 +26912,178 @@ return {
             check(tg_bytes(motion) == now && tg_bytes(svg) == mm_svg_ && step_label() == given, "Ctrl+Y: without the tint again, byte for byte");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(pair_untouched(), "Ctrl+Z: the pair as given before");
-            check(put(as().abs(lua), kMmRunner), "the code as it was, written by another program");
+            check(put(as().abs(lua), drawn), "the code with a drawing «air», «jump» swapping to it on the way down, written by another program");
+            as().refresh();
+            break;
+        }
+        // Part 5д: the drawing's file beside the pair, one step; undone and done again; «Уже отдано так»; only the drawing
+        // changed, given anew; only the clip changed, the file of clips alone given anew.
+        case 11: {
+            if (hold(px().code() == drawn && rec && !px().stale() && idle, "the code with «air» read")) return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.air.svg") + blur_note && an().history().cursor() == steps + 1 && step_label() == given && built(why),
+                  "given: «" + px().note() + "», one step, the three files as the library builds them " + why);
+            mm_svg3_ = tg_bytes(svg);
+            mm_motion3_ = tg_bytes(motion);
+            mm_air_ = tg_bytes(air);
+            const std::string main_text(mm_svg3_.begin(), mm_svg3_.end()), air_text(mm_air_.begin(), mm_air_.end());
+            check(!mm_air_.empty() && air_text.substr(0, air_text.find('>')) == main_text.substr(0, main_text.find('>')) &&
+                      air_text.find("id=\"cap\"") != std::string::npos,
+                  "«Скакун.air.svg»: the drawing with its cap, its root the main picture's\n" + air_text);
+            vector::MotionFile f;
+            check(vector::read_motion_file({reinterpret_cast<const char*>(mm_motion3_.data()), mm_motion3_.size()}, f, why) &&
+                      vector::motion_file_version(f) == 3 && f.drawings.size() == 1 && f.drawings[0].name == "air" &&
+                      f.drawings[0].picture == "Скакун.air.svg" && f.part("body", "air") && f.part("dust[2]", "air") && f.part("cap", "air") == nullptr,
+                  "the file of clips, version 3: the drawing «air» beside it, its parts that move (not its cap) " + why);
+            const vector::MotionClip* j = f.clip("jump");
+            const vector::MotionTrack* d = nullptr; // into the clip's own tracks, not a copy gone after the loop
+            if (j)
+                for (const vector::MotionTrack& t : j->tracks)
+                    if (t.prop == vector::MotionProp::Drawing) d = &t;
+            check(d && d->pieces.size() == 2 && d->pieces[1].kind == vector::MotionPiece::Kind::Ease && std::fabs(d->pieces[1].at - 0.2) < 1e-9 &&
+                      d->pieces[1].to.target == "air",
+                  "«jump»: the main drawing, then the swap to «air» from 0,2 s");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!there(air) && pair_untouched() && an().history().cursor() == steps, "Ctrl+Z: «Скакун.air.svg» gone, the pair as before");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == steps + 1, "Ctrl+Y: the three again, byte for byte");
+            break;
+        }
+        case 12:
+            if (hold(idle, "«Ресурсы» have looked")) return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану» again");
+            check(px().note() == "Уже отдано так" && an().history().cursor() == steps && three_untouched(), "«" + px().note() + "», no step");
+            check(put(as().abs(lua), mm_replaced(drawn, "fill = \"#d04040\"", "fill = \"#40a040\"")), "«air»'s cap green, written by another program");
+            as().refresh();
+            break;
+        // Only the drawing changed: the pair as it was, «Скакун.air.svg» given anew, one step.
+        case 13: {
+            if (hold(px().code() == mm_replaced(drawn, "fill = \"#d04040\"", "fill = \"#40a040\"") && rec && !px().stale() && idle, "the code read again"))
+                return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.air.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(svg) == mm_svg3_ && tg_bytes(motion) == mm_motion3_ && !tg_bytes(air).empty() && tg_bytes(air) != mm_air_,
+                  "the pair as it was, «Скакун.air.svg» with the green cap");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == steps, "Ctrl+Z: the three as given before");
+            check(put(as().abs(lua), mm_replaced(drawn, "swap(\"air\", 0.2, \"linear\")", "swap(\"air\", 0.2, \"in_quad\")")),
+                  "the swap to «air» easing in, written by another program");
+            as().refresh();
+            break;
+        }
+        // Only the clip changed: the picture and the drawing as they were, the file of clips given anew, one step.
+        case 14: {
+            if (hold(px().code() == mm_replaced(drawn, "swap(\"air\", 0.2, \"linear\")", "swap(\"air\", 0.2, \"in_quad\")") && rec &&
+                         !px().stale() && idle,
+                     "the code read again"))
+                return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.air.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(svg) == mm_svg3_ && tg_bytes(air) == mm_air_ && !tg_bytes(motion).empty() && tg_bytes(motion) != mm_motion3_,
+                  "«Скакун.svg» and «Скакун.air.svg» as they were, the file of clips anew");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && an().history().cursor() == steps, "Ctrl+Z: the three as given before");
+            check(put(as().abs(lua), mm_drawn({"air", "Air"})), "two drawings «air» and «Air», written by another program");
+            as().refresh();
+            break;
+        }
+        // Names that make no file, or one file.
+        case 15:
+        case 16: {
+            const std::string code = mm_drawn(mm_step_ == 15 ? std::vector<std::string>{"air", "Air"} : std::vector<std::string>{"злой?"});
+            if (hold(px().code() == code && rec && !px().stale() && idle, "the code read again")) return true;
+            if (wait(2)) return true;
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            const std::string want = mm_step_ == 15 ? "рисунки «Air» и «air» дали бы один файл" : "рисунок «злой?»: такое имя не годится для имени файла";
+            check(px().note() == want && an().history().cursor() == steps && three_untouched(), "refused: «" + px().note() + "», the files untouched, no step");
+            if (mm_step_ == 15) check(put(as().abs(lua), mm_drawn({"злой?"})), "a drawing «злой?», written by another program");
+            else {
+                check(put(pictures / utf8_path("Скакун.fly.svg"), kMmOwn), "«Скакун.fly.svg» of the game's own, written by another program");
+                check(put(as().abs(lua), mm_drawn({"fly"})), "«air» named «fly», written by another program");
+            }
+            as().refresh();
+            break;
+        }
+        // A picture of the game's own of the drawing's name; then the drawing renamed: its old file taken away.
+        case 17: {
+            if (hold(px().code() == mm_drawn({"fly"}) && rec && !px().stale() && idle, "the code read again")) return true;
+            if (wait(2)) return true;
+            const fs::path fly = pictures / utf8_path("Скакун.fly.svg");
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            check(px().note() == "В картинках игры уже есть «Скакун.fly.svg» не от этого персонажа: переименуйте рисунок или ту картинку" &&
+                      an().history().cursor() == steps && three_untouched() && tg_bytes(fly) == bytes(kMmOwn),
+                  "refused: «" + px().note() + "», the files and the game's picture untouched, no step");
+            std::error_code ec;
+            check(fs::remove(fly, ec), "«Скакун.fly.svg» taken away by another program");
+            as().refresh();
+            break;
+        }
+        case 18: {
+            if (hold(idle, "«Ресурсы» have looked")) return true;
+            const fs::path fly = pictures / utf8_path("Скакун.fly.svg");
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.fly.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(fly) == mm_air_ && !there(air) && tg_bytes(svg) == mm_svg3_, "«Скакун.fly.svg» the drawing, «Скакун.air.svg» taken away");
+            const std::vector<u8> now = tg_bytes(motion);
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && !there(fly) && an().history().cursor() == steps, "Ctrl+Z: «Скакун.air.svg» back, «Скакун.fly.svg» gone");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(tg_bytes(fly) == mm_air_ && !there(air) && tg_bytes(motion) == now, "Ctrl+Y: «fly» again, «air» gone");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && !there(fly), "Ctrl+Z: as given with «air»");
+            check(put(as().abs(lua), mm_drawn({"Air"})), "«air» named «Air», written by another program");
+            as().refresh();
+            break;
+        }
+        // Only the capitals changed: one file where names do not tell them apart (Windows), two elsewhere.
+        case 19: {
+            if (hold(px().code() == mm_drawn({"Air"}) && rec && !px().stale() && idle, "the code read again")) return true;
+            if (wait(2)) return true;
+            const fs::path big = pictures / utf8_path("Скакун.Air.svg");
+            check(px_click("px-give-screen"), "«Отдать экрану»");
+            std::string why;
+            check(px().note() == note_with("Скакун.Air.svg") + blur_note && an().history().cursor() == steps + 1 && built(why),
+                  "given: «" + px().note() + "», one step " + why);
+            check(tg_bytes(big) == mm_air_ && (!there(air) || one_file(air, big)), "«Скакун.Air.svg» the drawing, «Скакун.air.svg» gone or the same file");
+            check(away(), "out of the panel");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched() && (!there(big) || one_file(air, big)) && an().history().cursor() == steps,
+                  "Ctrl+Z: as given with «air», «Скакун.Air.svg» gone or the same file");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(built(why) && an().history().cursor() == steps + 1, "Ctrl+Y: «Air» again " + why);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(three_untouched(), "Ctrl+Z: as given with «air»");
+            check(put(as().abs(lua), drawn), "the code with «air» again, written by another program");
             as().refresh();
             break;
         }
         // The files, beside the games, for pixel-motion-m-again.
-        case 11: {
-            if (hold(px().code() == kMmRunner && rec && !px().stale() && idle, "the code read again")) return true;
+        case 20: {
+            if (hold(px().code() == drawn && rec && !px().stale() && idle, "the code read again")) return true;
             if (wait(2)) return true;
             std::string why;
-            check(built(why), "the pair the one the library builds of the files " + why);
+            check(built(why), "the three the ones the library builds of the files " + why);
             check(px_click("px-give-screen"), "«Отдать экрану»");
-            check(px().note() == "Уже отдано так" && pair_untouched(), "«" + px().note() + "», the pair untouched");
+            check(px().note() == "Уже отдано так" && three_untouched(), "«" + px().note() + "», the three untouched");
             const fs::path root = mo_root();
-            check(put_bytes(root / utf8_path("скакун.svg"), mm_svg_) && put_bytes(root / utf8_path("скакун.motion.json"), mm_motion_) &&
-                      put_bytes(root / utf8_path("скакун.luau"), file(lua)) && put_bytes(root / utf8_path("скакун.pixel.json"), file(doc)),
+            check(put_bytes(root / utf8_path("скакун.svg"), mm_svg3_) && put_bytes(root / utf8_path("скакун.motion.json"), mm_motion3_) &&
+                      put_bytes(root / utf8_path("скакун.air.svg"), mm_air_) && put_bytes(root / utf8_path("скакун.luau"), file(lua)) &&
+                      put_bytes(root / utf8_path("скакун.pixel.json"), file(doc)),
                   "the files, beside the games");
             return false;
         }
@@ -26912,6 +27107,7 @@ return {
         auto left = [&](const char* name) { return tg_bytes(mo_root() / utf8_path(name)); };
         auto same = [&] {
             return !left("скакун.svg").empty() && tg_bytes(svg) == left("скакун.svg") && tg_bytes(motion) == left("скакун.motion.json") &&
+                   !left("скакун.air.svg").empty() && tg_bytes(pictures / utf8_path("Скакун.air.svg")) == left("скакун.air.svg") &&
                    file(lua) == left("скакун.luau") && file(doc) == left("скакун.pixel.json");
         };
         auto listed_at = [&](const std::string& rel) {
@@ -26923,7 +27119,7 @@ return {
         case 0:
             check(!lvl_same(fs::current_path(), a) && !lvl_same(fs::current_path(), mo_root() / utf8_path("двадцать третья папка")),
                   "from another working folder: " + path_to_utf8(fs::current_path()));
-            check(same(), "the pair, the code and the «.pixel.json» as pixel-motion-m left them");
+            check(same(), "the pair, the drawing «air», the code and the «.pixel.json» as pixel-motion-m left them");
             check(click_tab(3), "«Анимация»");
             break;
         case 1:
@@ -26944,8 +27140,9 @@ return {
             pixel::ScreenGift gift;
             std::string why;
             check(mm_gift(gift, why) && tg_bytes(svg) == bytes(gift.svg) &&
-                      tg_bytes(motion) == bytes(vector::write_motion_file(gift.motion)),
-                  "the pair as the library builds it of the files here " + why);
+                      tg_bytes(motion) == bytes(vector::write_motion_file(gift.motion)) && gift.drawings.size() == 1 &&
+                      gift.drawings[0].name == "Скакун.air.svg" && tg_bytes(pictures / utf8_path(gift.drawings[0].name)) == bytes(gift.drawings[0].text),
+                  "the pair and the drawing «air» as the library builds them of the files here " + why);
             const std::string label = an().history().undo_label();
             check(px_click("px-give-screen"), "«Отдать экрану»");
             check(px().note() == "Уже отдано так" && an().history().undo_label() == label, "«" + px().note() + "», no step");
@@ -27214,10 +27411,12 @@ return {
         pixel::PoseScript script;
         pixel::Drawing drawing;
         std::string picture;
-        if (!mo_load(doc, rig, script, why, &drawing, &picture)) return false;
+        std::vector<pixel::NamedDrawing> drawings;
+        if (!mo_load(doc, rig, script, why, &drawing, &picture, &drawings)) return false;
         script.set_lengths(doc.lengths);
         pixel::ScreenGift gift;
-        if (!pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, gift, why)) return false;
+        if (!pixel::build_screen(script, rig, doc, "Скакун", px().opened(), picture, script.has_draw() ? &drawing : nullptr, drawings, gift, why))
+            return false;
         out.clear();
         clips.clear();
         char line[512];
@@ -27236,13 +27435,15 @@ return {
                 pixel::Pose pose;
                 if (!script.pose(rig, t, c.name, doc.params, doc.seed, pose)) return why = script.error(), false;
                 if (!rig.pose(pose, why)) return false;
-                const std::vector<pixel::DrawnCopy> copies = rig.drawn_copies();
+                // Part 5д: the parts as they stand in the drawing shown (in a swap the one it goes to), and which it is.
+                const pixel::Rig& shown = rig.shown();
+                const std::vector<pixel::DrawnCopy> copies = shown.drawn_copies();
                 for (const std::string& id : moved) {
-                    i32 index = rig.part(id);
+                    i32 index = shown.part(id);
                     for (const pixel::DrawnCopy& d : copies)
                         if (d.id == id) index = d.index;
-                    if (index < 0) continue; // a copy not born yet
-                    const pixel::Affine m = rig.matrix(index);
+                    if (index < 0) continue; // a copy not born yet, a part this drawing has not
+                    const pixel::Affine m = shown.matrix(index);
                     std::snprintf(line, sizeof(line), "%s %zu %s %.17g %.17g %.17g %.17g %.17g %.17g", c.name.c_str(), k, id.c_str(), m.a, m.b, m.c,
                                   m.d, m.e, m.f);
                     out.push_back(line);
@@ -27265,6 +27466,11 @@ return {
                     for (const pixel::OrderStep& o : pose.order)
                         l += " " + o.part + " " + kKinds[static_cast<usize>(o.kind)] + " " + (o.other.empty() ? std::string("-") : o.other);
                     out.push_back(l);
+                }
+                if (std::any_of(c.tracks.begin(), c.tracks.end(), [](const vector::MotionTrack& tr) { return tr.prop == vector::MotionProp::Drawing; })) {
+                    std::snprintf(line, sizeof(line), "%s %zu - drawing %s %d %s %.17g", c.name.c_str(), k, pose.drawing.empty() ? "draw" : pose.drawing.c_str(),
+                                  pose.swap ? 1 : 0, pose.swap_from.empty() ? "draw" : pose.swap_from.c_str(), pose.swap ? pose.swap_k : 0.0);
+                    out.push_back(line);
                 }
                 for (const std::string& id : morphed) {
                     const vector::MotionValue v = pixel::screen_value(pose, id, vector::MotionProp::Morph);
@@ -27293,6 +27499,9 @@ return {
         e.ms_not_drawn = "«Скакун.svg», клип «jump»: на экране пока не рисуется: размытие и тень (на экране игры не рисуются, в запекании есть)";
         e.ms_layer_box.assign(std::begin(kMgBoxes[0]), std::end(kMgBoxes[0]));
         e.ms_tab = mg_tab_;
+        e.ms_drawing_file = "pictures/Скакун.air.svg";
+        const std::vector<u8> air = tg_bytes(mo_root() / utf8_path("скакун.air.svg"));
+        e.ms_drawing_svg.assign(air.begin(), air.end());
         return e;
     }
 
