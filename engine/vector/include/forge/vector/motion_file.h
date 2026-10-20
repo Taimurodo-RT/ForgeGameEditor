@@ -285,6 +285,7 @@ struct MotionPartPose {
     MotionValue values[kMotionPropCount];
     bool moves = false; // one of x … skew_y: its transform is the clip's
     MotionMatrix local; // then: frame⁻¹ · A · frame · own, the part's transform in the file's terms
+    bool operator==(const MotionPartPose&) const = default;
 };
 // Every part of the clip's tracks at t, in the order of their first tracks, but a copy not born yet (it has no element
 // then); not the drawing's track. Each part's matrix as it stands in drawing `drawing`: a part that moves without a

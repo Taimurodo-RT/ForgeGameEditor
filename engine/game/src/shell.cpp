@@ -119,6 +119,7 @@ struct Shell::Model {
     std::function<void()> pending;
     int pending_frames = 0;
     bool slots_dirty = true;
+    bool scene_skip = false; // the pause menu's «Пропустить сцену»
 };
 
 Shell::Shell() = default;
@@ -165,11 +166,18 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     context_ = ui_->create_context("game", width, height);
     if (!context_) return false;
     bind_model();
-    if (!ui_->load_document(context_, "game/shell.rml")) return false;
+    shell_doc_ = ui_->load_document(context_, "game/shell.rml");
+    if (!shell_doc_) return false;
     // The game's screens: made before the game, which tells them what its things are called.
     screens_ = std::make_unique<GameScreens>();
     screens_->on_action = [this](const ScreenAction& a, const std::string&) { screen_action(a); };
     screens_->set_quests(&quests_); // the journal's list
+    // A scene's emits go to the logic as a button's «Сообщение логике» does, its sounds as a button's.
+    scene_ = std::make_unique<GameScene>();
+    scene_->on_message = [this](const std::string& m) { screen_action({"message", m}); };
+    scene_->on_sound = [this](const std::string& file) {
+        if (screens_->on_sound) screens_->on_sound(file);
+    };
     if (!game.init(*this, device, format)) return false;
     action_defs_ = game.actions();
     for (const input::ActionDef& d : input::shell_actions()) action_defs_.push_back(d);
@@ -189,10 +197,12 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
 
 void Shell::shutdown() {
     if (!game_) return;
+    if (scene_) scene_->drop(); // its music stops while the game's sounds are there
     if (game_->running()) game_->end();
     game_->shutdown();
     game_ = nullptr;
     if (runner_) runner_->stop();
+    scene_.reset(); // its document lives in the UI's context
     screens_.reset(); // its pages live in the UI's context
     if (ui_) ui_->shutdown();
     context_ = nullptr;
@@ -276,8 +286,8 @@ void Shell::screen_action(const ScreenAction& a) {
         if (!slots_->list().empty()) start_loading([this] { if (!continue_game()) show(Screen::Main); });
     } else if (a.what == "load" || a.what == "save") {
         if (a.what == "save" && !game_->running()) return;
-        if (std::string why; a.what == "save" && !game_->can_save(&why)) {
-            toast("Сохранить нельзя: " + why);
+        if (std::string why; a.what == "save" && !may_save(&why)) {
+            toast(why);
             return;
         }
         if (a.what == "load" && slots_->list().empty()) {
@@ -383,6 +393,7 @@ bool Shell::begin(std::string_view slot_id) {
     std::string error;
     if (game_->running()) game_->end();
     runner_->stop();
+    scene_->drop(); // without its messages and its end
     screens_->hide_commands(); // the menu's windows stay with the menu
     screens_->reset_pictures(); // what the last game's scripts said of live SVG pictures
     vars_.clear();
@@ -440,11 +451,29 @@ bool Shell::continue_game() {
     return latest && load(latest->id);
 }
 
+bool Shell::may_save(std::string* why) const {
+    if (scene_->going()) {
+        if (why) *why = "Во время сцены сохраниться нельзя";
+        return false;
+    }
+    std::string error;
+    if (!game_->can_save(&error)) {
+        if (why) *why = "Сохранить нельзя: " + error;
+        return false;
+    }
+    return true;
+}
+
+bool Shell::play_scene(std::string_view name, const SceneHow& how, std::string& why) {
+    if (!game_->running()) return why = "сцена идёт только в игре", false;
+    return scene_->play(context_, config_.game_dir, name, how, why);
+}
+
 bool Shell::save(std::string_view slot_id, std::string title, bool autosave) {
     if (!game_->running()) return false;
     std::string error, location;
-    if (!game_->can_save(&error)) {
-        if (!autosave) toast("Сохранить нельзя: " + error);
+    if (!may_save(&error)) {
+        if (!autosave) toast(error);
         return false;
     }
     if (!game_->save(slots_->session(), location, &error)) {
@@ -496,10 +525,11 @@ void Shell::pause(bool on) {
 void Shell::to_main_menu() {
     model_->toast_list.clear(); // the game's messages stay with the game
     if (game_->running()) {
-        save("autosave", "Автосохранение", true);
+        save("autosave", "Автосохранение", true); // not while a scene plays: the last one stays
         game_->end();
     }
     runner_->stop();
+    scene_->drop();
     screens_->hide_commands();
     show(Screen::Main);
 }
@@ -582,7 +612,8 @@ bool Shell::handle_event(const SDL_Event& e) {
         }
         return key; // the hero does not move while talking
     }
-    if (mouse) return false;
+    // A scene that stops the world: the world hears no click meanwhile (nor a key, below), the shell's keys answer.
+    if (mouse) return scene_holds();
     switch (screen_) {
     case Screen::Main: return k == SDLK_ESCAPE && screens_->close_top(); // a window opened from the menu
     case Screen::Playing:
@@ -595,7 +626,7 @@ bool Shell::handle_event(const SDL_Event& e) {
         else if (act("quickload")) {
             if (!slot_.empty()) load(std::string(slot_));
             else continue_game();
-        } else return key && screens_->pauses(); // a window that stops the game keeps the game's keys from the world
+        } else return key && (screens_->pauses() || scene_holds()); // a window that stops the game keeps the game's keys from the world
         return true;
     case Screen::Paused:
         if (k == SDLK_ESCAPE || act("pause")) pause(false);
@@ -674,10 +705,11 @@ void Shell::update(f64 dt) {
     if (playing) {
         playtime_ += dt;
         since_autosave_ += dt;
-        if (autosave_s_ > 0 && since_autosave_ >= autosave_s_ && !in_dialogue()) save("autosave", "Автосохранение", true);
+        // Not in a dialogue nor while a scene plays: after it.
+        if (autosave_s_ > 0 && since_autosave_ >= autosave_s_ && !in_dialogue() && !scene_->going()) save("autosave", "Автосохранение", true);
     }
-    // A window of the game's may stop the world while it is open.
-    const bool stopped = playing && screens_->pauses();
+    // A window of the game's may stop the world while it is open, a scene too.
+    const bool stopped = playing && (screens_->pauses() || scene_holds());
     // A game that is not running draws its menu backdrop.
     game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
     input_.end_frame(); // what went down this frame was the game's to see
@@ -685,6 +717,13 @@ void Shell::update(f64 dt) {
     sync_settings_vars();
     screens_->update(vars_, in_game, screen_ == Screen::Main, static_cast<int>(width_), static_cast<int>(height_),
                      [this](std::string_view n, const std::vector<Value>& args) { return call(n, args); });
+    // The scene's time goes while the game is on the screen. It is over the game's screens and HUD (the game may have
+    // pulled its own over the menus this frame), under the shell's dialogue, menus and messages.
+    scene_->update(screen_ == Screen::Playing ? dt : 0, static_cast<int>(width_), static_cast<int>(height_));
+    if (Rml::ElementDocument* d = scene_->document()) {
+        d->PullToFront();
+        shell_doc_->PullToFront();
+    }
     for (Toast& t : m.toast_list) t.left -= dt;
     std::erase_if(m.toast_list, [](const Toast& t) { return t.left <= 0; });
     m.fps_avg = m.fps_avg == 0 ? dt : m.fps_avg * 0.95 + dt * 0.05;
@@ -702,6 +741,10 @@ void Shell::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width,
     ui_->render(cmd, target, format_, width, height);
     if (model_->pending) --model_->pending_frames;
 }
+
+bool Shell::scene_holds() const { return scene_ && scene_->going() && scene_->how().pause; }
+
+bool Shell::world_hears() const { return screen_ == Screen::Playing && !in_dialogue() && !scene_holds(); }
 
 bool Shell::over_world() const {
     Rml::Element* hover = context_ ? context_->GetHoverElement() : nullptr;
@@ -777,6 +820,7 @@ void Shell::bind_model() {
     c.Bind("fps", &m.fps);
     c.Bind("playtime", &m.playtime);
     c.Bind("own_menu", &m.own_menu);
+    c.Bind("scene_skip", &m.scene_skip);
     c.Bind("keys", &m.keys);
     c.Bind("keys_note", &m.keys_note);
     c.Bind("keys_changed", &m.keys_changed);
@@ -795,8 +839,8 @@ void Shell::bind_model() {
     on("continue_game", [this, loading](Rml::Event&, const Rml::VariantList&) { loading([this] { if (!continue_game()) show(Screen::Main); }); });
     on("open_slots", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         if (screen_ == Screen::Main && slots_->list().empty()) return;
-        if (std::string why; arg_str(a, 0) == "save" && game_->running() && !game_->can_save(&why)) {
-            toast("Сохранить нельзя: " + why);
+        if (std::string why; arg_str(a, 0) == "save" && game_->running() && !may_save(&why)) {
+            toast(why);
             return;
         }
         model_->slots_mode = arg_str(a, 0) == "save" ? "save" : "load";
@@ -833,6 +877,11 @@ void Shell::bind_model() {
     });
     on("back", [this](Rml::Event&, const Rml::VariantList&) { show(back_); });
     on("resume", [this](Rml::Event&, const Rml::VariantList&) { pause(false); });
+    on("skip_scene", [this](Rml::Event&, const Rml::VariantList&) {
+        if (!scene_->going() || !scene_->how().skip) return;
+        scene_->skip();
+        pause(false);
+    });
     on("to_main_menu", [this](Rml::Event&, const Rml::VariantList&) { to_main_menu(); });
     on("quit", [this](Rml::Event&, const Rml::VariantList&) { quit_ = true; });
     on("toggle", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
@@ -888,6 +937,7 @@ void Shell::refresh_model() {
         }
     };
     set(m.screen, Rml::String(screen_key(screen_)));
+    set(m.scene_skip, scene_->going() && scene_->how().skip);
     set(m.own_menu, screens_ && screens_->has_menu());
     set(m.title, Rml::String(title_));
 

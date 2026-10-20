@@ -243,6 +243,10 @@ public:
     void bounds(i32 part, u32 w, u32 h, f64 out[4]);
     // The same in the pixels picture units go to by `px`.
     void bounds(i32 part, const Affine& px, f64 out[4]);
+    // Where the last pose() draws (part 6г2 of docs/models/сцены-модель.md, the frame a game draws an actor in), in the
+    // pixels picture units go to by `px`: every shape shown with a fill or a stroke, its stroke's width all round, of the
+    // pictures the pose shows (in a swap the two). False when it draws nothing.
+    bool reach(const Affine& px, f64 out[4]);
     // How the last pose() carries a part's pivot, in picture units (identity at rest): by the parts it is inside and by
     // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
     // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).

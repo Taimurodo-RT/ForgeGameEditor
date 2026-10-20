@@ -22,6 +22,7 @@
 #include "forge/game/dialogue.h"
 #include "forge/game/quests.h"
 #include "forge/game/saves.h"
+#include "forge/game/scenes.h"
 #include "forge/game/screens.h"
 #include "forge/game/vars.h"
 #include "forge/input/input.h"
@@ -42,6 +43,7 @@ struct SDL_Window;
 namespace Rml {
 class Context;
 class Element;
+class ElementDocument;
 } // namespace Rml
 namespace forge::ui {
 class Ui;
@@ -169,6 +171,14 @@ public:
     void toast(std::string text);
     // The game's own screens (ui/*.html).
     GameScreens& screens() { return *screens_; }
+    // A scene of «Векторная» (scenes.h, part 6г2 of docs/models/сцены-модель.md): over the game's screens and HUD,
+    // under the dialogue box, the pause menu and the messages. Its time goes while the game is on the screen; with
+    // how.pause the world stands and does not hear the player meanwhile; the pause menu has «Пропустить сцену» when
+    // how.skip. While it plays the game is not saved (a save says why, an autosave waits for its end). Its emits go to
+    // on_message, its sounds to the screens' on_sound; the game hears its music (scene().on_music) and its end
+    // (scene().on_end). False with why when it does not begin (no game going, another scene, its folder).
+    bool play_scene(std::string_view name, const SceneHow& how, std::string& why);
+    GameScene& scene() { return *scene_; }
     // A button's «Сообщение логике»: the game passes it to its logic (the
     // schemes «При сообщении» with that name).
     std::function<void(const std::string& message)> on_message;
@@ -200,6 +210,11 @@ public:
     Rml::Element* find_element(const char* id);
     // The mouse is over the world, not over a window or button.
     bool over_world() const;
+    // The events the shell and the UI leave go to the game's world: it is on the screen, no dialogue, no scene that
+    // stops it.
+    bool world_hears() const;
+    // A scene plays that stops the world.
+    bool scene_holds() const;
 
     // --- keys (the tab «Ввод») ---
     // The game's actions and the shell's: what is held and what went down this frame. Every event reaches it before
@@ -234,6 +249,8 @@ private:
     // The actions' binds from the module's defaults, the author's and the player's choices.
     void resolve_keys(bool say);
     Value call(std::string_view name, const std::vector<Value>& args);
+    // A save may be written now (false: why, for the player).
+    bool may_save(std::string* why) const;
 
     Game* game_ = nullptr;
     SDL_GPUDevice* device_ = nullptr;
@@ -257,6 +274,8 @@ private:
     std::unordered_map<std::string, CallFn> calls_;
     std::unique_ptr<DialogueRunner> runner_;
     std::unique_ptr<GameScreens> screens_;
+    std::unique_ptr<GameScene> scene_;
+    Rml::ElementDocument* shell_doc_ = nullptr;
     std::vector<std::string> data_errors_;
     input::Input input_;
     std::vector<input::ActionDef> action_defs_;

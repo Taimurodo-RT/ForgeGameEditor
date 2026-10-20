@@ -92,7 +92,7 @@ public:
         return true;
     }
     void on_event(const SDL_Event& e) override {
-        if (!shell_.handle_event(e) && shell_.screen() == Screen::Playing && !shell_.in_dialogue()) game_.handle_event(e);
+        if (!shell_.handle_event(e) && shell_.world_hears()) game_.handle_event(e);
     }
     void on_frame(f64 dt) override {
         if (testing_ && main_ && main_->test) {
@@ -154,8 +154,7 @@ int run_offscreen(Game& game, const GameMain& main, const Options& o) {
                 if (testing) testing = main.test(shell, f, failures);
                 if (f > 100000) break;
                 for (SDL_Event e; SDL_PollEvent(&e);)
-                    if (!shell.handle_event(e) && shell.screen() == Screen::Playing && !shell.in_dialogue())
-                        game.handle_event(e);
+                    if (!shell.handle_event(e) && shell.world_hears()) game.handle_event(e);
                 const u64 t0 = time_now_ns();
                 shell.update(1.0 / o.hz);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);

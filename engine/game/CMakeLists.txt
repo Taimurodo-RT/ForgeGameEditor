@@ -7,8 +7,9 @@ add_library(forge_game STATIC
   src/game_module.cpp
   src/shell.cpp
   src/runner.cpp
+  src/scenes.cpp
   src/screens.cpp)
 add_library(forge::game ALIAS forge_game)
 target_include_directories(forge_game PUBLIC include)
-target_link_libraries(forge_game PUBLIC forge::core forge::data forge::platform forge::input forge::render forge::ui PRIVATE yyjson RmlUi::Core)
+target_link_libraries(forge_game PUBLIC forge::core forge::data forge::platform forge::input forge::render forge::ui forge::vector PRIVATE yyjson RmlUi::Core)
 forge_target_defaults(forge_game)

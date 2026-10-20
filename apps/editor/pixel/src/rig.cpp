@@ -1853,6 +1853,40 @@ void Rig::bounds(i32 part, const Affine& px, f64 out[4]) {
     out[0] = b.x0, out[1] = b.y0, out[2] = b.x1, out[3] = b.y1;
 }
 
+bool Rig::reach(const Affine& px, f64 out[4]) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    Box box;
+    auto add = [&](const Rig& r) {
+        const Impl& m = *r.impl_;
+        if (m.pic && !m.pic->visible()) return; // a drawing the pose does not show
+        for (const Leaf& l : m.leaves) {
+            bool shown = true;
+            for (const tvg::Paint* p = l.shape; p && shown; p = p->parent()) shown = p->visible();
+            if (!shown) continue;
+            u8 fa = 0, sa = 0, rr = 0, gg = 0, bb = 0;
+            l.shape->fill(&rr, &gg, &bb, &fa);
+            const f32 width = l.shape->strokeWidth();
+            if (width > 0) l.shape->strokeFill(&rr, &gg, &bb, &sa);
+            const bool stroked = width > 0 && (sa > 0 || l.shape->strokeFill());
+            if (fa == 0 && !l.shape->fill() && !stroked) continue;
+            const Affine g = px * m.global(l.shape);
+            Box own;
+            path_box(l.shape, g, own);
+            if (own.empty()) continue;
+            // The stroke all round, its whole width (a miter's point beyond half of it), in the units the matrix scales to.
+            const f64 k = std::sqrt(std::max(g.a * g.a + g.b * g.b, g.c * g.c + g.d * g.d));
+            const f64 pad = stroked ? width * k : 0;
+            box.add({own.x0 - pad, own.y0 - pad});
+            box.add({own.x1 + pad, own.y1 + pad});
+        }
+    };
+    add(*this);
+    for (const auto& [name, d] : impl_->drawings) add(d);
+    if (box.empty()) return false;
+    out[0] = box.x0, out[1] = box.y0, out[2] = box.x1, out[3] = box.y1;
+    return true;
+}
+
 Affine Rig::carried(i32 part) const {
     const Impl& m = *impl_;
     if (part < 0 || static_cast<usize>(part) >= m.recs.size()) return {};

@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <set>
 
@@ -140,6 +141,11 @@ struct Reader {
             return fail(at, "motion: нужен путь файла клипов внутри папки сцены (без motion — актёр клипов не играет)");
         if (!pair(yyjson_obj_get(v, "origin"), a.origin.x, a.origin.y)) return fail(at, "origin: нужен левый верхний угол рисунка [x, y]");
         if (!pair(yyjson_obj_get(v, "size"), a.w, a.h) || !(a.w > 0) || !(a.h > 0)) return fail(at, "size: нужен размер рисунка [w, h] больше 0");
+        if (yyjson_val* r = yyjson_obj_get(v, "reach")) {
+            const bool four = yyjson_is_arr(r) && yyjson_arr_size(r) == 4 && number(yyjson_arr_get(r, 0), a.reach.x) &&
+                              number(yyjson_arr_get(r, 1), a.reach.y) && number(yyjson_arr_get(r, 2), a.reach.w) && number(yyjson_arr_get(r, 3), a.reach.h);
+            if (!four || !(a.reach.w > 0) || !(a.reach.h > 0)) return fail(at, "reach: нужна рамка рисунка в сцене [x, y, w, h], w и h больше 0");
+        }
         f.actors.push_back(std::move(a));
         return true;
     }
@@ -342,6 +348,14 @@ std::string write_scene_file(const SceneFile& f) {
         put_pair(out, a.origin.x, a.origin.y);
         out += ", \"size\": ";
         put_pair(out, a.w, a.h);
+        if (a.reach.w > 0) {
+            out += ", \"reach\": [";
+            for (const f64 v : {a.reach.x, a.reach.y, a.reach.w, a.reach.h}) {
+                if (out.back() != '[') out += ", ";
+                put_number(out, v);
+            }
+            out += ']';
+        }
         out += '}';
     });
     put_list(out, "plays", f.plays, [&](const ScenePlay& p) {
@@ -614,20 +628,78 @@ ScenePose scene_pose(const SceneMotion& s, f64 t, std::span<const f64> held, i32
         if (clip) {
             ap.shown = motion_shown(*file, *clip, ap.moment.time);
             ap.parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.drawing);
+            if (ap.shown.swap) ap.from_parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.from);
             for (const MotionCopy& c : clip->copies)
                 if (motion_copy_drawn(c, ap.moment.time)) ap.copies.push_back(c);
             ap.order = motion_order_at(*clip, ap.moment.time);
         }
-        for (const MotionPartPose& sp : over[a]) {
-            auto it = std::find_if(ap.parts.begin(), ap.parts.end(), [&](const MotionPartPose& pp) { return pp.id == sp.id; });
-            if (it == ap.parts.end()) it = ap.parts.insert(ap.parts.end(), rest_part(sp.id));
-            scene_over(*it, sp);
-            if (records) motion_part_pose(*records, *it, ap.shown.drawing);
-        }
+        // The scene's over the clip's, in the drawing shown and, in a swap, in the one it comes from.
+        auto put_over = [&](std::vector<MotionPartPose>& parts, std::string_view drawing) {
+            for (const MotionPartPose& sp : over[a]) {
+                auto it = std::find_if(parts.begin(), parts.end(), [&](const MotionPartPose& pp) { return pp.id == sp.id; });
+                if (it == parts.end()) it = parts.insert(parts.end(), rest_part(sp.id));
+                scene_over(*it, sp);
+                if (records) motion_part_pose(*records, *it, drawing);
+            }
+        };
+        put_over(ap.parts, ap.shown.drawing);
+        if (ap.shown.swap) put_over(ap.from_parts, ap.shown.from);
         ap.order.insert(ap.order.end(), over_order[a].begin(), over_order[a].end());
         out.actors.push_back(std::move(ap));
     }
     return out;
+}
+
+bool scene_marks(const SceneMotion& s, std::vector<SceneMark>& out, std::string& why) {
+    constexpr usize kMax = 100000;
+    out.clear();
+    const SceneFile& f = s.file;
+    if (const MotionClip* clip = s.stage.clip("scene"))
+        for (const MotionMark& m : clip->marks) out.push_back({m.name, m.sound, {}, m.at});
+    // Each actor's plays by start, then order, the actors by name (forge::pixel::plays_of).
+    std::vector<const ScenePlay*> all;
+    for (const ScenePlay& p : f.plays) all.push_back(&p);
+    std::stable_sort(all.begin(), all.end(), [](const ScenePlay* a, const ScenePlay* b) {
+        if (a->actor != b->actor) return a->actor < b->actor;
+        return a->at != b->at ? a->at < b->at : a->order < b->order;
+    });
+    for (usize i = 0; i < all.size(); ++i) {
+        const ScenePlay& p = *all[i];
+        if (p.kind == ScenePlay::Kind::Stop) continue;
+        const bool last = i + 1 == all.size() || all[i + 1]->actor != p.actor;
+        const f64 end = last ? f.length : all[i + 1]->at;
+        const i32 a = actor_index(f, p.actor);
+        const MotionClip* clip = a >= 0 && static_cast<usize>(a) < s.actors.size() ? s.actors[static_cast<usize>(a)].clip(p.clip) : nullptr;
+        if (!clip || clip->marks.empty()) continue;
+        const bool loop = p.kind == ScenePlay::Kind::Loop;
+        const f64 round = clip->length / p.speed;
+        for (u64 k = 0;; ++k) {
+            const f64 base = snap_ns(p.at + static_cast<f64>(k) * round);
+            if (k > 0 && (!loop || !(round > 0) || base >= end)) break;
+            for (const MotionMark& m : clip->marks) {
+                const f64 at = snap_ns(base + m.at / p.speed);
+                if (at > end || (at == end && !last)) continue;
+                if (out.size() >= kMax)
+                    return why = "актёр «" + p.actor + "»: меток клипов больше " + std::to_string(kMax) + " — клип по кругу слишком короткий", false;
+                out.push_back({m.name, m.sound, p.actor, at});
+            }
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const SceneMark& a, const SceneMark& b) { return a.at < b.at; });
+    return true;
+}
+
+MotionMatrix scene_camera_matrix(const MotionPartPose& camera, f64 w, f64 h) {
+    auto value = [&](MotionProp p) {
+        const usize i = static_cast<usize>(p);
+        return camera.has[i] ? camera.values[i].v : motion_rest(p).v;
+    };
+    const f64 zoom = value(MotionProp::Scale), r = -value(MotionProp::Rot) * std::numbers::pi / 180, c = std::cos(r), s = std::sin(r);
+    const f64 cx = w / 2 + value(MotionProp::X), cy = h / 2 + value(MotionProp::Y);
+    MotionMatrix m{zoom * c, zoom * s, -zoom * s, zoom * c, 0, 0};
+    m.e = w / 2 - (m.a * cx + m.c * cy);
+    m.f = h / 2 - (m.b * cx + m.d * cy);
+    return m;
 }
 
 } // namespace forge::vector

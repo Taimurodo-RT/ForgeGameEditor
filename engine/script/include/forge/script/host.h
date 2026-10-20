@@ -13,6 +13,7 @@
 //   function S.on_hit(self, other) end         -- its rigid body started touching another (0: tiles)
 //   function S.on_message(self, name, value, from) end
 //   function S.on_anim(self, name) end          -- its animation came to a mark (emit) of its picture
+//   function S.on_scene(self, name, skipped) end -- a scene of the game ended (skipped: the player skipped it)
 //   return S
 //
 // A handler may also be a list of functions (S.on_tick = {f, g}): each runs
@@ -169,6 +170,9 @@ public:
     // The animation a thing is shown with came to a mark (emit("удар") of «Векторная»): its on_anim at the next tick,
     // in turn with the messages sent before and after.
     void anim(flecs::entity_t thing, std::string_view mark);
+    // A scene of the game ended (forge.scene.play, part 6г2 of docs/models/сцены-модель.md): on_scene of every scripted
+    // entity running at the next tick, in turn with the messages.
+    void scene_end(std::string_view name, bool skipped);
 
     // Per-node time of graphs compiled with CompileOptions::profile, slowest
     // first, since the start or the last reset.
@@ -250,6 +254,25 @@ public:
     // frame of its window. False without a game, or for a thing whose picture has no such mark.
     virtual bool anim_going(flecs::entity_t thing, std::string_view mark) {
         (void)thing, (void)mark;
+        return false;
+    }
+    // forge.scene.* (part 6г2 of docs/models/сцены-модель.md): a scene of the game's begins (serial: its play's number),
+    // false with why («нет сцены «X»: …», «идёт сцена «X»»); whether the play with that number is over and whether it was
+    // skipped; the logic skips the scene going; the name of the one going (false: none). A bridge that shows no scenes
+    // says so.
+    virtual bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) {
+        (void)name, (void)pause, (void)skip, (void)serial;
+        why = "сцены показывает только игра";
+        return false;
+    }
+    virtual bool scene_over(u64 serial, bool& skipped) {
+        (void)serial;
+        skipped = false;
+        return true;
+    }
+    virtual void scene_stop() {}
+    virtual bool scene_going(std::string& name) {
+        (void)name;
         return false;
     }
 };

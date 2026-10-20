@@ -1,0 +1,110 @@
+#pragma once
+
+// A scene of «Векторная» on the game's screen (part 6г2 of docs/models/сцены-модель.md). «Отдать игре» writes the
+// scene's folder game/scenes/<name>/ (forge/vector/scene_file.h); the game's logic shows it (forge.scene.play, the
+// node «Показать сцену») and the shell (shell.h) holds it while it plays.
+//
+// The scene is a document of the game's interface of its own, over the game's screens and HUD and under the shell's
+// (dialogue, pause menu, messages): a frame of the camera's view fitted to the screen and cut at its edge, the
+// background's colour all round when the scene has one; in it a layer with the camera's matrix, and in that the
+// scene's layers in its order: runs of its stage's shapes (a live SVG of stage.svg drawing only those, forge/ui/
+// live_svg.h), its pictures (their PNG) and its actors (a live SVG of each one's picture posed as its clip has it, in
+// the box its drawing reaches). Where each picture and actor stands is where the stage's picture in the pose of that
+// moment puts its group (ui::SvgPlaces): the same code as the runs, so what hangs on an actor does not part from it.
+//
+// Its time goes by what the shell gives it: only while the game is on the screen (a menu up stands it). Its marks
+// go as their moments pass: an emit to on_message, a sound (name, name.wav or name.ogg of the game's sounds) to
+// on_sound. Its music: the tunes it plays now and how loud the game's own is under them, to on_music. At its end, or
+// skipped, on_end.
+
+#include "forge/core/types.h"
+#include "forge/vector/scene_file.h"
+
+#include <filesystem>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace Rml {
+class Context;
+class ElementDocument;
+} // namespace Rml
+
+namespace forge::game {
+
+// How a scene plays (forge.scene.play's options, the node's fields).
+struct SceneHow {
+    bool pause = true; // the world stands and does not hear the player while it plays
+    bool skip = true;  // the pause menu has «Пропустить сцену»
+};
+
+// A tune of the scene's music now (vector::scene_music_at): the file of the game's sounds it plays, by the call
+// that began it.
+struct SceneTune {
+    u32 call = 0;
+    std::string file; // "лес.ogg"
+    f64 since = 0, volume = 0;
+    bool operator==(const SceneTune&) const = default;
+};
+
+// A scene's folder as the game reads it: scene.json, stage.motion.json and its actors' clips, checked together
+// (vector::check_scene), and the pictures they draw there. False with why, naming the file.
+bool read_scene_folder(const std::filesystem::path& dir, vector::SceneMotion& out, std::string& why);
+// The scenes a game has: the folders of game_dir/scenes with a scene.json, by name.
+std::vector<std::string> scene_names(const std::filesystem::path& game_dir);
+// A sound's file in the game's sounds folder as «Векторная» finds it: name, else name.wav, else name.ogg; empty when
+// none is there or the name is no file of the folder.
+std::string scene_sound_file(const std::filesystem::path& sounds, std::string_view name);
+
+class GameScene {
+public:
+    GameScene();
+    ~GameScene();
+    GameScene(const GameScene&) = delete;
+    GameScene& operator=(const GameScene&) = delete;
+
+    // Starts scene `name` of game_dir/scenes in the context; false with why («нет сцены «X»: …», the folder's error).
+    // One that goes already is refused (its name in why); one whose music is going out after its end lets it go.
+    bool play(Rml::Context* context, const std::filesystem::path& game_dir, std::string_view name, const SceneHow& how, std::string& why);
+    // Every frame: dt seconds of the scene pass (0 while it stands), its frame fitted to the view of w × h pixels. The
+    // first frame after play shows its moment 0.
+    void update(f64 dt, int width, int height);
+    // The player skips it (or the logic stops it): the messages it has left go to on_message in order, its sounds do
+    // not; it ends, skipped.
+    void skip();
+    // It ends at once, without its messages and without on_end (load, a new game, the main menu); its music stops and
+    // the game's comes back.
+    void drop();
+
+    bool going() const;
+    const std::string& name() const;
+    const SceneHow& how() const;
+    f64 time() const;
+    // Each play's own number (from 1): on_end's, and over() for the logic waiting on it.
+    u64 serial() const;
+    // The play with this number has ended (or never began).
+    bool over(u64 serial) const;
+    // Whether the play with this number was skipped (when over).
+    bool skipped(u64 serial) const;
+    Rml::ElementDocument* document() const;
+
+    std::function<void(const std::string& message)> on_message;
+    std::function<void(const std::string& file)> on_sound;
+    std::function<void(const std::vector<SceneTune>& tunes, f64 game_share)> on_music;
+    std::function<void(const std::string& name, bool skipped, u64 serial)> on_end;
+
+    // What the scene does not draw or play, each line once (also in the log).
+    const std::vector<std::string>& problems() const;
+    // For checks: the layers in their order, "run e3 e4", "picture лес", "actor ёжик".
+    std::vector<std::string> layers() const;
+    // For checks: how many times the runs' pictures were posed since play.
+    u64 run_poses() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+} // namespace forge::game

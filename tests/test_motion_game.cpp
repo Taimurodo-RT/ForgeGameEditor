@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <span>
@@ -563,4 +564,261 @@ TEST_CASE("5а: «Покадровая» shows under a frame the mark that begin
     CHECK(seen == "· ⚑ ⚑▬ ⚑▬ ⚑ ");
     c.events = {{"шаг", true, 0, 1}};
     CHECK(objects::frame_marks(c)[0].begins == B::Sound);
+}
+
+namespace {
+
+// A game that shows scenes as the slice's shell does (part 6г2 of docs/models/сцены-модель.md): one at a time, each
+// play its number, its end told to the scripts (on_scene at their next tick) and to the play waiting on it.
+struct SceneBridge final : script::GameBridge {
+    script::ScriptHost* scripts = nullptr;
+    std::vector<std::string> said, plays;
+    std::string going;
+    u64 serials = 0, current = 0;
+    std::map<u64, bool> skipped;
+    f64 var(std::string_view, std::string*) override { return 0; }
+    void set_var(std::string_view, f64) override {}
+    void set_text(std::string_view, std::string_view text) override { said.emplace_back(text); }
+    void screen(std::string_view, std::string_view) override {}
+    bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) override {
+        if (name == "Нет") return why = "нет сцены «Нет»: отдайте её игре во вкладке «Векторная»", false;
+        if (!going.empty()) return why = "идёт сцена «" + going + "»", false;
+        plays.push_back(std::string(name) + (pause ? " пауза" : "") + (skip ? " пропуск" : ""));
+        going = std::string(name);
+        serial = current = ++serials;
+        return true;
+    }
+    bool scene_over(u64 serial, bool& was_skipped) override {
+        was_skipped = skipped.count(serial) && skipped[serial];
+        return !(serial == current && !going.empty());
+    }
+    void scene_stop() override { end(true); }
+    bool scene_going(std::string& name) override {
+        if (going.empty()) return false;
+        name = going;
+        return true;
+    }
+    void end(bool was_skipped) {
+        if (going.empty()) return;
+        skipped[current] = was_skipped;
+        const std::string name = going;
+        going.clear();
+        scripts->scene_end(name, was_skipped);
+    }
+};
+
+} // namespace
+
+TEST_CASE("6г2: forge.scene.play waits for the scene's end and says whether it was skipped; on_scene hears every end") {
+    PoolScope pool;
+    world::World world(world::WorldDesc{}, std::make_shared<world::EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    SceneBridge bridge;
+    bridge.scripts = &scripts;
+    scripts.set_user(script::kGameBridge, &bridge);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    sim.update(0, view);
+    REQUIRE(scripts.load("intro", R"(
+        local S = {}
+        function S.on_start(self)
+            forge.game.set_var("said", "до " .. tostring(forge.scene.going()))
+            local skipped = forge.scene.play("Вступление")
+            forge.game.set_var("said", "после " .. tostring(skipped))
+            local again = forge.scene.play("Встреча", false, false)
+            forge.game.set_var("said", "после встречи " .. tostring(again))
+            local third = forge.scene.play("Конец", { skip = false })
+            forge.game.set_var("said", "после конца " .. tostring(third))
+        end
+        function S.on_scene(self, name, skipped)
+            forge.game.set_var("said", "кончилась " .. name .. " " .. tostring(skipped))
+        end
+        function S.on_message(self, name)
+            if name == "стоп" then
+                forge.game.set_var("said", "идёт " .. tostring(forge.scene.going()))
+                forge.scene.stop()
+            end
+        end
+        return S
+    )"));
+    REQUIRE(scripts.load("deaf", "local S = {}\nfunction S.on_message(self, name) end\nreturn S"));
+    flecs::entity intro = scene.spawn(scene::Position::at_tile(4, 5));
+    intro.set<script::Script>({"intro"});
+    flecs::entity deaf = scene.spawn(scene::Position::at_tile(8, 5));
+    deaf.set<script::Script>({"deaf"});
+    run(2);
+    CHECK(bridge.said == std::vector<std::string>{"до nil"});
+    CHECK(bridge.plays == std::vector<std::string>{"Вступление пауза пропуск"}); // the node's fields: yes and yes
+    CHECK(scripts.stats().waiting == 1);
+    run(30); // it waits as long as the scene goes, whatever the time
+    CHECK(bridge.said.size() == 1);
+
+    // The scene ends: the next tick everyone listening hears it, then the play waiting on it goes on.
+    bridge.end(false);
+    run(1);
+    CHECK(bridge.said == std::vector<std::string>{"до nil", "кончилась Вступление false", "после false"});
+    CHECK(bridge.plays == std::vector<std::string>{"Вступление пауза пропуск", "Встреча"});
+
+    // The logic stops it as the player skips it: the play waiting says so at once, on_scene at the next tick.
+    scripts.send(0, "стоп");
+    run(1);
+    CHECK(bridge.said == std::vector<std::string>{"до nil", "кончилась Вступление false", "после false", "идёт Встреча",
+                                                  "после встречи true"});
+    CHECK(bridge.plays.back() == "Конец пауза");
+    run(1);
+    CHECK(bridge.said.back() == "кончилась Встреча true");
+    bridge.end(false);
+    run(2);
+    CHECK(bridge.said.back() == "после конца false");
+    CHECK(scripts.stats().waiting == 0);
+    CHECK(scripts.errors().empty());
+
+    // What scene.play cannot do: with the line, as ui.svg_play says it.
+    auto error_of = [&](const char* name, const char* call) {
+        scripts.clear_errors();
+        REQUIRE(scripts.load(name, std::string("local S = {}\nfunction S.on_start(self)\n    ") + call + "\nend\nreturn S"));
+        flecs::entity e = scene.spawn(scene::Position::at_tile(6, 5));
+        e.set<script::Script>({name});
+        run(2);
+        e.destruct();
+        return scripts.errors().empty() ? std::string() : scripts.errors().front().message;
+    };
+    CHECK(error_of("e1", "forge.scene.play(\"Нет\")") == "scene.play: нет сцены «Нет»: отдайте её игре во вкладке «Векторная»");
+    CHECK(error_of("e2", "forge.scene.play(\"\")") == "scene.play: нужно имя сцены");
+    CHECK(error_of("e3", "forge.scene.play(\"А\", { pause = 1 })") == "scene.play: pause: нужно true или false");
+    CHECK(error_of("e4", "forge.scene.play(\"А\", { speed = 2 })") == "scene.play: в таблице только pause и skip, а не «speed»");
+    CHECK(error_of("e5", "forge.scene.play(\"А\", \"да\")") == "scene.play: 2-е значение (мир на паузе): нужно true или false");
+    CHECK(error_of("e6", "forge.scene.play(\"А\", true, 0)") == "scene.play: 3-е значение (можно пропустить): нужно true или false");
+    REQUIRE(bridge.going.empty());
+    CHECK(error_of("e7", "forge.scene.play(\"А\") forge.scene.play(\"Б\", nil, nil)") == "");
+    bridge.going = "А";
+    CHECK(error_of("e8", "forge.scene.play(\"Б\")") == "scene.play: идёт сцена «А»");
+    bridge.end(false);
+    run(2);
+    scripts.set_user(script::kGameBridge, nullptr); // no game around: nothing shows scenes
+    CHECK(error_of("e9", "forge.scene.play(\"А\")") == "scene.play: сцены показывает только игра");
+    CHECK(error_of("e10", "forge.scene.stop() forge.game.set_var(\"x\", tostring(forge.scene.going()))") == "");
+    scripts.set_user(script::kGameBridge, &bridge);
+    std::string err;
+    CHECK_FALSE(scripts.run("forge.scene.play(\"А\")", &err)); // outside a thing: no handler to wait in
+    CHECK(err.find("ждать") != std::string::npos);
+}
+
+TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for it, «Сцена кончилась» hears it; the nodes as the editor shows them") {
+    script::ScriptApi api;
+    script::register_core_api(api);
+    const script::NodeLibrary nodes = logic::node_library(api);
+    const script::NodeDef* play = nodes.find("api.scene.play");
+    REQUIRE(play);
+    CHECK(play->title.get() == "Показать сцену");
+    CHECK(play->category == "Сцены");
+    REQUIRE(play->inputs.size() == 3);
+    CHECK(play->inputs[0].title.get() == "Сцена");
+    CHECK(play->inputs[0].enum_type == "scene"); // a list of the game's scenes
+    CHECK(play->inputs[0].required);
+    CHECK(play->inputs[1].title.get() == "Мир на паузе");
+    CHECK(play->inputs[1].value == "true");
+    CHECK(play->inputs[2].title.get() == "Можно пропустить");
+    CHECK(play->inputs[2].value == "true");
+    REQUIRE(play->outputs.size() == 1);
+    CHECK(play->outputs[0].title.get() == "Пропущена");
+    const script::NodeDef* ended = nodes.find("std.event.scene");
+    REQUIRE(ended);
+    CHECK(ended->kind == script::NodeKind::Event);
+    CHECK(ended->event == "on_scene");
+    CHECK(ended->title.get() == "Сцена кончилась");
+    REQUIRE(ended->outputs.size() == 2);
+    CHECK(ended->outputs[0].title.get() == "Сцена");
+    CHECK(ended->outputs[1].title.get() == "Пропущена");
+    CHECK(logic::thing_event("std.event.scene"));
+    CHECK(nodes.find("api.scene.stop"));
+    CHECK(nodes.find("api.scene.going"));
+
+    PoolScope pool;
+    const fs::path dir = fs::temp_directory_path() / "forge_scene_scheme";
+    fs::remove_all(dir);
+    write_text(dir / "kinds.json", R"({"kinds": [{"id": "thing", "name": "Вещь", "group": "Разное", "icon": "box", "foot": 0.5}]})");
+    write_text(dir / "objects" / "fox.object.json", R"({"id": "fox", "name": "Лиса", "kind": "thing"})");
+    objects::Library library;
+    REQUIRE(library.load(dir / "kinds.json", dir / "objects"));
+    world::World world(world::WorldDesc{}, std::make_shared<world::EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    SceneBridge bridge;
+    bridge.scripts = &scripts;
+    scripts.set_user(script::kGameBridge, &bridge);
+    library.attach(scene);
+    MarkGame game;
+    logic::Runtime runtime(scripts, library, game);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    run(1);
+
+    // При старте → «Показать сцену» «Вступление», мир не на паузе → подсказка «Пропущена»; «Сцена кончилась» для
+    // «Вступление» → её имя, для любой → «любая».
+    script::Graph g;
+    const u32 start = g.add("std.event.start", 0, 0).uid;
+    const u32 show = g.add("api.scene.play", 280, 0).uid;
+    g.find(show)->set_value("name", "Вступление");
+    g.find(show)->set_value("pause", "false");
+    g.link(start, script::kFlowNext, show);
+    const u32 after = g.add("logic.hint", 560, 0).uid;
+    g.link(show, script::kFlowNext, after);
+    g.link(show, "skipped", after, "text");
+    const u32 intro = g.add("std.event.scene", 0, 200).uid;
+    g.find(intro)->set_value("filter", "Вступление");
+    const u32 name = g.add("logic.hint", 280, 200).uid;
+    g.link(intro, script::kFlowNext, name);
+    g.link(intro, "name", name, "text");
+    const u32 any = g.add("std.event.scene", 0, 400).uid;
+    const u32 skipped = g.add("logic.hint", 280, 400).uid;
+    g.link(any, script::kFlowNext, skipped);
+    g.link(any, "skipped", skipped, "text");
+    logic::ThingScheme own;
+    own.thing = "fox";
+    own.graph = g.to_json();
+    logic::Logic logic;
+    logic.add_scheme(own);
+    logic::Verbs verbs;
+    REQUIRE(verbs.parse(R"({"verbs": []})"));
+    std::vector<logic::Problem> problems;
+    REQUIRE(runtime.load(logic, verbs, &problems));
+    for (const logic::Problem& p : problems) INFO(p.text);
+    CHECK(problems.empty());
+    std::vector<logic::Thing> things{logic::hero_thing(), logic::thing_of(library, *library.find("fox"))};
+    const logic::FindThing find = [&](std::string_view id) -> const logic::Thing* {
+        for (const logic::Thing& t : things)
+            if (t.id == id) return &t;
+        return nullptr;
+    };
+    const logic::Compiled c = logic::compile(logic, verbs, find, &nodes);
+    const logic::Module* m = c.find("fox");
+    REQUIRE(m);
+    INFO(m->source);
+    CHECK(m->source.find("forge.scene.play(\"Вступление\", false, true)") != std::string::npos);
+    CHECK(m->source.find("S.on_scene[#S.on_scene + 1] = function(self, e1, e2)") != std::string::npos);
+    std::string error;
+    CHECK_MESSAGE(script::check_syntax(m->source, &error), error);
+    runtime.attach(scene);
+    flecs::entity fox = library.spawn(scene, *library.find("fox"), 10.5, 6);
+    REQUIRE(fox.is_valid());
+    run(2);
+    CHECK(bridge.plays == std::vector<std::string>{"Вступление пропуск"});
+    CHECK(game.hints.empty());
+    bridge.end(true);
+    run(1);
+    CHECK(game.hints == std::vector<std::string>{"Вступление", "true", "true"});
+    CHECK(scripts.errors().empty());
+    fs::remove_all(dir);
 }

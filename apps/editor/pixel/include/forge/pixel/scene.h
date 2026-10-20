@@ -257,6 +257,9 @@ public:
     const Rig& rig() const;
     // An actor's rig as the scene draws it, its ids «ёжик/…»; null for none.
     const Rig* actor_rig(std::string_view id) const;
+    // Part 6г2: where an actor's drawing reaches as the last frame() or pose() left it, in its picture's units (Rig::reach):
+    // x0, y0, x1, y1. False for no such actor or one that draws nothing.
+    bool actor_reach(std::string_view id, f64 out[4]);
     // An actor's character as read; null for none.
     const SceneCharacter* character(std::string_view actor) const;
     // Part 6г1: the code of an actor's character that records the clip of a play, and the values it records it with

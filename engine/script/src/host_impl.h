@@ -13,7 +13,7 @@
 
 namespace forge::script {
 
-enum Handler : u8 { OnStart, OnTick, OnEnter, OnLeave, OnHit, OnMessage, OnAnim, kHandlerCount };
+enum Handler : u8 { OnStart, OnTick, OnEnter, OnLeave, OnHit, OnMessage, OnAnim, OnScene, kHandlerCount };
 extern const char* const kHandlerNames[kHandlerCount];
 
 struct ScriptHost::Impl {
@@ -34,12 +34,14 @@ struct ScriptHost::Impl {
         bool real = false; // counts real seconds, not world time
         std::string module;
         Handler handler = OnTick;
+        u64 scene = 0; // waits for the end of the game's scene with this play's number (forge.scene.play), not time
     };
     struct Message {
         flecs::entity_t to = 0, from = 0;
         std::string name;
         f64 value = 0;
-        bool anim = false; // a mark of `to`'s animation (ScriptHost::anim), for its on_anim
+        bool anim = false;  // a mark of `to`'s animation (ScriptHost::anim), for its on_anim
+        bool scene = false; // a scene ended (ScriptHost::scene_end), for everyone's on_scene; value 1: skipped
     };
 
     ScriptHost& host;
@@ -84,6 +86,7 @@ struct ScriptHost::Impl {
     bool timed_out = false;
     f64 pending_wait = -1;
     bool pending_real = false;
+    u64 pending_scene = 0;
     const sim::TickContext* ctx = nullptr;
     u64 rng = 1;
     bool api_ready = false; // the forge table is built (then the globals freeze)

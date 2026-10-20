@@ -304,6 +304,70 @@ TEST_CASE("screen sound: a button's sound on the interface bus at the game's vol
     CHECK(peak(mixer) == 0);
 }
 
+TEST_CASE("screen sound: a scene's tunes by the calls that began them, the screens' music under them at the game's share") {
+    // Part 6г2 of docs/models/сцены-модель.md.
+    const std::filesystem::path dir = sound_folder();
+    audio::Mixer mixer;
+    audio::ScreenSounds s;
+    s.attach(&mixer, dir);
+    s.music("мелодия игры.wav");
+    f32 volume = 0;
+    double seconds = 0;
+    REQUIRE(mixer.heard(s.music_voice(), volume, seconds));
+    CHECK(volume == 1);
+    // The scene's first music comes in; the screens' goes out under it.
+    s.set_share(0.25f);
+    CHECK(s.share() == 0.25f);
+    REQUIRE(mixer.heard(s.music_voice(), volume, seconds));
+    CHECK(volume == doctest::Approx(0.25));
+    s.tunes({{3, "мелодия меню.wav", 0.5, 0.5f}});
+    CHECK(mixer.voices() == 2);
+    const audio::Voice first = s.tune_voice(3);
+    REQUIRE(first);
+    REQUIRE(mixer.heard(first, volume, seconds));
+    CHECK(volume == doctest::Approx(0.5));
+    CHECK(seconds == doctest::Approx(0.5).epsilon(0.01)); // from how long it has played
+    // The same call louder: the same voice.
+    const auto started = mixer.started();
+    s.tunes({{3, "мелодия меню.wav", 0.6, 1.0f}});
+    CHECK(mixer.started() == started);
+    CHECK(s.tune_voice(3) == first);
+    REQUIRE(mixer.heard(first, volume, seconds));
+    CHECK(volume == 1);
+    // Another call of another music comes in while it goes out; then it is gone.
+    s.tunes({{3, "мелодия меню.wav", 0.7, 0.6f}, {4, "мелодия окна.wav", 0, 0.4f}});
+    CHECK(mixer.voices() == 3);
+    REQUIRE(s.tunes().size() == 2);
+    s.tunes({{4, "мелодия окна.wav", 0.1, 0.8f}});
+    CHECK_FALSE(mixer.playing(first));
+    CHECK_FALSE(s.tune_voice(3));
+    CHECK(mixer.voices() == 2);
+    // The same music by another call: its own voice, from the start.
+    s.tunes({{4, "мелодия окна.wav", 0.2, 0.8f}, {5, "мелодия окна.wav", 0, 0.1f}});
+    CHECK(mixer.voices() == 3);
+    CHECK(s.tune_voice(5) != s.tune_voice(4));
+    // A file that is not there: kept, silent, said once.
+    s.tunes({{6, "нет такой.wav", 0, 1}});
+    s.tunes({{6, "нет такой.wav", 0, 0.5f}});
+    CHECK(s.tunes().size() == 1);
+    CHECK_FALSE(s.tune_voice(6));
+    CHECK(mixer.voices() == 1);
+    CHECK(s.problems() == std::vector<std::string>{"нет такой.wav"});
+    // A screen's music begun under a scene is as quiet as the share; the share back to 1 when it is over.
+    s.music("мелодия меню.wav");
+    REQUIRE(mixer.heard(s.music_voice(), volume, seconds));
+    CHECK(volume == doctest::Approx(0.25));
+    s.tunes({});
+    s.set_share(1);
+    REQUIRE(mixer.heard(s.music_voice(), volume, seconds));
+    CHECK(volume == 1);
+    s.tunes({{7, "мелодия игры.wav", 0, 1}});
+    CHECK(mixer.voices() == 2);
+    s.detach();
+    CHECK(mixer.voices() == 0);
+    CHECK(s.tunes().empty());
+}
+
 TEST_CASE("screen sound: a missing or wrong file is said once and never read again") {
     const std::filesystem::path dir = sound_folder();
     audio::Mixer mixer;

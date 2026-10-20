@@ -8,8 +8,14 @@
 // frames of each kind and of one's own function against frames worked out by hand; the errors of both.
 // Part 6в: the music's calls and what plays at a moment (fades, the same music, silence), the waits for the player and
 // the talks as stops of the scene's own flow, the actors' clips going on while the scene waits; the errors of all three.
+// Part 6г2: the scene's folder as the game reads it, its marks as the tab lists them, where the stage's picture in the
+// game puts each picture and actor against the tab's rig, a run drawing only its own, an actor's frame beyond its canvas,
+// and the scene on a game's screen: its layers, its marks frame by frame, its music, its end, skipped and dropped.
 
 #include "forge/assets/image.h"
+#include "forge/core/file.h"
+#include "forge/core/path.h"
+#include "forge/game/scenes.h"
 #include "forge/pixel/bake.h"
 #include "forge/pixel/doc.h"
 #include "forge/pixel/draw.h"
@@ -21,15 +27,19 @@
 #include "forge/pixel/screen.h"
 #include "forge/pixel/script.h"
 #include "forge/pixel/timeline.h"
+#include "forge/ui/live_svg.h"
 #include "forge/vector/motion_file.h"
 #include "forge/vector/scene_file.h"
+#include "forge/vector/svg.h"
 
+#include <RmlUi/Core.h>
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <span>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
@@ -2623,4 +2633,668 @@ TEST_CASE("Сцена в игре: что игра не нарисует") {
     CHECK(gift.motion.file.not_drawn == std::vector<std::string>{"blur", "mask_by_item"});
     REQUIRE(gift.notes.size() == 1);
     CHECK(gift.notes[0] == "В игре не будет: размытие, маска по актёру или картинке");
+}
+
+namespace {
+
+namespace fs = std::filesystem;
+
+// An empty folder among the system's temporary ones.
+fs::path empty_dir(const char* name) {
+    const fs::path dir = fs::temp_directory_path() / utf8_path(name);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    return dir;
+}
+
+void put_file(const fs::path& path, std::string_view bytes) {
+    REQUIRE(write_file_atomic(path, std::span(reinterpret_cast<const u8*>(bytes.data()), bytes.size())));
+}
+
+SceneGift gift_of(Scene& s, Files& files, std::string_view name = "Вступление") {
+    SceneGift gift;
+    std::string why;
+    const bool ok = build_scene_gift(s, name, "сцены/" + std::string(name) + ".luau", files.scene(), gift, why);
+    INFO(why);
+    REQUIRE(ok);
+    return gift;
+}
+
+// «Отдать игре»: the scene's folder game_dir/scenes/<name>/ with the gift's files.
+void give(const SceneGift& gift, const fs::path& game_dir, std::string_view name) {
+    const fs::path dir = game_dir / "scenes" / utf8_path(std::string(name));
+    for (const SceneGift::File& f : gift.files) put_file(dir / utf8_path(f.path), f.bytes);
+}
+
+bool near(f64 a, f64 b, f64 eps) { return std::abs(a - b) <= eps; }
+
+// A sky, a picture on the floor and two copies of it, a hedgehog going along the road with its shadow attached to it, a
+// beetle and the floor; lines 3–11, the scene's from 14.
+const char* kPlaceStage = R"(    canvas(160, 120)
+    background("#203040")
+    rect("небо", { x = 0, y = 0, w = 160, h = 40, fill = "#80c0ff" })
+    picture("лес", "картинки/лес.png", { x = 8, y = 60 })
+    path("дорога", { d = "M 40 100 L 120 100", fill = "none", stroke = "#ffffff", hidden = true })
+    actor("ёжик", "персонажи/Ёжик", { x = 40, y = 100, pivot = { 32, 60 } })
+    ellipse("тень", { x = 40, y = 104, rx = 12, ry = 3, fill = "#000000" })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
+    rect("пол", { x = 0, y = 110, w = 160, h = 10, fill = "#405060" }))";
+
+// Its marks (a sound and messages of its own, the hedgehog's steps and landings: one at the end of each round), music
+// coming in and going out, the hedgehog's walk lifting its head 6 above its canvas, the beetle's hop with its swap twice,
+// the copies going out for 0.5 s before the rest, the camera coming closer and turning, the sky going to the top at 1.5 s:
+// 3.4 s.
+const char* kPlaceScene = R"(    sound("бум")
+    emit("начало")
+    music("тема", { fade = 1 })
+    actor("ёжик"):loop("walk", { params = { height = 20 } })
+    spawn(actor("жук"):play("hop"))
+    spawn(part("жук/eye").x(3, 1))
+    part("тень"):attach("ёжик")
+    part("лес"):attach("пол")
+    copies("лес", 2, function(i, c) c.x(i * 30, 0.5) end)
+    spawn(part("пол").x(10, 1))
+    spawn(part("ёжик"):along("дорога", 2))
+    camera():to({ x = 10, y = -5, zoom = 1.5, rot = 10 }, 1)
+    part("небо"):to_top()
+    emit("середина")
+    sound("тишина")
+    actor("ёжик"):loop("land")
+    wait(1)
+    music(nil, { fade = 0.5 })
+    actor("жук"):play("hop", { speed = 2 })
+    wait(0.5))";
+
+const vector::MotionPartPose* pose_of(const std::vector<vector::MotionPartPose>& parts, std::string_view id) {
+    for (const vector::MotionPartPose& p : parts)
+        if (p.id == id) return &p;
+    return nullptr;
+}
+
+ui::SvgPose stage_pose(const vector::ScenePose& pose) {
+    ui::SvgPose out;
+    out.picture = "stage.svg";
+    out.parts = pose.stage;
+    out.copies = pose.copies;
+    out.order = pose.order;
+    return out;
+}
+
+bool opaque(const std::vector<u8>& rgba, u32 w, u32 x, u32 y) { return rgba[(static_cast<usize>(y) * w + x) * 4 + 3] > 200; }
+bool clear(const std::vector<u8>& rgba, u32 w, u32 x, u32 y) { return rgba[(static_cast<usize>(y) * w + x) * 4 + 3] == 0; }
+
+} // namespace
+
+TEST_CASE("Сцена в игре: папка сцены читается целиком, ошибка называет файл; сцены игры; звуки по имени") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kGiftScene, kGiftStage);
+    const SceneGift gift = gift_of(s, files);
+    const fs::path game_dir = empty_dir("forge_tests_папка_сцены");
+    give(gift, game_dir, "Вступление");
+    vector::SceneMotion read;
+    std::string why;
+    const bool ok = game::read_scene_folder(game_dir / "scenes" / utf8_path("Вступление"), read, why);
+    INFO(why);
+    REQUIRE(ok);
+    CHECK(read.file == gift.motion.file);
+    CHECK(read.stage == gift.motion.stage);
+    CHECK(read.actors == gift.motion.actors);
+
+    // Each file missing or broken: the error names it (and the actor or picture it is of).
+    struct Broken {
+        const char* file;
+        const char* bytes; // null: not there
+        const char* said;
+    };
+    const Broken broken[] = {
+        {"scene.json", nullptr, "нет «scene.json»"},
+        {"scene.json", "{", "scene.json: "},
+        {"stage.motion.json", nullptr, "нет «stage.motion.json»"},
+        {"stage.motion.json", "{}", "stage.motion.json: "},
+        {"stage.svg", nullptr, "нет «stage.svg»"},
+        {"actors/ёжик.svg", nullptr, "актёр «ёжик»: нет «actors/ёжик.svg»"},
+        {"actors/жук.motion.json", nullptr, "актёр «жук»: нет «actors/жук.motion.json»"},
+        {"actors/жук.motion.json", "{}", "актёр «жук»: «actors/жук.motion.json»: "},
+        {"actors/жук.flat.svg", nullptr, "актёр «жук»: нет «actors/жук.flat.svg»"},
+        {"pictures/лес.png", nullptr, "картинка «лес»: нет «pictures/лес.png»"},
+    };
+    for (const Broken& b : broken) {
+        CAPTURE(b.file);
+        CAPTURE(b.bytes);
+        give(gift, game_dir, "Сломанная");
+        const fs::path dir = game_dir / "scenes" / utf8_path("Сломанная");
+        if (b.bytes) put_file(dir / utf8_path(b.file), b.bytes);
+        else REQUIRE(fs::remove(dir / utf8_path(b.file)));
+        vector::SceneMotion out;
+        CHECK_FALSE(game::read_scene_folder(dir, out, why));
+        INFO(why);
+        CHECK(why.rfind(b.said, 0) == 0);
+    }
+    // A clip of an actor's file that the scene plays and the file has not.
+    give(gift, game_dir, "Сломанная");
+    vector::MotionFile beetle = gift.motion.actors[1];
+    REQUIRE(beetle.clips.size() == 1);
+    beetle.clips[0].name = "jump";
+    put_file(game_dir / "scenes" / utf8_path("Сломанная") / utf8_path("actors/жук.motion.json"), vector::write_motion_file(beetle));
+    vector::SceneMotion out;
+    CHECK_FALSE(game::read_scene_folder(game_dir / "scenes" / utf8_path("Сломанная"), out, why));
+    CHECK(has(why, "hop"));
+
+    // The game's scenes: its folders with a scene.json, by name.
+    std::error_code ec;
+    fs::create_directories(game_dir / "scenes" / utf8_path("Пустая"), ec);
+    put_file(game_dir / "scenes" / utf8_path("заметка.txt"), "не сцена");
+    CHECK(game::scene_names(game_dir) == std::vector<std::string>{"Вступление", "Сломанная"});
+    CHECK(game::scene_names(game_dir / "нет").empty());
+
+    // A sound by name as «Векторная» finds it: the name, else .wav, else .ogg; nothing out of the folder.
+    const fs::path sounds = game_dir / "sounds";
+    for (const char* f : {"бум.ogg", "шаг.wav", "шаг.ogg", "всплеск"}) put_file(sounds / utf8_path(f), "звук");
+    CHECK(game::scene_sound_file(sounds, "бум") == "бум.ogg");
+    CHECK(game::scene_sound_file(sounds, "шаг") == "шаг.wav");
+    CHECK(game::scene_sound_file(sounds, "шаг.ogg") == "шаг.ogg");
+    CHECK(game::scene_sound_file(sounds, "всплеск") == "всплеск");
+    CHECK(game::scene_sound_file(sounds, "тишина").empty());
+    CHECK(game::scene_sound_file(sounds, "").empty());
+    CHECK(game::scene_sound_file(sounds, "../sounds/бум.ogg").empty());
+    CHECK(game::scene_sound_file(sounds, "x\\бум.ogg").empty());
+    CHECK(game::scene_sound_file({}, "бум").empty());
+    fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена в игре: метки по файлам — те же, что у вкладки; в смене рисунка — части рисунка, из которого он меняется") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kPlaceScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    CHECK(s.recording()->length == doctest::Approx(3.4));
+    std::vector<Mark> tab;
+    REQUIRE(s.marks(tab));
+    std::vector<vector::SceneMark> game;
+    std::string why;
+    REQUIRE(vector::scene_marks(m, game, why));
+    REQUIRE(game.size() == tab.size());
+    for (usize i = 0; i < tab.size(); ++i) {
+        CAPTURE(i);
+        CHECK(game[i].name == tab[i].name);
+        CHECK(game[i].sound == (tab[i].kind == Mark::Kind::Sound));
+        CHECK(game[i].actor == tab[i].actor);
+        CHECK(game[i].at == doctest::Approx(tab[i].time));
+    }
+    // By hand: the scene's own before the actors' at one moment, the walk's steps up to the land's loop (not at it), a
+    // landing at the end of each round of it, none past the scene's end.
+    std::vector<std::string> said;
+    for (const vector::SceneMark& mk : game) said.push_back(mk.name + (mk.actor.empty() ? "" : " " + mk.actor));
+    CHECK(said == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "шаг ёжик", "середина", "тишина", "земля ёжик", "земля ёжик",
+                                           "земля ёжик"});
+    const f64 at[] = {0, 0, 0.25, 0.75, 1.25, 1.5, 1.5, 2, 2.5, 3};
+    for (usize i = 0; i < game.size(); ++i) CHECK(game[i].at == doctest::Approx(at[i]));
+    // A loop too short gives too many.
+    vector::SceneMotion fast = m;
+    for (vector::ScenePlay& p : fast.file.plays)
+        if (p.clip == "land") p.speed = 1e5;
+    CHECK_FALSE(vector::scene_marks(fast, game, why));
+    CHECK(why == "актёр «ёжик»: меток клипов больше 100000 — клип по кругу слишком короткий");
+
+    // The beetle's swap to its flat drawing: the parts as they stand in each drawing, the tab's, the scene's move of its
+    // eye over the clip in both.
+    const usize beetle = 1;
+    REQUIRE(m.file.actors[beetle].id == "жук");
+    usize swaps = 0;
+    for (const f64 t : {0.35, 0.4, 0.45, 2.7}) {
+        CAPTURE(t);
+        REQUIRE(s.frame(t));
+        const vector::ScenePose pose = vector::scene_pose(m, t);
+        const vector::SceneActorPose& ap = pose.actors[beetle];
+        REQUIRE(ap.shown.swap);
+        CHECK(ap.shown.from == vector::kMotionMainDrawing);
+        CHECK(ap.shown.drawing == "flat");
+        const Rig* main = s.actor_rig("жук");
+        REQUIRE(main);
+        const Rig* flat = main->drawing("flat");
+        REQUIRE(flat);
+        for (const char* id : {"жук/shell", "жук/eye"}) {
+            CAPTURE(id);
+            const vector::MotionPartPose* from = pose_of(ap.from_parts, id);
+            const vector::MotionPartPose* to = pose_of(ap.parts, id);
+            REQUIRE(from);
+            REQUIRE(to);
+            REQUIRE(from->moves);
+            REQUIRE(to->moves);
+            const Affine tab_from = main->matrix(main->part(id)), tab_to = flat->matrix(flat->part(id));
+            for (const auto& [game_m, tab_m] : {std::pair{from->local, tab_from}, std::pair{to->local, tab_to}}) {
+                CHECK(near(game_m.a, tab_m.a, 1e-6));
+                CHECK(near(game_m.b, tab_m.b, 1e-6));
+                CHECK(near(game_m.c, tab_m.c, 1e-6));
+                CHECK(near(game_m.d, tab_m.d, 1e-6));
+                CHECK(near(game_m.e, tab_m.e, 1e-4));
+                CHECK(near(game_m.f, tab_m.f, 1e-4));
+            }
+        }
+        ++swaps;
+    }
+    CHECK(swaps == 4);
+    // Out of a swap there are none.
+    CHECK(vector::scene_pose(m, 0.1).actors[beetle].from_parts.empty());
+}
+
+TEST_CASE("Сцена в игре: места картинок, копий и актёров в рисунке сцены, камера — как во вкладке; пробег рисует только своё") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kPlaceScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    const std::string& stage_svg = *gift_file(gift, "stage.svg");
+    ui::SvgPlaces places;
+    std::string why;
+    REQUIRE(places.load("/сцена/stage.svg", stage_svg, why));
+    std::vector<std::string> items;
+    for (const vector::ScenePicture& p : m.file.pictures) items.push_back(p.id);
+    for (const vector::SceneActor& a : m.file.actors) items.push_back(a.id);
+    std::vector<f64> moments;
+    for (int k = 0; k <= 68; ++k) moments.push_back(k * 0.05);
+    for (int k = 0; k <= 125; ++k) moments.push_back(k / 37.0);
+    usize copies = 0;
+    for (const f64 t : moments) {
+        CAPTURE(t);
+        REQUIRE(s.frame(t));
+        const vector::ScenePose pose = vector::scene_pose(m, t);
+        usize found = 0;
+        for (const ui::SvgPlace& p : places.place(stage_pose(pose))) {
+            if (p.key.empty() || std::find(items.begin(), items.end(), p.id) == items.end()) continue;
+            CAPTURE(p.key);
+            const i32 part = p.key[0] == 'c' ? s.rig().copy(p.key.substr(1)) : s.rig().part(p.id);
+            REQUIRE(part >= 0);
+            const Affine tab = s.rig().global_matrix(part);
+            // A path the file keeps frame by frame the game mixes between its frames: within a hundredth of a unit.
+            INFO("game ", p.m.a, " ", p.m.b, " ", p.m.c, " ", p.m.d, " ", p.m.e, " ", p.m.f, "; tab ", tab.a, " ", tab.b, " ", tab.c, " ", tab.d, " ", tab.e,
+                 " ", tab.f);
+            CHECK(near(p.m.a, tab.a, 1e-4));
+            CHECK(near(p.m.b, tab.b, 1e-4));
+            CHECK(near(p.m.c, tab.c, 1e-4));
+            CHECK(near(p.m.d, tab.d, 1e-4));
+            CHECK(near(p.m.e, tab.e, 1e-2));
+            CHECK(near(p.m.f, tab.f, 1e-2));
+            CHECK(p.shown);
+            CHECK(p.opacity == 1);
+            copies += p.key[0] == 'c';
+            ++found;
+        }
+        CHECK(found == items.size() + 2); // and the two copies of the picture
+        const vector::MotionMatrix cam = vector::scene_camera_matrix(pose.camera, m.file.width, m.file.height);
+        const Affine tab_cam = s.camera_matrix();
+        CHECK(near(cam.a, tab_cam.a, 1e-6));
+        CHECK(near(cam.b, tab_cam.b, 1e-6));
+        CHECK(near(cam.c, tab_cam.c, 1e-6));
+        CHECK(near(cam.d, tab_cam.d, 1e-6));
+        CHECK(near(cam.e, tab_cam.e, 1e-4));
+        CHECK(near(cam.f, tab_cam.f, 1e-4));
+    }
+    CHECK(copies == 2 * moments.size());
+    // The camera came closer and turned.
+    REQUIRE(s.frame(1.5));
+    CHECK(s.camera_matrix().a == doctest::Approx(1.5 * std::cos(10 * 3.14159265358979 / 180)));
+
+    // A run draws only its own elements of the stage's top level: the sky alone, then the shadow alone where the tab has
+    // it, gone along with the hedgehog it hangs on (hidden in the run, standing where it is).
+    const vector::SvgOutline o = vector::scan_svg(stage_svg);
+    auto key = [&](const char* id) {
+        const i32 e = o.find(id);
+        REQUIRE(e > 0);
+        return "e" + std::to_string(e);
+    };
+    REQUIRE(s.frame(2));
+    const ui::SvgPose stage = stage_pose(vector::scene_pose(m, 2));
+    places.place(stage);
+    const ui::SvgPose sky = places.run_pose(stage, {key("небо")});
+    CHECK(sky.only == std::vector<std::string>{key("небо")});
+    CHECK_FALSE(pose_of(sky.parts, "ёжик"));
+    std::vector<u8> rgba;
+    REQUIRE(ui::render_posed_svg(stage_svg, sky, 160, 120, rgba, why));
+    CHECK(opaque(rgba, 160, 80, 10));
+    CHECK(clear(rgba, 160, 80, 115)); // the floor
+    const ui::SvgPose shadow = places.run_pose(stage, {key("тень")});
+    CHECK(pose_of(shadow.parts, "ёжик")); // what it hangs on
+    REQUIRE(ui::render_posed_svg(stage_svg, shadow, 160, 120, rgba, why));
+    f64 b[4];
+    s.rig().bounds(s.rig().part("тень"), Affine{}, b);
+    CHECK(b[0] > 50); // gone with the hedgehog from 40
+    CHECK(opaque(rgba, 160, static_cast<u32>((b[0] + b[2]) / 2), static_cast<u32>((b[1] + b[3]) / 2)));
+    CHECK(clear(rgba, 160, 40, 104)); // where it was at rest
+    CHECK(clear(rgba, 160, 80, 10));  // the sky
+    CHECK(clear(rgba, 160, 80, 115)); // the floor
+}
+
+TEST_CASE("Сцена в игре: рамка актёра — куда дотягивается его рисунок в сцене, целыми наружу") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kPlaceScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneFile& f = gift.motion.file;
+    // The walk lifts the hedgehog's head (r 14 round 32, 28) by 20: to -6; the beetle's hop stays inside its canvas.
+    CHECK(f.actor("ёжик")->reach == vector::SceneBox{0, -6, 64, 70});
+    CHECK(f.actor("жук")->reach == vector::SceneBox{});
+    CHECK(has(*gift_file(gift, "scene.json"), "\"size\": [64, 64], \"reach\": [0, -6, 64, 70]}"));
+    CHECK_FALSE(has(*gift_file(gift, "scene.json"), "\"size\": [48, 32], \"reach\""));
+    REQUIRE(s.frame(0.25));
+    f64 r[4];
+    REQUIRE(s.actor_reach("ёжик", r));
+    CHECK(r[0] == doctest::Approx(18));
+    CHECK(r[1] == doctest::Approx(-6));
+    CHECK(r[2] == doctest::Approx(46));
+    CHECK(r[3] == doctest::Approx(58));
+    CHECK_FALSE(s.actor_reach("лиса", r));
+    // The game draws it in that box: the head above its canvas is there.
+    const vector::ScenePose pose = vector::scene_pose(gift.motion, 0.25);
+    ui::SvgPose hog;
+    hog.picture = "ёжик.svg";
+    hog.parts = pose.actors[0].parts;
+    std::vector<u8> own, wide;
+    std::string why;
+    REQUIRE(ui::render_posed_svg(*gift_file(gift, "actors/ёжик.svg"), hog, 64, 64, own, why));
+    hog.view_x = 0, hog.view_y = -6, hog.view_w = 64, hog.view_h = 70;
+    REQUIRE(ui::render_posed_svg(*gift_file(gift, "actors/ёжик.svg"), hog, 64, 70, wide, why));
+    CHECK(opaque(wide, 64, 32, 1)); // y -5 of the picture
+    CHECK(clear(wide, 64, 32, 69)); // y 63: below the feet
+    for (const u32 y : {0u, 10u, 30u, 52u}) {
+        CAPTURE(y);
+        int worst = 0;
+        for (usize i = 0; i < 64 * 4; ++i)
+            worst = std::max(worst, std::abs(static_cast<int>(own[static_cast<usize>(y) * 64 * 4 + i]) - static_cast<int>(wide[static_cast<usize>(y + 6) * 64 * 4 + i])));
+        CHECK(worst <= 2);
+    }
+    // A broken box does not read.
+    std::string text = *gift_file(gift, "scene.json");
+    text.replace(text.find("[0, -6, 64, 70]"), 15, "[0, -6, 0, 70]");
+    vector::SceneFile back;
+    CHECK_FALSE(vector::read_scene_file(text, back, why));
+    CHECK(why == "actors[0]: reach: нужна рамка рисунка в сцене [x, y, w, h], w и h больше 0");
+}
+
+namespace {
+
+// Files from disk by their UTF-8 names, read whole (Cyrillic paths on Windows too).
+struct SceneFilesOnDisk final : Rml::FileInterface {
+    struct Opened {
+        std::vector<u8> bytes;
+        usize at = 0;
+    };
+    Rml::FileHandle Open(const Rml::String& path) override {
+        auto* f = new Opened;
+        if (!read_file(utf8_path(path), f->bytes)) {
+            delete f;
+            return 0;
+        }
+        return reinterpret_cast<Rml::FileHandle>(f);
+    }
+    void Close(Rml::FileHandle file) override { delete reinterpret_cast<Opened*>(file); }
+    size_t Read(void* buffer, size_t size, Rml::FileHandle file) override {
+        auto* f = reinterpret_cast<Opened*>(file);
+        const usize n = std::min(size, f->bytes.size() - f->at);
+        if (n) std::memcpy(buffer, f->bytes.data() + f->at, n);
+        f->at += n;
+        return n;
+    }
+    bool Seek(Rml::FileHandle file, long offset, int origin) override {
+        auto* f = reinterpret_cast<Opened*>(file);
+        const long base = origin == SEEK_SET ? 0 : origin == SEEK_CUR ? static_cast<long>(f->at) : static_cast<long>(f->bytes.size());
+        if (base + offset < 0 || base + offset > static_cast<long>(f->bytes.size())) return false;
+        f->at = static_cast<usize>(base + offset);
+        return true;
+    }
+    size_t Tell(Rml::FileHandle file) override { return reinterpret_cast<Opened*>(file)->at; }
+};
+
+// A renderer that draws nothing: the scene's document is only laid out and posed.
+struct SceneNoRender final : Rml::RenderInterface {
+    Rml::CompiledGeometryHandle CompileGeometry(Rml::Span<const Rml::Vertex>, Rml::Span<const int>) override { return 1; }
+    void RenderGeometry(Rml::CompiledGeometryHandle, Rml::Vector2f, Rml::TextureHandle) override {}
+    void ReleaseGeometry(Rml::CompiledGeometryHandle) override {}
+    Rml::TextureHandle LoadTexture(Rml::Vector2i& size, const Rml::String&) override {
+        size = {40, 30};
+        return 1;
+    }
+    Rml::TextureHandle GenerateTexture(Rml::Span<const Rml::byte>, Rml::Vector2i) override { return 1; }
+    void ReleaseTexture(Rml::TextureHandle) override {}
+    void EnableScissorRegion(bool) override {}
+    void SetScissorRegion(Rml::Rectanglei) override {}
+};
+
+} // namespace
+
+TEST_CASE("Сцена в игре: на экране игры — слои, метки по кадрам, музыка, конец, пропуск и сброс") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kPlaceScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    std::vector<Mark> marks;
+    REQUIRE(s.marks(marks));
+    const fs::path game_dir = empty_dir("forge_tests_сцена_на_экране");
+    give(gift, game_dir, "Вступление");
+    put_file(game_dir / "sounds" / utf8_path("бум.ogg"), "звук");
+    put_file(game_dir / "sounds" / utf8_path("тема.ogg"), "музыка");
+    const vector::SvgOutline o = vector::scan_svg(*gift_file(gift, "stage.svg"));
+    auto key = [&](const char* id) {
+        const i32 e = o.find(id);
+        REQUIRE(e > 0);
+        return "e" + std::to_string(e);
+    };
+
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("scene", {400, 240});
+    REQUIRE(context);
+    {
+        game::GameScene scene;
+        std::vector<std::string> heard;
+        std::vector<f64> heard_at;
+        scene.on_message = [&](const std::string& name) {
+            heard.push_back("сообщение " + name);
+            heard_at.push_back(scene.time());
+        };
+        scene.on_sound = [&](const std::string& file) {
+            heard.push_back("звук " + file);
+            heard_at.push_back(scene.time());
+        };
+        std::vector<game::SceneTune> tunes;
+        f64 share = 1;
+        scene.on_music = [&](const std::vector<game::SceneTune>& t, f64 g) {
+            tunes = t;
+            share = g;
+        };
+        struct End {
+            std::string name;
+            bool skipped = false;
+            u64 serial = 0;
+        };
+        std::vector<End> ends;
+        scene.on_end = [&](const std::string& name, bool skipped, u64 serial) { ends.push_back({name, skipped, serial}); };
+
+        std::string why;
+        for (const std::string bad : {"Нет", "", "..", "сцены/Вступление", "C:Вступление"}) {
+            CAPTURE(bad);
+            CHECK_FALSE(scene.play(context, game_dir, bad, {}, why));
+            CHECK(why == "нет сцены «" + bad + "»: отдайте её игре во вкладке «Векторная»");
+        }
+        give(gift, game_dir, "Сломанная");
+        std::error_code ec;
+        fs::remove(game_dir / "scenes" / utf8_path("Сломанная") / "stage.svg", ec);
+        CHECK_FALSE(scene.play(context, game_dir, "Сломанная", {}, why));
+        CHECK(why == "сцена «Сломанная»: нет «stage.svg»");
+        CHECK_FALSE(scene.going());
+        CHECK(scene.document() == nullptr);
+
+        // The expected heard, in order: the tab's marks, sounds of the game's sounds by name, none missing.
+        std::vector<std::string> want;
+        std::vector<f64> want_at;
+        for (const Mark& mk : marks) {
+            if (mk.kind == Mark::Kind::Sound && mk.name != "бум") continue;
+            want.push_back(mk.kind == Mark::Kind::Sound ? "звук " + mk.name + ".ogg" : "сообщение " + mk.name);
+            want_at.push_back(mk.time);
+        }
+        REQUIRE(want.size() == 9);
+
+        // To the end at a frame rate: what it says comes in the frame its moment passes.
+        auto play_through = [&](f64 dt, u64 serial) {
+            CAPTURE(dt);
+            heard.clear();
+            heard_at.clear();
+            REQUIRE(scene.play(context, game_dir, "Вступление", {true, false}, why));
+            CHECK(scene.serial() == serial);
+            CHECK(scene.going());
+            CHECK_FALSE(scene.over(serial));
+            CHECK(scene.name() == "Вступление");
+            CHECK_FALSE(scene.how().skip);
+            CHECK_FALSE(scene.play(context, game_dir, "Вступление", {}, why));
+            CHECK(why == "идёт сцена «Вступление»");
+            scene.update(0.5, 400, 240); // the first frame shows its moment 0
+            CHECK(scene.time() == 0);
+            u64 still = 0;
+            for (int frame = 1; scene.going() && frame < 1000; ++frame) {
+                scene.update(dt, 400, 240);
+                const f64 t = scene.time();
+                if (!scene.going()) break;
+                // Its music now and the game's under it.
+                std::vector<game::SceneTune> now;
+                for (const vector::SceneMusicVoice& v : vector::scene_music_at(m.file, t)) now.push_back({v.call, v.name + ".ogg", v.since, v.volume});
+                CHECK(tunes == now);
+                CHECK(share == doctest::Approx(std::clamp(1 - t, 0.0, 1.0)));
+                // Past 2.5 s nothing of the stage moves: its runs are not posed again.
+                if (t > 2.55 && !still) still = scene.run_poses();
+                if (still) CHECK(scene.run_poses() == still);
+            }
+            CHECK_FALSE(scene.going());
+            CHECK(scene.over(serial));
+            CHECK_FALSE(scene.skipped(serial));
+            CHECK(scene.document() == nullptr);
+            REQUIRE(!ends.empty());
+            CHECK(ends.back().name == "Вступление");
+            CHECK_FALSE(ends.back().skipped);
+            CHECK(ends.back().serial == serial);
+            CHECK(heard == want);
+            REQUIRE(heard_at.size() == want_at.size());
+            for (usize i = 0; i < want_at.size(); ++i) {
+                CAPTURE(heard[i]);
+                CHECK(heard_at[i] >= want_at[i] - 1e-9);
+                CHECK(heard_at[i] < want_at[i] + dt + 1e-9);
+            }
+            CHECK(still > 0);
+            // Its music goes out over a second while the game's comes back.
+            CHECK(share == 0);
+            for (int k = 1; k <= 60; ++k) {
+                scene.update(1.0 / 60, 400, 240);
+                CHECK(share == doctest::Approx(k / 60.0));
+            }
+            scene.update(1.0 / 60, 400, 240);
+            CHECK(tunes.empty());
+            CHECK(share == 1);
+        };
+        play_through(1.0 / 60, 1);
+        play_through(1.0 / 37, 2);
+        const std::vector<std::string> problems = scene.problems();
+        CHECK(std::count(problems.begin(), problems.end(), "сцена «Вступление»: звука «тишина» нет в звуках игры") == 1);
+
+        // Its document: the camera's frame fitted to the screen, the background's colour all round, the layers in its
+        // order; an actor in its frame, posed by its clip.
+        REQUIRE(scene.play(context, game_dir, "Вступление", {true, true}, why));
+        CHECK(scene.serial() == 3);
+        scene.update(0, 400, 240);
+        Rml::ElementDocument* doc = scene.document();
+        REQUIRE(doc);
+        context->Update();
+        const Rml::Property* bg = doc->GetLocalProperty("background-color");
+        REQUIRE(bg);
+        CHECK(bg->Get<Rml::Colourb>() == Rml::Colourb(32, 48, 64, 255));
+        Rml::Element* frame = doc->GetElementById("frame");
+        Rml::Element* camera = doc->GetElementById("camera");
+        REQUIRE(frame);
+        REQUIRE(camera);
+        CHECK(frame->GetAbsoluteLeft() == doctest::Approx(40));
+        CHECK(frame->GetAbsoluteTop() == doctest::Approx(0));
+        CHECK(frame->GetBox().GetSize().x == doctest::Approx(320));
+        CHECK(frame->GetBox().GetSize().y == doctest::Approx(240));
+        const std::vector<std::string> first = {"run " + key("небо"),
+                                                "picture лес " + key("лес"),
+                                                "picture лес cлес[1]",
+                                                "picture лес cлес[2]",
+                                                "run " + key("дорога"),
+                                                "actor ёжик",
+                                                "run " + key("тень"),
+                                                "actor жук",
+                                                "run " + key("пол")};
+        CHECK(scene.layers() == first);
+        CHECK(camera->GetNumChildren() == static_cast<int>(first.size()));
+        for (int k = 0; k < 15; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK(scene.time() == doctest::Approx(0.25));
+        Rml::Element* hog = camera->GetChild(5);
+        REQUIRE(hog);
+        CHECK(hog->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg");
+        CHECK(hog->GetLocalProperty("width")->Get<float>() == doctest::Approx(64));
+        CHECK(hog->GetLocalProperty("height")->Get<float>() == doctest::Approx(70));
+        const ui::SvgPose* posed = ui::svg_posed(hog);
+        REQUIRE(posed);
+        CHECK(posed->picture == "ёжик.svg");
+        CHECK(posed->view_y == -6);
+        CHECK(posed->view_h == 70);
+        CHECK(game_value_of(posed->parts, "ёжик/head", vector::MotionProp::Y).v == doctest::Approx(-20));
+        const ui::SvgPose* sky = ui::svg_posed(camera->GetChild(0));
+        REQUIRE(sky);
+        CHECK(sky->only == std::vector<std::string>{key("небо")});
+        context->Update();
+        context->Render();
+        // The sky to the top at 1.5 s: the floor's run and the sky's are one.
+        for (int k = 0; k < 80; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK(scene.time() > 1.5);
+        CHECK(scene.layers() == std::vector<std::string>{"picture лес " + key("лес"), "picture лес cлес[1]", "picture лес cлес[2]",
+                                                         "run " + key("дорога"), "actor ёжик", "run " + key("тень"), "actor жук",
+                                                         "run " + key("пол") + " " + key("небо")});
+        context->Update();
+        context->Render();
+
+        // Skipped: what it had left to say, in order, its sounds not; it ends, skipped.
+        heard.clear();
+        scene.skip();
+        CHECK(heard == std::vector<std::string>{"сообщение земля", "сообщение земля", "сообщение земля"});
+        CHECK_FALSE(scene.going());
+        CHECK(scene.over(3));
+        CHECK(scene.skipped(3));
+        CHECK(ends.back().serial == 3);
+        CHECK(ends.back().skipped);
+        CHECK(scene.document() == nullptr);
+        CHECK(scene.layers().empty());
+
+        // Dropped: nothing said, no end; its music stops and the game's is back at once.
+        REQUIRE(scene.play(context, game_dir, "Вступление", {}, why));
+        for (int k = 0; k < 40; ++k) scene.update(1.0 / 60, 400, 240);
+        CHECK_FALSE(tunes.empty());
+        CHECK(share < 1);
+        heard.clear();
+        const usize ended = ends.size();
+        scene.drop();
+        CHECK(heard.empty());
+        CHECK(ends.size() == ended);
+        CHECK(scene.over(4));
+        CHECK_FALSE(scene.skipped(4));
+        CHECK(tunes.empty());
+        CHECK(share == 1);
+        CHECK(scene.document() == nullptr);
+        scene.update(1.0 / 60, 400, 240);
+        CHECK(tunes.empty());
+    }
+    Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
 }
