@@ -553,6 +553,8 @@ private:
         if (project_has_edits && project_edits_error.empty() && !project_edits.ms_screen.empty()) build_motion_edits(s);
         // A scene of «Векторная» the logic shows at the start: looked at from the game's first frame.
         if (project_has_edits && project_edits_error.empty() && !project_edits.sg_scene.empty()) build_scene_edits(s);
+        // Part 6г3: one that waits for the player.
+        if (project_has_edits && project_edits_error.empty() && !project_edits.sw_scene.empty()) build_scene_waits(s);
         steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
             if (f < 2) return false;
             std::error_code ec;
@@ -9124,8 +9126,10 @@ private:
     // into the game's screen, the bars round it the scene's background within 1; where the tab's frame is solid (a
     // pixel and its eight neighbours one colour, wholly covered or wholly clear) the game's within 4 of it, the
     // background where it is clear. Empty when they agree; why not, and the game's frame kept beside the tab's, when
-    // not. `said`: what was compared.
-    std::string scene_frame_differs(Shell& s, const assets::CookedTexture& ref, const std::filesystem::path& keep, std::string& said) {
+    // not. `said`: what was compared. `skip`: a box of the game's frame not looked at (x0, y0, x1, y1; part 6г3: the hint
+    // «E дальше» over a scene waiting for the player).
+    std::string scene_frame_differs(Shell& s, const assets::CookedTexture& ref, const std::filesystem::path& keep, std::string& said,
+                                    const std::array<int, 4>& skip = {}) {
         const ProjectEdits& e = project_edits;
         std::vector<u8> px;
         u32 W = 0, H = 0;
@@ -9142,11 +9146,13 @@ private:
         auto tab = [&](int x, int y, int c) {
             return int(ref.rgba8[(static_cast<usize>(y) * static_cast<usize>(fw) + static_cast<usize>(x)) * 4 + static_cast<usize>(c)]);
         };
+        auto skipped = [&](int x, int y) { return x >= skip[0] && x < skip[2] && y >= skip[1] && y < skip[3]; };
         std::string why;
-        int bars = 0, bars_off = 0;
+        int bars = 0, bars_off = 0, unseen = 0;
         for (int y = 0; y < static_cast<int>(H); ++y)
             for (int x = 0; x < static_cast<int>(W); ++x) {
                 if (x >= ox && x < ox + fw && y >= oy && y < oy + fh) continue;
+                if (skipped(x, y)) continue;
                 ++bars;
                 for (int c = 0; c < 3; ++c)
                     if (std::abs(game(x, y, c) - bg[c]) > 1) {
@@ -9166,6 +9172,10 @@ private:
                     for (int di = -1; di <= 1 && one; ++di)
                         for (int c = 0; c < 4 && one; ++c) one = std::abs(tab(i + di, j + dj, c) - tab(i, j, c)) <= 1;
                 if (!one) continue;
+                if (skipped(ox + i, oy + j)) {
+                    ++unseen;
+                    continue;
+                }
                 ++solid;
                 int d = 0;
                 for (int c = 0; c < 3; ++c) d = std::max(d, std::abs(game(ox + i, oy + j, c) - (a == 0 ? bg[c] : tab(i, j, c))));
@@ -9176,7 +9186,7 @@ private:
                           (a == 0 ? "фоне " + rgb_text({bg[0], bg[1], bg[2]}) : rgb_text({tab(i, j, 0), tab(i, j, 1), tab(i, j, 2)})) + " у вкладки";
             }
         said = std::to_string(solid) + " сплошных пикселей из " + std::to_string(fw * fh) + ", расхождение до " + std::to_string(worst) + ", " +
-               std::to_string(bars) + " пикселей полос";
+               std::to_string(bars) + " пикселей полос" + (unseen ? ", " + std::to_string(unseen) + " сплошных под подсказкой не сравнены" : "");
         if (bars_off == 0 && off == 0 && solid >= fw * fh / 2) return {};
         if (why.empty()) why = "сплошных пикселей только " + std::to_string(solid);
         std::vector<u8> png;
@@ -9566,6 +9576,598 @@ private:
                 return true;
             }
             return false;
+        }});
+    }
+
+    // The box of the hint over a scene waiting for the player (the words of #scene-wait, in the game's frame of W × H)
+    // with their shadow; {} when it is not shown.
+    static std::array<int, 4> wait_hint_box(Shell& s, u32 W, u32 H) {
+        Rml::Element* h = s.find_element("scene-wait");
+        if (!h || !h->IsVisible(true) || h->GetNumChildren() == 0) return {};
+        const Rml::Vector2i size = s.context()->GetDimensions();
+        const f32 kx = static_cast<f32>(W) / static_cast<f32>(std::max(size.x, 1)), ky = static_cast<f32>(H) / static_cast<f32>(std::max(size.y, 1));
+        f32 x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+        for (int i = 0; i < h->GetNumChildren(); ++i) {
+            Rml::Element* c = h->GetChild(i);
+            const Rml::Vector2f o = c->GetAbsoluteOffset(Rml::BoxArea::Border), d = c->GetBox().GetSize(Rml::BoxArea::Border);
+            x0 = std::min(x0, o.x);
+            y0 = std::min(y0, o.y);
+            x1 = std::max(x1, o.x + d.x);
+            y1 = std::max(y1, o.y + d.y);
+        }
+        // Its shadow falls a pixel under the words; a few more for the edges of their glyphs.
+        return {static_cast<int>(std::floor(x0 * kx)) - 4, static_cast<int>(std::floor(y0 * ky)) - 4, static_cast<int>(std::ceil(x1 * kx)) + 4,
+                static_cast<int>(std::ceil(y1 * ky)) + 6};
+    }
+    // What the hint over a waiting scene says, its two parts ("E" and "дальше"); empty when it is not shown.
+    static std::vector<std::string> wait_hint(Shell& s) {
+        std::vector<std::string> out;
+        Rml::Element* h = s.find_element("scene-wait");
+        if (h && h->IsVisible(true))
+            for (int i = 0; i < h->GetNumChildren(); ++i) out.push_back(text_of(h->GetChild(i)));
+        return out;
+    }
+    // The left button down and up at the middle of the screen, the mouse moved there first; whether the shell kept the
+    // press from the world.
+    static bool click_middle(Shell& s) {
+        const Rml::Vector2i size = s.context()->GetDimensions();
+        SDL_Event ev{};
+        ev.type = SDL_EVENT_MOUSE_MOTION;
+        ev.motion.x = size.x * 0.5f;
+        ev.motion.y = size.y * 0.5f;
+        s.handle_event(ev);
+        bool kept = false;
+        for (const SDL_EventType type : {SDL_EVENT_MOUSE_BUTTON_DOWN, SDL_EVENT_MOUSE_BUTTON_UP}) {
+            ev = {};
+            ev.type = type;
+            ev.button.button = SDL_BUTTON_LEFT;
+            ev.button.down = type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+            ev.button.x = size.x * 0.5f;
+            ev.button.y = size.y * 0.5f;
+            const bool k = s.handle_event(ev);
+            if (type == SDL_EVENT_MOUSE_BUTTON_DOWN) kept = k;
+        }
+        return kept;
+    }
+
+    // A scene of «Векторная» that waits for the player (--edits sw_*, the editor's self-test pixel-scene-f; part 6г3 of
+    // docs/models/сцены-модель.md). The scheme of sg_thing shows it at the start, the world standing. At sw_at s its time
+    // stands at the wait for «Поговорить»: «E дальше» under it, its actors' clips and its music going on by the time it
+    // lived, the frames having waited sw_frames the editor's of the files; other keys and a click do nothing; E (at its
+    // first hold) moves it on, the next frame says «ответ», and it waits for any key: «Любая клавиша дальше». Esc's pause
+    // menu stands it all, Esc again lets it go on; a click (at its second hold) moves it on; the talk «Встреча» opens over
+    // it with no hint, the clips going on; the space (at its third hold) ends the talk and the scene goes on to its end.
+    // What it said by the time it lived as sw_heard has it, each in the frame its moment came; «Сцена кончилась» not
+    // skipped. «Сцена», waiting for «Нырок» the game has not: any key moves it on, its line said. Without «Мир на паузе»
+    // the hero walks while it waits; the space it was moved on by is not «Прыжок» until let go, then it is. A new game:
+    // skipped at a wait from the pause menu, «ответ» and the rest of its messages said. The time of a frame in the log.
+    void build_scene_waits(Shell& s) {
+        struct Heard {
+            f64 at = 0;
+            std::string what; // "message ответ", "sound шаг.wav"
+        };
+        struct Seen {
+            vector::SceneMotion scene;
+            std::vector<assets::CookedTexture> refs;
+            std::vector<Heard> want, heard;
+            u64 serial = 0, last_ns = 0;
+            u32 at = 0, stage = 0; // the frame of the last thing done, and how far the step has come
+            usize next_frame = 0;
+            f64 world_t = 0, hero_x = 0, hero_y = 0, stood_t = 0, ends = 0;
+            std::vector<f64> stood, frame_ms;
+            std::map<u32, f64> tune_since;
+            usize slots = 0;
+            u32 f5 = 0; // the frame F5 was pressed at a wait
+            bool others = false, released = false, music_off = false, skip_ms = false, talked = false, hinted[2] = {}, shell_keys = false;
+        };
+        auto st = std::make_shared<Seen>();
+        for (const std::string& line : project_edits.sw_heard) {
+            std::istringstream in(line);
+            Heard w;
+            std::string kind, name;
+            in >> w.at >> kind;
+            std::getline(in >> std::ws, name);
+            w.what = kind + " " + name;
+            st->want.push_back(w);
+        }
+        auto var = [&s](const std::string& name) { return s.vars().get(name).number(); };
+        auto heard_differs = [](const std::vector<Heard>& got, const std::vector<Heard>& want, bool timed) -> std::string {
+            for (usize i = 0; i < std::max(got.size(), want.size()); ++i) {
+                if (i >= got.size()) return "не сказано «" + want[i].what + "» (" + std::to_string(want[i].at) + " с прожитого)";
+                if (i >= want.size()) return "лишнее «" + got[i].what + "» в " + std::to_string(got[i].at) + " с прожитого";
+                if (got[i].what != want[i].what) return "«" + got[i].what + "» при «" + want[i].what + "» у вкладки";
+                if (timed && (got[i].at < want[i].at - 1e-6 || got[i].at > want[i].at + 1.0 / 60 + 1e-6))
+                    return "«" + got[i].what + "» в " + std::to_string(got[i].at) + " с прожитого при " + std::to_string(want[i].at) + " с";
+            }
+            return {};
+        };
+        // The scene's music where it is (its waits counted) as the game plays it, the game's own going out over the first
+        // call's fade by the time it lived.
+        auto music_differs = [this, &s, st]() -> std::string {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            audio::ScreenSounds& snd = g_.sounds().screens();
+            const std::vector<f64> held = sc.held();
+            std::vector<audio::ScreenSounds::Tune> want;
+            for (const vector::SceneMusicVoice& v : vector::scene_music_at(st->scene.file, sc.time(), held, sc.waiting_index()))
+                want.push_back({v.call, game::scene_sound_file(snd.folder(), v.name), st->tune_since.try_emplace(v.call, v.since).first->second,
+                                static_cast<f32>(v.volume)});
+            const std::string where = std::to_string(sc.lived()) + " с прожитого";
+            if (want.empty() || want[0].name != e.sg_music) return "у вкладки в " + where + " нет музыки «" + e.sg_music + "»";
+            if (snd.tunes() != want) return "в " + where + " играет " + std::to_string(snd.tunes().size()) + " мелодий, не те, что у вкладки";
+            for (const audio::ScreenSounds::Tune& tune : want)
+                if (!g_.sounds().mixer().playing(snd.tune_voice(tune.call))) return "«" + tune.name + "» не звучит";
+            const f32 game_share = static_cast<f32>(std::clamp(1 - sc.lived() / e.sg_fade, 0.0, 1.0));
+            if (std::fabs(snd.share() - game_share) > 1e-6f)
+                return "музыка игры в " + where + " — " + std::to_string(snd.share()) + " при " + std::to_string(game_share);
+            return {};
+        };
+        auto at_hold = [](f64 held, f64 want) { return std::fabs(held - want) < 1e-6; };
+        steps_.push_back({"сцена ждёт игрока при старте игры", 500, [&s, this, st, var, heard_differs, music_differs, at_hold](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                if (!check_ok(e.sg_canvas.size() == 2 && e.sg_background.size() == 3 && e.sw_frames.size() == e.sw_frame_files.size() &&
+                                  !e.sw_frames.empty() && e.sw_holds.size() == 3 && e.sg_fade > 0 && !e.sg_thing.empty() && !e.sw_other.empty() &&
+                                  !e.sw_other_line.empty() && !e.sw_key.empty() && e.sw_at > 0 && e.sw_length > e.sw_at && !st->want.empty(),
+                              "правки сцены с ожиданиями полны"))
+                    return true;
+                std::string why;
+                check(game::read_scene_folder(s.game_dir() / "scenes" / utf8_path(e.sw_scene), st->scene, why), "папка сцены читается: " + why);
+                const std::vector<vector::SceneStop>& stops = st->scene.file.stops;
+                check(std::fabs(st->scene.file.length - e.sw_length) < 1e-9 && stops.size() == 3 && !stops[0].talk && stops[0].name == "Поговорить" &&
+                          !stops[1].talk && stops[1].name.empty() && stops[2].talk && stops[2].name == "Встреча" && stops[0].at == e.sw_at &&
+                          stops[1].at == e.sw_at && stops[2].at == e.sw_at,
+                      "в папке сцены её длина и три ожидания, как у вкладки");
+                for (const std::string& file : e.sw_frame_files) {
+                    std::vector<u8> bytes;
+                    assets::CookedTexture img;
+                    check(read_file(utf8_path(file), bytes) && assets::decode_image(bytes, img), "кадр вкладки читается: " + file);
+                    st->refs.push_back(std::move(img));
+                }
+                // What the scene says, by the time it lived, on its way to the logic and to the sounds.
+                sc.on_message = [st, &sc, to = sc.on_message](const std::string& m) {
+                    st->heard.push_back({sc.lived(), "message " + m});
+                    if (to) to(m);
+                };
+                sc.on_sound = [st, &sc, to = sc.on_sound](const std::string& file) {
+                    st->heard.push_back({sc.lived(), "sound " + file});
+                    if (to) to(file);
+                };
+                return false;
+            }
+            if (st->stage == 0) {
+                if (!sc.going()) {
+                    check(f < 30, "сцена «" + e.sw_scene + "» не началась при старте");
+                    return f >= 30;
+                }
+                st->stage = 1;
+                st->serial = sc.serial();
+                st->world_t = g_.script_time();
+                st->hero_x = g_.hero_x();
+                st->hero_y = g_.hero_y();
+                check(sc.name() == e.sw_scene && sc.how().pause && sc.how().skip, "идёт «" + sc.name() + "», мир на паузе, пропускается");
+                check(sc.time() == 0 && sc.waiting() == nullptr && sc.lived() == 0, "первый кадр сцены — её начало");
+            }
+            const std::vector<f64> held = sc.held();
+            if (sc.going()) {
+                const u64 now = time_now_ns();
+                if (st->last_ns && !st->skip_ms && s.screen() == Screen::Playing) st->frame_ms.push_back(static_cast<f64>(now - st->last_ns) * 1e-6);
+                st->skip_ms = false;
+                st->last_ns = now;
+                check(g_.script_time() == st->world_t && g_.hero_x() == st->hero_x && g_.hero_y() == st->hero_y && !s.world_hears(),
+                      "мир стоит, пока сцена идёт и ждёт" + hero_at());
+                check(held.size() == 3, "три ожидания у сцены в игре");
+                if (std::string why = music_differs(); !why.empty() && !st->music_off) {
+                    st->music_off = true;
+                    check(false, "музыка сцены: " + why);
+                }
+                // Its time comes to the first wait at its moment and stands there.
+                if (sc.waiting_index() < 0 && st->stage <= 1) check(sc.time() <= e.sw_at, "время сцены не прошло ожидание: " + std::to_string(sc.time()));
+            }
+            if (sc.going() && held.size() != 3) return true;
+            if (!sc.going() && st->stage < 6) {
+                check(false, "сцена кончилась раньше времени, у этапа " + std::to_string(st->stage));
+                return true;
+            }
+            switch (st->stage) {
+            case 1: { // Its time going to the first wait.
+                if (sc.waiting_index() < 0) return false;
+                check(sc.waiting_index() == 0 && sc.time() == e.sw_at, "ждёт «Поговорить» в " + std::to_string(sc.time()) + " с");
+                st->stage = 2;
+                return false;
+            }
+            case 2: { // At the wait for «Поговорить»: the hint, the frames, other keys nothing, E on.
+                check(sc.waiting_index() == 0 && sc.time() == e.sw_at, "стоит у первого ожидания: " + std::to_string(sc.waiting_index()));
+                if (!st->hinted[0] && held[0] >= 0.1 - 1e-9) {
+                    st->hinted[0] = true;
+                    const std::vector<std::string> hint = wait_hint(s);
+                    check(hint == std::vector<std::string>{e.sw_key, "дальше"},
+                          "под сценой «" + e.sw_key + " дальше»: " + (hint.empty() ? std::string("нет подсказки") : hint[0] + " " + hint.back()));
+                }
+                if (st->next_frame < e.sw_frames.size() && at_hold(held[0], e.sw_frames[st->next_frame])) {
+                    const usize k = st->next_frame++;
+                    std::vector<u8> px;
+                    u32 W = 0, H = 0;
+                    const std::array<int, 4> box = frame_pixels(s, px, W, H) ? wait_hint_box(s, W, H) : std::array<int, 4>{};
+                    check(box[2] > box[0] && box[3] > box[1] && box[1] > static_cast<int>(H) / 2, "подсказка видна внизу экрана");
+                    std::string said;
+                    const std::string why = scene_frame_differs(
+                        s, st->refs[k], utf8_path(e.sw_frame_files[k]).parent_path() / utf8_path("игра ожидание " + std::to_string(k) + ".png"), said, box);
+                    check(why.empty(), "кадр игры, прождав " + std::to_string(held[0]) + " с, — кадр вкладки: " + why);
+                    FORGE_INFO("self-test: кадр сцены у ожидания, прождав %.4f с: %s", held[0], said.c_str());
+                    st->skip_ms = true;
+                } else if (st->next_frame < e.sw_frames.size() && held[0] > e.sw_frames[st->next_frame] + 1e-6)
+                    check(false, "миг ожидания " + std::to_string(e.sw_frames[st->next_frame++]) + " с пройден без кадра");
+                // The hero's key, the space and a click on the world: not «Поговорить», the scene stands and so does the world.
+                if (!st->others && held[0] >= 0.3 - 1e-9) {
+                    st->others = true;
+                    st->at = f;
+                    check(key_event(s, SDL_SCANCODE_RIGHT, true), "клавиша героя у ожидания — не миру");
+                    key_event(s, SDL_SCANCODE_SPACE, true);
+                    key_event(s, SDL_SCANCODE_SPACE, false);
+                    check(click_middle(s), "щелчок по миру у ожидания — не миру");
+                    check(sc.waiting_index() == 0, "другие клавиши и щелчок сцену не двигают");
+                }
+                if (st->others && !st->released && held[0] >= 0.5 - 1e-9) {
+                    st->released = true;
+                    key_event(s, SDL_SCANCODE_RIGHT, false);
+                }
+                if (at_hold(held[0], e.sw_holds[0])) {
+                    check(st->next_frame == e.sw_frames.size() && st->released, "кадры ожидания сравнены, клавиши отпущены");
+                    for (const Heard& h : st->heard) check(h.what != "message ответ", "«ответ» не сказан до E");
+                    check(key_event(s, SDL_SCANCODE_E, true), "E — сцене");
+                    check(!s.input().down("talk") && !s.input().pressed("talk"), "E сцены — не «Поговорить» игры");
+                    check(sc.waiting() == nullptr && sc.held()[0] == held[0], "E: сцена идёт дальше с того же мига");
+                    st->stage = 3;
+                    st->at = f;
+                }
+                return false;
+            }
+            case 3: { // The next frame: «ответ», the wait for any key.
+                key_event(s, SDL_SCANCODE_E, false);
+                check(sc.waiting_index() == 1 && sc.time() == e.sw_at && at_hold(held[0], e.sw_holds[0]),
+                      "ждёт любую клавишу: " + std::to_string(sc.waiting_index()) + ", " + std::to_string(sc.time()) + " с");
+                check(!st->heard.empty() && st->heard.back().what == "message ответ", "в кадре после E — «ответ»");
+                st->stage = 4;
+                return false;
+            }
+            case 4: { // At the wait for any key: the hint, Esc's pause standing it, a click on.
+                if (!st->hinted[1] && held[1] >= 0.1 - 1e-9) {
+                    st->hinted[1] = true;
+                    const std::vector<std::string> hint = wait_hint(s);
+                    check(hint == std::vector<std::string>{"Любая клавиша", "дальше"},
+                          "под сценой «Любая клавиша дальше»: " + (hint.empty() ? std::string("нет подсказки") : hint[0] + " " + hint.back()));
+                }
+                // Shift alone, the quicksave and a stick are not «any key»: the save refused in words as in 6г2.
+                if (!st->shell_keys && held[1] >= 0.15 - 1e-9) {
+                    st->shell_keys = true;
+                    st->slots = s.slots().list().size();
+                    key_event(s, SDL_SCANCODE_LSHIFT, true);
+                    key_event(s, SDL_SCANCODE_LSHIFT, false);
+                    key_event(s, SDL_SCANCODE_F5, true);
+                    key_event(s, SDL_SCANCODE_F5, false);
+                    for (const Sint16 v : {Sint16(32767), Sint16(0)}) {
+                        SDL_Event ev{};
+                        ev.type = SDL_EVENT_GAMEPAD_AXIS_MOTION;
+                        ev.gaxis.axis = SDL_GAMEPAD_AXIS_LEFTX;
+                        ev.gaxis.value = v;
+                        s.handle_event(ev);
+                    }
+                    check(sc.waiting_index() == 1 && s.screen() == Screen::Playing, "Shift, F5 и стик сцену не двигают");
+                    st->f5 = f;
+                }
+                if (st->f5 && f == st->f5 + 1)
+                    check(toast_says(s, "Во время сцены сохраниться нельзя") && s.slots().list().size() == st->slots, "F5 у ожидания — отказ словами");
+                if (st->stood.empty() && held[1] >= 0.2 - 1e-9) {
+                    key_event(s, SDL_SCANCODE_ESCAPE, true);
+                    key_event(s, SDL_SCANCODE_ESCAPE, false);
+                    check(s.screen() == Screen::Paused, "Esc у ожидания — меню паузы");
+                    st->stood = held;
+                    st->stood_t = sc.lived();
+                    st->at = f;
+                    return false;
+                }
+                if (!st->stood.empty() && s.screen() == Screen::Paused) {
+                    check(held == st->stood && sc.lived() == st->stood_t && sc.waiting_index() == 1, "меню паузы: сцена стоит и ждёт");
+                    check(wait_hint(s).empty(), "над меню паузы подсказки нет");
+                    if (f - st->at == 3) {
+                        key_event(s, SDL_SCANCODE_ESCAPE, true);
+                        key_event(s, SDL_SCANCODE_ESCAPE, false);
+                        check(s.screen() == Screen::Playing, "Esc снова — игра");
+                    }
+                    return false;
+                }
+                if (at_hold(held[1], e.sw_holds[1])) {
+                    check(f - st->at > 3 && s.screen() == Screen::Playing, "меню паузы было и закрылось");
+                    check(click_middle(s), "щелчок — сцене");
+                    check(sc.waiting() == nullptr, "щелчок: сцена идёт дальше");
+                    st->stage = 5;
+                }
+                return false;
+            }
+            case 5: { // The talk over it: no hint, its clips going on.
+                if (!st->talked) {
+                    st->talked = true;
+                    check(sc.waiting_index() == 2 && s.in_dialogue() && s.dialogue_runner().line().text == "Привет!",
+                          "разговор «Встреча» поверх сцены: «" + (s.in_dialogue() ? s.dialogue_runner().line().text : std::string()) + "»");
+                    check(at_hold(held[1], e.sw_holds[1]), "второе ожидание — как долго игрок стоял: " + std::to_string(held[1]));
+                }
+                check(sc.waiting_index() == 2 && s.in_dialogue() && wait_hint(s).empty(), "идёт разговор, подсказки нет");
+                if (at_hold(held[2], e.sw_holds[2])) {
+                    check(key_event(s, SDL_SCANCODE_SPACE, true), "пробел — разговору");
+                    key_event(s, SDL_SCANCODE_SPACE, false);
+                    check(!s.in_dialogue(), "пробел кончил разговор");
+                    st->stage = 6;
+                }
+                return false;
+            }
+            case 6: { // On to its end.
+                if (sc.going()) {
+                    check(sc.waiting() == nullptr && at_hold(held[2], e.sw_holds[2]) && sc.time() > e.sw_at, "сцена идёт после разговора");
+                    st->stage = 7;
+                    return false;
+                }
+                check(false, "сцена кончилась сразу после разговора");
+                return true;
+            }
+            case 7: {
+                if (sc.going()) {
+                    check(sc.waiting() == nullptr, "больше не ждёт");
+                    return false;
+                }
+                st->stage = 8;
+                st->at = f;
+                f64 lived = e.sw_length;
+                for (const f64 h : e.sw_holds) lived += h;
+                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() == nullptr, "сцена кончилась, не пропущена, её документа нет");
+                const std::string why = heard_differs(st->heard, st->want, true);
+                check(why.empty(), "сообщения и звуки сцены по прожитому времени — как у вкладки: " + why);
+                check(std::fabs(sc.time() - e.sw_length) < 1e-9 && std::fabs(sc.lived() - lived) < 1e-6,
+                      "сцена прошла до конца: " + std::to_string(sc.time()) + " с, прожито " + std::to_string(sc.lived()) + " с при " + std::to_string(lived));
+                for (const std::string& p : sc.problems()) check(p.find("нет в звуках игры") == std::string::npos, "звук сцены есть в игре: " + p);
+                std::vector<f64> sorted = st->frame_ms;
+                std::sort(sorted.begin(), sorted.end());
+                f64 sum = 0;
+                for (f64 v : sorted) sum += v;
+                const f64 n = std::max<f64>(static_cast<f64>(sorted.size()), 1.0);
+                FORGE_INFO("self-test: сцена с ожиданиями на экране 1920 × 1080: %zu кадров, в среднем %.2f мс, p99 %.2f мс, худший %.2f мс", sorted.size(),
+                           sum / n, sorted.empty() ? 0.0 : sorted[sorted.size() * 99 / 100], sorted.empty() ? 0.0 : sorted.back());
+                return false;
+            }
+            default: {
+                if (f - st->at < 2) return false;
+                check(s.vars().get(e.sg_name).text() == e.sw_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0,
+                      "«Сцена кончилась»: «" + s.vars().get(e.sg_name).text() + "», пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " +
+                          std::to_string(var(e.sg_ends)) + ", после " + std::to_string(var(e.sg_after)));
+                check(s.world_hears() && g_.script_time() > st->world_t, "мир идёт после сцены");
+                return true;
+            }
+            }
+        }});
+        steps_.push_back({"сцена ждёт действия, которого в игре нет: любая клавиша", 300, [&s, this, st, var](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                std::string why;
+                st->ends = var(e.sg_ends);
+                st->stage = 0;
+                const bool played = s.play_scene(e.sw_other, {true, true}, why);
+                check(played, "сцена «" + e.sw_other + "»: " + why);
+                st->serial = sc.serial();
+                return false;
+            }
+            if (!sc.going()) {
+                check(st->stage == 3, "«" + e.sw_other + "» кончилась, пройдя три ожидания: " + std::to_string(st->stage));
+                check(sc.over(st->serial) && !sc.skipped(st->serial), "не пропущена");
+                if (st->stage == 3 && f - st->at < 2) return false;
+                // The scheme's «Сцена кончилась» is of «Сцена 2» only.
+                check(s.vars().get(e.sg_name).text() == e.sw_scene && var(e.sg_ends) == st->ends && var(e.sg_skipped) == 0,
+                      "«Сцена кончилась» «Сцены 2» не слышит «" + e.sw_other + "»: «" + s.vars().get(e.sg_name).text() + "», концов " +
+                          std::to_string(var(e.sg_ends)));
+                return true;
+            }
+            const vector::SceneStop* w = sc.waiting();
+            if (!w || sc.held()[static_cast<usize>(sc.waiting_index())] < 0.1 - 1e-9) return false;
+            if (st->stage == 0 && sc.waiting_index() == 0 && w->name == "Поговорить") {
+                check(wait_hint(s) == std::vector<std::string>{e.sw_key, "дальше"}, "«" + e.sw_key + " дальше» под «" + e.sw_other + "»");
+                check(key_event(s, SDL_SCANCODE_E, true), "E — сцене");
+                key_event(s, SDL_SCANCODE_E, false);
+                st->stage = 1;
+            } else if (st->stage == 1 && w->talk) {
+                check(s.in_dialogue() && wait_hint(s).empty(), "разговор «" + w->name + "» поверх «" + e.sw_other + "»");
+                key_event(s, SDL_SCANCODE_SPACE, true);
+                key_event(s, SDL_SCANCODE_SPACE, false);
+                check(!s.in_dialogue(), "пробел кончил разговор");
+                st->stage = 2;
+            } else if (st->stage == 2 && w->name == "Нырок") {
+                const std::vector<std::string> hint = wait_hint(s);
+                check(hint == std::vector<std::string>{"Любая клавиша", "дальше"},
+                      "«Нырок»: «Любая клавиша дальше»: " + (hint.empty() ? std::string("нет подсказки") : hint[0]));
+                const std::vector<std::string>& p = sc.problems();
+                check(std::count(p.begin(), p.end(), e.sw_other_line) == 1, "сказано раз: «" + e.sw_other_line + "»");
+                check(key_event(s, SDL_SCANCODE_K, true), "K — сцене");
+                key_event(s, SDL_SCANCODE_K, false);
+                check(sc.waiting() == nullptr, "любая клавиша: дальше");
+                st->stage = 3;
+                st->at = f;
+            } else if (st->stage < 3)
+                check(f < 280, "«" + e.sw_other + "» ждёт не того: " + w->name);
+            return false;
+        }});
+        steps_.push_back({"сцена с ожиданиями без «Мира на паузе»: мир идёт, пробел сцены не прыжок", 300, [&s, this, st, var](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                std::string why;
+                st->ends = var(e.sg_ends);
+                st->stage = 0;
+                const bool played = s.play_scene(e.sw_scene, {false, true}, why);
+                check(played, "сцена без паузы мира: " + why);
+                st->serial = sc.serial();
+                return false;
+            }
+            check(sc.going() || st->stage >= 5, "сцена идёт");
+            switch (st->stage) {
+            case 0:
+                if (sc.waiting_index() != 0) return false;
+                st->world_t = g_.script_time();
+                st->hero_x = g_.hero_x();
+                key_event(s, SDL_SCANCODE_RIGHT, true);
+                st->at = f;
+                st->stage = 1;
+                return false;
+            case 1:
+                if (f - st->at < 30) return false;
+                check(sc.waiting_index() == 0 && s.world_hears() && g_.script_time() > st->world_t, "сцена ждёт, мир идёт и слышит игрока");
+                check(g_.hero_x() > st->hero_x + 0.2, "герой идёт вправо, пока сцена ждёт: " + std::to_string(st->hero_x) + " → " + std::to_string(g_.hero_x()));
+                key_event(s, SDL_SCANCODE_RIGHT, false);
+                check(key_event(s, SDL_SCANCODE_E, true), "E — сцене");
+                key_event(s, SDL_SCANCODE_E, false);
+                st->stage = 2;
+                st->at = f;
+                return false;
+            case 2:
+                if (sc.waiting_index() != 1) {
+                    check(f - st->at < 3, "после E ждёт любую клавишу");
+                    return false;
+                }
+                // The space, held: the scene's, not «Прыжок».
+                check(key_event(s, SDL_SCANCODE_SPACE, true), "пробел — сцене");
+                check(!s.input().down("jump"), "пробел сцены — не «Прыжок»");
+                st->stage = 3;
+                st->at = f;
+                return false;
+            case 3:
+                if (!s.in_dialogue()) {
+                    check(f - st->at < 3, "разговор открылся");
+                    return false;
+                }
+                key_event(s, SDL_SCANCODE_ESCAPE, true);
+                key_event(s, SDL_SCANCODE_ESCAPE, false);
+                check(!s.in_dialogue() && s.screen() == Screen::Playing, "Esc кончил разговор, меню паузы нет");
+                st->stage = 4;
+                st->at = f;
+                return false;
+            case 4: {
+                // The space still held: the hero stands on the ground while the world goes.
+                if (f - st->at == 3) {
+                    check(sc.waiting() == nullptr && s.world_hears(), "сцена идёт дальше, мир слышит игрока");
+                    st->hero_y = g_.hero_y();
+                }
+                if (f - st->at > 3 && f - st->at <= 20)
+                    check(!s.input().down("jump") && g_.hero_y() == st->hero_y, "пробел держится, а герой не прыгает" + hero_at());
+                if (f - st->at == 20) {
+                    key_event(s, SDL_SCANCODE_SPACE, false);
+                    st->stage = 5;
+                    st->at = f;
+                }
+                return false;
+            }
+            case 5:
+                if (f - st->at == 2) {
+                    key_event(s, SDL_SCANCODE_SPACE, true);
+                    check(s.input().down("jump"), "пробел снова — «Прыжок»");
+                }
+                if (f - st->at > 2 && std::fabs(g_.hero_y() - st->hero_y) > 0.2) {
+                    key_event(s, SDL_SCANCODE_SPACE, false);
+                    st->stage = 6;
+                    st->at = f;
+                    sc.skip();
+                    return false;
+                }
+                check(f - st->at < 40, "герой прыгнул" + hero_at());
+                return f - st->at >= 40;
+            default:
+                if (f - st->at < 2) return false;
+                check(!sc.going() && var(e.sg_ends) == st->ends + 1 && var(e.sg_skipped) == 1, "её конец услышан: концов " + std::to_string(var(e.sg_ends)));
+                return true;
+            }
+        }});
+        steps_.push_back({"новая игра: сцена пропущена у ожидания", 300, [&s, this, st, var, heard_differs](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                st->heard.clear();
+                st->stage = 0;
+                check(s.new_game(), "новая игра");
+                return false;
+            }
+            switch (st->stage) {
+            case 0:
+                if (!sc.going() || sc.serial() <= st->serial) {
+                    check(f < 30, "сцена новой игры не началась");
+                    return f >= 30;
+                }
+                st->serial = sc.serial();
+                st->stage = 1;
+                return false;
+            case 1:
+                if (sc.waiting_index() != 0 || sc.held()[0] < 0.1 - 1e-9) return false;
+                st->stood_t = sc.lived();
+                key_event(s, SDL_SCANCODE_ESCAPE, true);
+                key_event(s, SDL_SCANCODE_ESCAPE, false);
+                check(s.screen() == Screen::Paused, "Esc у ожидания — меню паузы");
+                st->stage = 2;
+                st->at = f;
+                return false;
+            case 2: {
+                if (f - st->at < 2) return false;
+                Rml::Element* skip = s.find_element("pause-skip-scene");
+                check(skip && skip->IsVisible(true) && click(s, skip), "«Пропустить сцену» нажата");
+                check(!sc.going() && sc.skipped(st->serial) && s.screen() == Screen::Playing, "сцена пропущена у ожидания, меню паузы закрыто");
+                std::vector<Heard> want;
+                for (const Heard& w : st->want)
+                    if (w.at <= st->stood_t + 1e-9) want.push_back(w);
+                for (const Heard& w : st->want)
+                    if (w.at > st->stood_t + 1e-9 && w.what.rfind("message ", 0) == 0) want.push_back(w);
+                const std::string why = heard_differs(st->heard, want, false);
+                check(why.empty(), "до пропуска сказано своё, после — «ответ» и остальные сообщения без звуков: " + why);
+                st->stage = 3;
+                st->at = f;
+                return false;
+            }
+            default:
+                if (f - st->at < 2) return false;
+                check(s.vars().get(e.sg_name).text() == e.sw_scene && var(e.sg_skipped) == 1 && var(e.sg_ends) == 1 && var(e.sg_after) == 1,
+                      "«Сцена кончилась» — пропущена: пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " + std::to_string(var(e.sg_ends)) +
+                          ", после " + std::to_string(var(e.sg_after)));
+                const std::string unplanned = errors_but(project_edits.sg_scheme_error);
+                check(unplanned.empty(), "скрипты без ошибок, кроме задуманной:" + unplanned);
+                return true;
+            }
+        }});
+        steps_.push_back({"сцена пропущена в своём разговоре: разговор закрыт", 300, [&s, this, st, var](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScene& sc = s.scene();
+            if (f == 0) {
+                std::string why;
+                st->ends = var(e.sg_ends);
+                st->stage = 0;
+                const bool played = s.play_scene(e.sw_scene, {true, true}, why);
+                check(played, "«" + e.sw_scene + "» снова: " + why);
+                st->serial = sc.serial();
+                return false;
+            }
+            if (st->stage == 0) {
+                if (sc.waiting_index() < 0 || sc.held()[static_cast<usize>(sc.waiting_index())] < 0.05 - 1e-9) {
+                    check(sc.going() && f < 250, "дошла до ожидания");
+                    return !sc.going();
+                }
+                if (sc.waiting_index() == 0) key_event(s, SDL_SCANCODE_E, true), key_event(s, SDL_SCANCODE_E, false);
+                else if (sc.waiting_index() == 1) key_event(s, SDL_SCANCODE_K, true), key_event(s, SDL_SCANCODE_K, false);
+                else {
+                    check(s.in_dialogue(), "разговор сцены открыт");
+                    sc.skip();
+                    check(!s.in_dialogue() && !sc.going() && sc.skipped(st->serial), "пропуск в разговоре закрыл его и кончил сцену");
+                    st->stage = 1;
+                    st->at = f;
+                }
+                return false;
+            }
+            if (f - st->at < 2) return false;
+            check(!s.in_dialogue() && var(e.sg_ends) == st->ends + 1 && var(e.sg_skipped) == 1, "её конец услышан: пропущена, концов " + std::to_string(var(e.sg_ends)));
+            return true;
         }});
     }
 

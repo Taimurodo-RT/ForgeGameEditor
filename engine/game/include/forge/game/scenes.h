@@ -70,8 +70,8 @@ public:
     // Starts scene `name` of game_dir/scenes in the context; false with why («нет сцены «X»: …», the folder's error).
     // One that goes already is refused (its name in why); one whose music is going out after its end lets it go.
     bool play(Rml::Context* context, const std::filesystem::path& game_dir, std::string_view name, const SceneHow& how, std::string& why);
-    // Every frame: dt seconds of the scene pass (0 while it stands), its frame fitted to the view of w × h pixels. The
-    // first frame after play shows its moment 0.
+    // Every frame: dt seconds of the scene pass (0 while it stands: then it does not go on from a stop it was let go
+    // from either), its frame fitted to the view of w × h pixels. The first frame after play shows its moment 0.
     void update(f64 dt, int width, int height);
     // The player skips it (or the logic stops it): the messages it has left go to on_message in order, its sounds do
     // not; it ends, skipped.

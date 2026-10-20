@@ -3838,6 +3838,11 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
         CHECK(scene.time() == 1);
         frames(17);
         scene.go_on();
+        // A frame of no time (the pause menu up): it does not come to the talk, which could not open over the menu.
+        scene.update(0, 400, 240);
+        CHECK(talks.empty());
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.held()[1] == doctest::Approx(0.3));
         // The talk: it opens the game's dialogue and stands while that is open; the landing comes meanwhile.
         frames(1);
         CHECK(scene.waiting_index() == 2);

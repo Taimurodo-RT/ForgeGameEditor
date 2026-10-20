@@ -628,12 +628,14 @@ void GameScene::update(f64 dt, int width, int height) {
         im.hear(std::move(out), im.tail_share + (1 - im.tail_share) * k);
     }
     if (!im.going) return;
+    const bool first = im.fresh;
     if (im.fresh) {
         im.fresh = false;
         dt = 0;
     }
     const u64 me = im.serial;
-    im.advance(dt);
+    // A frame of no time (the pause menu up) does not come to the next stop either: a talk could not open over the menu.
+    if (first || dt > 0) im.advance(dt);
     // Its marks passed since the last frame (part 6г3: by the time it lived, its waits counted).
     const vector::SceneAt now = im.at();
     std::vector<vector::SceneMark> passed;
