@@ -266,6 +266,27 @@ struct SceneTransition {
     SiteRef site; // the call
 };
 
+// music("имя"[, { fade, volume }]) in a scene (part 6в of docs/models/сцены-модель.md): from `start` the scene's music
+// is the game's sound file `name` (empty: music(nil), silence), reached over `fade` seconds; the same name again goes on
+// playing, only its volume moves to the new one.
+struct SceneMusic {
+    std::string name;
+    f64 start = 0, fade = 0, volume = 1;
+    u32 order = 0; // with SceneStop::order: a call at a stop's time after it begins when the wait ends
+    SiteRef site;  // the call
+};
+
+// wait_action(["Действие"]) and talk("разговор") in a scene (part 6в): the scene's time stands at `time` until the
+// player acts or the talk ends, while its actors' clips go on.
+struct SceneStop {
+    enum class Kind : u8 { Action, Talk };
+    Kind kind = Kind::Action;
+    std::string name; // the action's words, or the talk's; empty: wait_action() — any key
+    f64 time = 0;
+    u32 order = 0; // with ActorPlay::order: a clip started at `time` after the stop is not moved by it
+    SiteRef site;  // the call
+};
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -289,6 +310,8 @@ struct Recording {
     std::vector<ActorPlay> plays;  // a scene's actors' clips (part 6а), in the order they were laid out
     std::vector<Follow> follows;   // by Block::ref of To::Follow (part 6б)
     std::vector<SceneTransition> transitions; // a scene's entrance and leave (part 6б), as laid out
+    std::vector<SceneMusic> music;            // a scene's music calls (part 6в), as laid out
+    std::vector<SceneStop> stops;             // a scene's waits for the player and talks (part 6в), by time
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.

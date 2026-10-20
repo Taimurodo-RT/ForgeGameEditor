@@ -9,7 +9,9 @@
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include <numbers>
+#include <optional>
 
 namespace forge::pixel {
 
@@ -518,23 +520,128 @@ std::vector<const ActorPlay*> plays_of(const Recording& rec, std::string_view ac
 
 } // namespace
 
-ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t) {
+namespace {
+
+// The stop the scene stands at, null when none.
+const SceneStop* stop_of(const Recording& rec, i32 waiting) {
+    return waiting >= 0 && waiting < static_cast<i32>(rec.stops.size()) ? &rec.stops[static_cast<usize>(waiting)] : nullptr;
+}
+
+// Whether a thing of the recording made at `start` (`order`) has begun at t: not when made after the stop the scene
+// stands at, at its moment.
+bool begun(f64 start, u32 order, f64 t, const SceneStop* at) {
+    if (start > t) return false;
+    return !at || start != at->time || order < at->order;
+}
+
+} // namespace
+
+ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held, i32 waiting) {
     if (actor.empty()) return {};
     const std::vector<const ActorPlay*> mine = plays_of(rec, actor);
+    const SceneStop* at = stop_of(rec, waiting);
     i64 k = -1;
     for (usize i = 0; i < mine.size(); ++i)
-        if (mine[i]->start <= t) k = static_cast<i64>(i);
-    // A stop holds the moment the one before it showed at its start.
-    while (k >= 0 && mine[static_cast<usize>(k)]->kind == ActorPlay::Kind::Stop) t = mine[static_cast<usize>(k--)]->start;
+        if (begun(mine[i]->start, mine[i]->order, t, at)) k = static_cast<i64>(i);
+    // A stop holds the moment the one before it showed at its start: the scene's waits up to then, of those made before
+    // it if at its start.
+    u32 until = std::numeric_limits<u32>::max();
+    while (k >= 0 && mine[static_cast<usize>(k)]->kind == ActorPlay::Kind::Stop) {
+        t = mine[static_cast<usize>(k)]->start;
+        until = mine[static_cast<usize>(k--)]->order;
+    }
     if (k < 0) return {};
     const ActorPlay& p = *mine[static_cast<usize>(k)];
-    const f64 s = (t - p.start) * p.speed;
+    // Part 6в: the clip went on while the scene waited after its start.
+    f64 waited = 0;
+    for (usize i = 0; i < held.size() && i < rec.stops.size(); ++i) {
+        const SceneStop& w = rec.stops[i];
+        const bool after = w.time > p.start || (w.time == p.start && w.order > p.order);
+        const bool by_then = w.time < t || (w.time == t && w.order < until);
+        if (after && by_then) waited += held[i];
+    }
+    const f64 s = (t - p.start + waited) * p.speed;
     ActorMoment m;
     m.play = &p;
     if (p.kind == ActorPlay::Kind::Play) m.time = std::min(s, p.clip_length);
     else m.time = p.clip_length > 0 ? std::fmod(s, p.clip_length) : 0;
     m.time = std::max(0.0, m.time);
     return m;
+}
+
+namespace {
+
+// The music calls by start, then as made.
+std::vector<u32> music_calls(const Recording& rec) {
+    std::vector<u32> out(rec.music.size());
+    for (u32 i = 0; i < out.size(); ++i) out[i] = i;
+    std::stable_sort(out.begin(), out.end(), [&](u32 a, u32 b) { return rec.music[a].start < rec.music[b].start; });
+    return out;
+}
+
+// A volume going from `from` to `to` over `fade` seconds from `at`: its value at t.
+struct Ramp {
+    f64 at = 0, fade = 0, from = 0, to = 0;
+    f64 at_time(f64 t) const {
+        if (!(fade > 0) || t >= at + fade) return to;
+        return from + (to - from) * std::clamp((t - at) / fade, 0.0, 1.0);
+    }
+};
+
+} // namespace
+
+std::vector<MusicVoice> music_at(const Recording& rec, f64 t, std::span<const f64> held, i32 waiting) {
+    struct Playing {
+        u32 call = 0;
+        Ramp volume;
+    };
+    const SceneStop* at = stop_of(rec, waiting);
+    // The moments music lives by: a scene's time and the waits before it (a stop at the same time made before it).
+    auto lived = [&](f64 time, u32 order) {
+        f64 s = time;
+        for (usize i = 0; i < held.size() && i < rec.stops.size(); ++i)
+            if (rec.stops[i].time < time || (rec.stops[i].time == time && rec.stops[i].order < order)) s += held[i];
+        return s;
+    };
+    const f64 now_at = lived(t, std::numeric_limits<u32>::max());
+    std::optional<Playing> now;
+    std::vector<Playing> going; // the ones fading out
+    for (const u32 i : music_calls(rec)) {
+        const SceneMusic& m = rec.music[i];
+        if (!begun(m.start, m.order, t, at)) continue;
+        const f64 when = lived(m.start, m.order);
+        if (now && !m.name.empty() && rec.music[now->call].name == m.name) {
+            // The same music goes on: only its volume moves.
+            now->volume = {when, m.fade, now->volume.at_time(when), m.volume};
+            continue;
+        }
+        if (now) going.push_back({now->call, {when, m.fade, now->volume.at_time(when), 0}});
+        now.reset();
+        if (!m.name.empty()) now = Playing{i, {when, m.fade, 0, m.volume}};
+    }
+    auto since = [&](u32 call) { return now_at - lived(rec.music[call].start, rec.music[call].order); };
+    std::vector<MusicVoice> out;
+    for (const Playing& p : going)
+        if (now_at < p.volume.at + p.volume.fade) out.push_back({rec.music[p.call].name, since(p.call), p.volume.at_time(now_at), p.call});
+    if (now) out.push_back({rec.music[now->call].name, since(now->call), now->volume.at_time(now_at), now->call});
+    return out;
+}
+
+std::vector<MusicRun> music_runs(const Recording& rec) {
+    std::vector<MusicRun> out;
+    bool open = false;
+    for (const u32 i : music_calls(rec)) {
+        const SceneMusic& m = rec.music[i];
+        if (open && !m.name.empty() && out.back().name == m.name) {
+            out.back().calls.push_back(i);
+            continue;
+        }
+        if (open) out.back().end = m.start;
+        open = !m.name.empty();
+        if (open) out.push_back({m.name, m.start, rec.length, m.fade, {i}});
+    }
+    if (open) out.back().end = std::max(out.back().start, rec.length);
+    return out;
 }
 
 bool actor_marks(const Recording& rec, SceneMarkSource& clips, std::vector<Mark>& out, std::string& why) {
@@ -792,16 +899,16 @@ bool Scene::record() {
 
 const Recording* Scene::recording() const { return impl_->recorded ? &impl_->rec : nullptr; }
 
-bool Scene::frame(f64 t) {
+bool Scene::frame(f64 t, std::span<const f64> held, i32 waiting) {
     Impl& im = *impl_;
     if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
     Pose scene;
     if (im.recorded && !im.script.frame(im.rec, &im.rig, t, im.doc.params, im.doc.seed, scene))
         return im.fail(im.script.error(), im.script.error_line());
-    return pose(t, im.recorded ? &im.rec : nullptr, scene);
+    return pose(t, im.recorded ? &im.rec : nullptr, scene, held, waiting);
 }
 
-bool Scene::pose(f64 t, const Recording* rec, const Pose& scene) {
+bool Scene::pose(f64 t, const Recording* rec, const Pose& scene, std::span<const f64> held, i32 waiting) {
     Impl& im = *impl_;
     if (!im.ok) return im.error.empty() ? im.fail("сцена не загружена") : false;
     im.error.clear();
@@ -854,7 +961,7 @@ bool Scene::pose(f64 t, const Recording* rec, const Pose& scene) {
     std::string why;
     for (const auto& a : im.actors) {
         Pose pose;
-        const ActorMoment m = rec ? actor_moment(*rec, a->id, t) : ActorMoment{};
+        const ActorMoment m = rec ? actor_moment(*rec, a->id, t, held, waiting) : ActorMoment{};
         if (m.play) {
             const std::map<std::string, f64> values = im.values(*a, *m.play);
             PoseScript* s = im.script_for(*a->character, values, why);

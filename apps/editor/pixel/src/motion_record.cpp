@@ -1068,6 +1068,14 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
     }
     case Task::Kind::TweenFn: ok = layout_tween(im, L, id, at, end); break;
     case Task::Kind::Transition: ok = layout_transition(im, L, id, at, end); break;
+    case Task::Kind::Music: // part 6в: not waiting, as a sound
+        ms.rec->music.push_back({task.name, t, task.number, task.volume, ms.order++, task.site});
+        end = t;
+        break;
+    case Task::Kind::Stop: // part 6в: the scene's time stands there, so the next line goes from the same moment
+        ms.rec->stops.push_back({task.stop, task.name, t, ms.order++, task.site});
+        end = t;
+        break;
     case Task::Kind::Play: {
         // An actor's clip from now (part 6а): a play waits its length, a loop and a stop do not.
         ActorPlay play = task.play;
@@ -2341,13 +2349,83 @@ int transition_call(lua_State* L, bool leave) {
 int api_transition(lua_State* L) { return transition_call(L, false); }
 int api_leave(lua_State* L) { return transition_call(L, true); }
 
-// What later parts of a scene bring: an error that names the part, so code written ahead says so.
-int later(lua_State* L, const char* what, const char* step) {
-    luaL_error(L, "%s — в части %s сцен: в этой версии его ещё нет", what, step);
+// music("имя"[, { fade, volume }]) and music(nil[, { fade }]) (part 6в): a task as sound's, so at(…) and spawn(…) take
+// it; the file is looked for by the tab, as a sound's.
+int api_music(lua_State* L) {
+    Impl& im = impl_of(L);
+    if (!im.scene) luaL_error(L, "music — только в сцене");
+    MotionState& ms = motion(L, "music");
+    Task t;
+    t.kind = Task::Kind::Music;
+    t.site = here(im);
+    if (!lua_isnil(L, 1)) {
+        if (lua_type(L, 1) != LUA_TSTRING || !*lua_tostring(L, 1))
+            luaL_error(L, "music(\"имя\"[, { fade, volume }]): имя — файл звуков игры, или nil — тишина");
+        t.name = lua_tostring(L, 1);
+        if (t.name.find_first_of("/\\") != std::string::npos)
+            luaL_error(L, "music: «%s» — имя файла в звуках игры, без папок", t.name.c_str());
+    }
+    if (lua_gettop(L) > 2) luaL_error(L, "music: имя и таблица { fade, volume } — не больше");
+    t.number = 0;
+    t.volume = 1;
+    if (!lua_isnoneornil(L, 2)) {
+        if (!lua_istable(L, 2)) luaL_error(L, "music: вторым — таблица { fade, volume }");
+        lua_pushnil(L);
+        while (lua_next(L, 2)) {
+            const std::string key = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : "?";
+            lua_pop(L, 1);
+            if (key != "fade" && key != "volume") {
+                lua_pop(L, 1);
+                luaL_error(L, "music: поля «%s» нет (есть fade, volume)", key.c_str());
+            }
+        }
+        lua_getfield(L, 2, "fade");
+        if (!lua_isnil(L, -1)) {
+            if (lua_type(L, -1) != LUA_TNUMBER || !std::isfinite(lua_tonumber(L, -1)) || lua_tonumber(L, -1) < 0)
+                luaL_error(L, "music: fade — число секунд не меньше 0, за сколько музыка набегает");
+            t.number = lua_tonumber(L, -1);
+        }
+        lua_pop(L, 1);
+        lua_getfield(L, 2, "volume");
+        if (!lua_isnil(L, -1)) {
+            if (lua_type(L, -1) != LUA_TNUMBER || !(lua_tonumber(L, -1) >= 0 && lua_tonumber(L, -1) <= 1))
+                luaL_error(L, "music: volume — громкость от 0 до 1");
+            if (t.name.empty()) luaL_error(L, "music(nil): у тишины громкости нет, только fade");
+            t.volume = lua_tonumber(L, -1);
+        }
+        lua_pop(L, 1);
+    }
+    push_task(L, ms, add_task(ms, std::move(t)));
+    return 1;
 }
-int api_music(lua_State* L) { return later(L, "music", "6в"); }
-int api_wait_action(lua_State* L) { return later(L, "wait_action", "6в"); }
-int api_talk(lua_State* L) { return later(L, "talk", "6в"); }
+
+// wait_action(["Действие"]) and talk("разговор") (part 6в): stops of the scene's own flow, as transition's: the scene's
+// time stands whole, so not in spawn(…), all(…) or a function.
+int stop_call(lua_State* L, SceneStop::Kind kind) {
+    const char* what = kind == SceneStop::Kind::Talk ? "talk" : "wait_action";
+    Impl& im = impl_of(L);
+    if (!im.scene) luaL_error(L, "%s — только в сцене", what);
+    MotionState& ms = motion(L, what);
+    if (ms.contexts.size() != 1) luaL_error(L, "%s — только в самом scene: время сцены стоит целиком", what);
+    Task t;
+    t.kind = Task::Kind::Stop;
+    t.stop = kind;
+    t.site = here(im);
+    if (lua_gettop(L) > 1) luaL_error(L, "%s: одно имя — не больше", what);
+    if (kind == SceneStop::Kind::Talk) {
+        if (lua_type(L, 1) != LUA_TSTRING || !*lua_tostring(L, 1)) luaL_error(L, "talk(\"разговор\"): имя разговора игры");
+        t.name = lua_tostring(L, 1);
+    } else if (!lua_isnoneornil(L, 1)) {
+        if (lua_type(L, 1) != LUA_TSTRING || !*lua_tostring(L, 1))
+            luaL_error(L, "wait_action([\"Действие\"]): имя действия «Ввода», или ничего — любая клавиша");
+        t.name = lua_tostring(L, 1);
+    }
+    add_task(ms, std::move(t));
+    return 0; // nothing to put in all(…) or spawn(…): it goes in the scene's own flow
+}
+
+int api_wait_action(lua_State* L) { return stop_call(L, SceneStop::Kind::Action); }
+int api_talk(lua_State* L) { return stop_call(L, SceneStop::Kind::Talk); }
 
 // ---- Luau: properties ----
 

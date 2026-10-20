@@ -176,6 +176,10 @@ const Mixer::Slot* Mixer::find(Voice v) const {
 
 Voice Mixer::play(const ClipPtr& clip, const Play& p) {
     if (!clip || clip->frames() == 0) return {};
+    const f64 frames = clip->frames();
+    f64 pos = std::isfinite(p.from) ? std::max(0.0, p.from) * kRate : 0;
+    if (p.loop) pos = std::fmod(pos, frames);
+    else if (pos >= frames) return {};
     std::lock_guard lock(mutex_);
     if (slots_.size() >= kMaxVoices) {
         // The oldest sound that is not a loop makes room (a loop is usually
@@ -188,6 +192,7 @@ Voice Mixer::play(const ClipPtr& clip, const Play& p) {
     }
     Slot s;
     s.clip = clip;
+    s.pos = pos;
     s.id = next_id_++;
     if (next_id_ == 0) next_id_ = 1;
     s.volume = std::max(0.0f, p.volume);

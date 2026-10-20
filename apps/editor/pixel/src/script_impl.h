@@ -53,7 +53,7 @@ struct MoveStep {
 struct Task {
     enum class Kind : u8 {
         Move, Wait, All, Any, Chain, Sequence, Delay, At, Spawn, Join, Loop, LoopFor, LoopUntil, Run, WaitUntil, Mark,
-        Save, TweenFn, Copies, Play, Transition,
+        Save, TweenFn, Copies, Play, Transition, Music, Stop,
     };
     Kind kind = Kind::Move;
     u32 part = 0;        // Move, Save
@@ -69,6 +69,8 @@ struct Task {
     ActorPlay play;            // Play: an actor's clip in a scene (part 6а), its start and order once laid out
     bool leave = false;        // Transition (part 6б): a scene's leave, not its entrance
     std::string from;          // Transition: «сдвиг»'s edge
+    f64 volume = 1;            // Music (part 6в): its volume; its fade is `number`, its file `name` (empty: silence)
+    SceneStop::Kind stop = SceneStop::Kind::Action; // Stop (part 6в): wait_action or talk, its name `name`
     SiteRef site;
     i8 length_arg = -1;
     bool consumed = false, laid = false;

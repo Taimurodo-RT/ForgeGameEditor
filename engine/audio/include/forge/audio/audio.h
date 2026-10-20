@@ -68,6 +68,8 @@ struct Play {
     f32 pitch = 1; // 2: an octave up and twice as fast
     bool loop = false;
     Bus bus = Bus::Sound;
+    // Seconds into the clip it begins at: a loop's goes round to it, past a sound's end nothing plays.
+    f64 from = 0;
     // In the world: heard from the listener, up to range tiles away.
     bool at = false;
     f64 x = 0, y = 0;

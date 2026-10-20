@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -130,6 +131,33 @@ TEST_CASE("audio: the mixer plays, pans, loops and stops") {
     for (u32 i = 0; i < audio::Mixer::kMaxVoices + 10; ++i) m.play(clip);
     CHECK(m.voices() == audio::Mixer::kMaxVoices);
     m.stop_all();
+}
+
+TEST_CASE("audio: a clip begins from a moment of it") {
+    // A second whose left samples count the frames: what plays at the end of a buffer says where it began.
+    auto ramp = std::make_shared<audio::Clip>();
+    ramp->samples.resize(static_cast<usize>(audio::kRate) * 2);
+    for (u32 i = 0; i < audio::kRate; ++i) ramp->samples[i * 2] = static_cast<f32>(i + 1) / audio::kRate;
+    const u32 n = 4800;
+    audio::Mixer from_start, from_half, round;
+    from_start.play(ramp, {.pan = -1});
+    from_half.play(ramp, {.pan = -1, .from = 0.5});
+    round.play(ramp, {.pan = -1, .loop = true, .from = 1.5}); // a loop's goes round: half a second in too
+    const std::vector<f32> a = mixed(from_start, n), b = mixed(from_half, n), c = mixed(round, n);
+    const usize last = static_cast<usize>(n - 1) * 2;
+    REQUIRE(a[last] > 0);
+    CHECK(b[last] / a[last] == doctest::Approx((audio::kRate / 2 + n) / static_cast<f64>(n)).epsilon(1e-4));
+    CHECK(c[last] == doctest::Approx(b[last]));
+    // It ends as much sooner: of its half a second 0,1 s was mixed.
+    from_half.advance(0.35);
+    CHECK(from_half.voices() == 1);
+    from_half.advance(0.1);
+    CHECK(from_half.voices() == 0);
+    // Past a sound's end nothing plays; a loop's still goes round.
+    audio::Mixer past;
+    CHECK_FALSE(past.playing(past.play(ramp, {.from = 1})));
+    CHECK(past.voices() == 0);
+    CHECK(past.playing(past.play(ramp, {.loop = true, .from = 7.25})));
 }
 
 TEST_CASE("audio: sounds in the world are heard from the listener") {
