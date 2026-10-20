@@ -212,6 +212,16 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("sg_frames", &forge::edits::ProjectEdits::sg_frames);
     t.field("sg_frame_files", &forge::edits::ProjectEdits::sg_frame_files);
     t.field("sg_heard", &forge::edits::ProjectEdits::sg_heard);
+    t.field("sw_scene", &forge::edits::ProjectEdits::sw_scene);
+    t.field("sw_key", &forge::edits::ProjectEdits::sw_key);
+    t.field("sw_other", &forge::edits::ProjectEdits::sw_other);
+    t.field("sw_other_line", &forge::edits::ProjectEdits::sw_other_line);
+    t.field("sw_at", &forge::edits::ProjectEdits::sw_at);
+    t.field("sw_length", &forge::edits::ProjectEdits::sw_length);
+    t.field("sw_holds", &forge::edits::ProjectEdits::sw_holds);
+    t.field("sw_frames", &forge::edits::ProjectEdits::sw_frames);
+    t.field("sw_frame_files", &forge::edits::ProjectEdits::sw_frame_files);
+    t.field("sw_heard", &forge::edits::ProjectEdits::sw_heard);
 }
 
 namespace forge::edits {

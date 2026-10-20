@@ -256,10 +256,22 @@ const SceneStop* stop_of(const SceneFile& f, i32 waiting) {
     return waiting >= 0 && waiting < static_cast<i32>(f.stops.size()) ? &f.stops[static_cast<usize>(waiting)] : nullptr;
 }
 
+// Whether a stop was made before a thing of its moment numbered `order`: a play, music or another stop takes a number of
+// its own, a mark the number the next of them takes (part 6г3), so one made right before the stop has the stop's.
+bool made_before(const SceneStop& stop, u32 order) { return stop.order < order; }
+
 // Whether a thing made at `at` (`order`) has begun at t: not when made after the stop the scene stands at, at its moment.
 bool begun(f64 at, u32 order, f64 t, const SceneStop* stop) {
     if (at > t) return false;
-    return !stop || at != stop->at || order < stop->order;
+    return !stop || at != stop->at || !made_before(*stop, order);
+}
+
+// The time lived by the scene when a thing made at `at` (`order`) begins: `at` and the waits made before it.
+f64 lived_at(const SceneFile& f, std::span<const f64> held, f64 at, u32 order) {
+    f64 x = at;
+    for (usize i = 0; i < held.size() && i < f.stops.size(); ++i)
+        if (f.stops[i].at < at || (f.stops[i].at == at && made_before(f.stops[i], order))) x += held[i];
+    return x;
 }
 
 // A volume going from `from` to `to` over `fade` seconds from `at`: its value at t.
@@ -476,12 +488,7 @@ std::vector<SceneMusicVoice> scene_music_at(const SceneFile& f, f64 t, std::span
     };
     const SceneStop* at = stop_of(f, waiting);
     // The moments music lives by: a scene's time and the waits before it (a stop at the same time made before it).
-    auto lived = [&](f64 time, u32 order) {
-        f64 x = time;
-        for (usize i = 0; i < held.size() && i < f.stops.size(); ++i)
-            if (f.stops[i].at < time || (f.stops[i].at == time && f.stops[i].order < order)) x += held[i];
-        return x;
-    };
+    auto lived = [&](f64 time, u32 order) { return lived_at(f, held, time, order); };
     std::vector<u32> calls(f.music.size());
     for (u32 i = 0; i < calls.size(); ++i) calls[i] = i;
     std::stable_sort(calls.begin(), calls.end(), [&](u32 a, u32 b) { return f.music[a].at < f.music[b].at; });
@@ -686,6 +693,120 @@ bool scene_marks(const SceneMotion& s, std::vector<SceneMark>& out, std::string&
         }
     }
     std::stable_sort(out.begin(), out.end(), [](const SceneMark& a, const SceneMark& b) { return a.at < b.at; });
+    return true;
+}
+
+f64 scene_lived(const SceneAt& at) {
+    f64 x = at.t;
+    for (const f64 h : at.held) x += h;
+    return x;
+}
+
+f64 scene_since(const SceneFile& f, const SceneAt& at, f64 when, u32 order) {
+    if (!begun(when, order, at.t, stop_of(f, at.waiting))) return -1;
+    return std::max(0.0, scene_lived(at) - lived_at(f, at.held, when, order));
+}
+
+namespace {
+
+// A mark of a scene at a moment of its play: which (the scene's own: play -1, its mark; an actor's: its play, round and
+// mark in the clip) and the time lived when it comes.
+struct LivedMark {
+    i64 play = -1;
+    u64 round = 0;
+    usize mark = 0;
+    f64 at = 0;
+    bool operator==(const LivedMark& o) const { return play == o.play && round == o.round && mark == o.mark; }
+};
+
+// The marks the scene has had at `now`, lived in [lo, hi] (and up to now), in the order scene_marks lists them: the scene's
+// own, then each actor's by its plays (by name, then start, then order), by round and mark. False past `room` of them.
+bool marks_had(const SceneMotion& s, const SceneAt& now, f64 lo, f64 hi, std::vector<LivedMark>& out, usize room) {
+    constexpr f64 kEps = 1e-9;
+    const SceneFile& f = s.file;
+    const SceneStop* stop = stop_of(f, now.waiting);
+    const f64 lived = scene_lived(now);
+    hi = std::min(hi, lived);
+    auto keep = [&](LivedMark m) {
+        if (m.at < lo - kEps || m.at > hi + kEps) return true;
+        if (out.size() >= room) return false;
+        out.push_back(m);
+        return true;
+    };
+    if (const MotionClip* clip = s.stage.clip("scene"))
+        for (usize i = 0; i < clip->marks.size(); ++i) {
+            const MotionMark& m = clip->marks[i];
+            if (!begun(m.at, m.order, now.t, stop)) continue;
+            if (!keep({-1, 0, i, lived_at(f, now.held, m.at, m.order)})) return false;
+        }
+    std::vector<usize> all(f.plays.size());
+    for (usize i = 0; i < all.size(); ++i) all[i] = i;
+    std::stable_sort(all.begin(), all.end(), [&](usize a, usize b) {
+        const ScenePlay &x = f.plays[a], &y = f.plays[b];
+        if (x.actor != y.actor) return x.actor < y.actor;
+        return x.at != y.at ? x.at < y.at : x.order < y.order;
+    });
+    for (usize i = 0; i < all.size(); ++i) {
+        const ScenePlay& p = f.plays[all[i]];
+        if (p.kind == ScenePlay::Kind::Stop || !begun(p.at, p.order, now.t, stop)) continue;
+        const bool last = i + 1 == all.size() || f.plays[all[i + 1]].actor != p.actor;
+        // Its end: the actor's next call when it has begun (not at it), else as far as the scene has lived.
+        f64 end = lived;
+        bool at_end = true;
+        if (!last) {
+            const ScenePlay& q = f.plays[all[i + 1]];
+            if (begun(q.at, q.order, now.t, stop)) {
+                end = lived_at(f, now.held, q.at, q.order);
+                at_end = false;
+            }
+        }
+        const i32 a = actor_index(f, p.actor);
+        const MotionClip* clip = a >= 0 && static_cast<usize>(a) < s.actors.size() ? s.actors[static_cast<usize>(a)].clip(p.clip) : nullptr;
+        if (!clip || clip->marks.empty()) continue;
+        const bool loop = p.kind == ScenePlay::Kind::Loop;
+        const f64 round = clip->length / p.speed;
+        // What it waited before it began: its marks are its moments in the scene's time and that.
+        const f64 before = lived_at(f, now.held, p.at, p.order) - p.at;
+        u64 k = 0;
+        if (loop && round > 0 && lo - kEps > p.at + before + round) k = static_cast<u64>(std::floor((lo - kEps - p.at - before) / round)) - 1;
+        for (;; ++k) {
+            const f64 base = snap_ns(p.at + static_cast<f64>(k) * round);
+            if (k > 0 && (!loop || !(round > 0))) break;
+            if (base + before > std::min(end, hi) + kEps) break;
+            for (usize j = 0; j < clip->marks.size(); ++j) {
+                const f64 in_scene = snap_ns(base + clip->marks[j].at / p.speed);
+                const f64 at = before == 0 ? in_scene : in_scene + before;
+                if (at > end + kEps || (!at_end && at > end - kEps)) continue;
+                if (!keep({static_cast<i64>(all[i]), k, j, at})) return false;
+            }
+        }
+    }
+    std::stable_sort(out.begin(), out.end(), [](const LivedMark& x, const LivedMark& y) { return x.at < y.at; });
+    return true;
+}
+
+} // namespace
+
+bool scene_marks_between(const SceneMotion& s, const SceneAt* from, const SceneAt& to, std::vector<SceneMark>& out, std::string& why) {
+    constexpr usize kMax = 100000;
+    out.clear();
+    const f64 lo = from ? scene_lived(*from) : -1;
+    std::vector<LivedMark> now, had;
+    if (!marks_had(s, to, lo, std::numeric_limits<f64>::infinity(), now, kMax) ||
+        (from && !marks_had(s, *from, lo, lo, had, kMax)))
+        return why = "меток клипов за раз больше " + std::to_string(kMax) + " — клип по кругу слишком короткий", false;
+    const MotionClip* own = s.stage.clip("scene");
+    for (const LivedMark& m : now) {
+        if (std::find(had.begin(), had.end(), m) != had.end()) continue;
+        if (m.play < 0) {
+            const MotionMark& mk = own->marks[m.mark];
+            out.push_back({mk.name, mk.sound, {}, m.at});
+            continue;
+        }
+        const ScenePlay& p = s.file.plays[static_cast<usize>(m.play)];
+        const MotionMark& mk = s.actors[static_cast<usize>(actor_index(s.file, p.actor))].clip(p.clip)->marks[m.mark];
+        out.push_back({mk.name, mk.sound, p.actor, m.at});
+    }
     return true;
 }
 

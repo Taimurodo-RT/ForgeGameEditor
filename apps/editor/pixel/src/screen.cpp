@@ -716,8 +716,9 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
         if (drawn_step(o)) out.order.push_back(step_of(o, b.start));
     }
 
+    // A scene's mark keeps its place among its waits (part 6г3): only a scene that waits needs it.
     for (const Mark& m : rec->marks)
-        if (ns_of(m.time) <= length) out.marks.push_back({m.kind == Mark::Kind::Sound, m.name, m.time, m.length});
+        if (ns_of(m.time) <= length) out.marks.push_back({m.kind == Mark::Kind::Sound, m.name, m.time, m.length, rec->stops.empty() ? 0u : m.order});
     std::stable_sort(out.marks.begin(), out.marks.end(), [](const vector::MotionMark& a, const vector::MotionMark& b) { return a.at < b.at; });
     for (const char* w : vector::kMotionNotDrawn)
         if (not_drawn.count(w)) out.not_drawn.emplace_back(w);

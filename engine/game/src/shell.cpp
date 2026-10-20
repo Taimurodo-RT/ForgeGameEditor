@@ -120,6 +120,7 @@ struct Shell::Model {
     int pending_frames = 0;
     bool slots_dirty = true;
     bool scene_skip = false; // the pause menu's «Пропустить сцену»
+    Rml::String scene_wait;  // while a scene waits for the player: the key that moves it on, «Любая клавиша» (part 6г3)
 };
 
 Shell::Shell() = default;
@@ -178,6 +179,10 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     scene_->on_sound = [this](const std::string& file) {
         if (screens_->on_sound) screens_->on_sound(file);
     };
+    // Its talk opens the game's dialogue over it; it goes on when that ends (part 6г3).
+    scene_->on_talk = [this](const std::string& d) { return talk(d); };
+    scene_->talking = [this] { return in_dialogue(); };
+    scene_->end_talk = [this] { end_dialogue(); };
     if (!game.init(*this, device, format)) return false;
     action_defs_ = game.actions();
     for (const input::ActionDef& d : input::shell_actions()) action_defs_.push_back(d);
@@ -577,6 +582,13 @@ bool Shell::handle_event(const SDL_Event& e) {
         }
         if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP) return true;
     }
+    // A scene waiting for the player hears its action first, before the game's screens and the world, which then see
+    // neither the press nor the hold until it is let go (part 6г3; an open dialogue's keys are its own, below).
+    if (screen_ == Screen::Playing && !in_dialogue() && scene_wants(e)) {
+        input_.swallow(e);
+        scene_->go_on();
+        return true;
+    }
     // A held Enter or Space presses a screen's button once, not again with every repeat.
     if (e.type == SDL_EVENT_KEY_DOWN && e.key.repeat &&
         (e.key.key == SDLK_RETURN || e.key.key == SDLK_KP_ENTER || e.key.key == SDLK_SPACE) && screens_ &&
@@ -747,6 +759,34 @@ void Shell::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width,
 
 bool Shell::scene_holds() const { return scene_ && scene_->going() && scene_->how().pause; }
 
+const input::Action* Shell::scene_wait_action() {
+    const vector::SceneStop* w = scene_ ? scene_->waiting() : nullptr;
+    if (!w || w->talk || w->name.empty()) return nullptr;
+    for (const input::Action& a : input_.actions())
+        if (a.words == w->name) {
+            if (!a.binds.empty()) return &a;
+            scene_->note("сцена «" + scene_->name() + "»: ждёт «" + w->name + "», а у этого действия нет ни одной кнопки — ждёт любую клавишу");
+            return nullptr;
+        }
+    scene_->note("сцена «" + scene_->name() + "»: ждёт «" + w->name + "», а во «Вводе» игры такого действия нет — ждёт любую клавишу");
+    return nullptr;
+}
+
+bool Shell::scene_wants(const SDL_Event& e) {
+    const vector::SceneStop* w = scene_ ? scene_->waiting() : nullptr;
+    if (!w || w->talk) return false;
+    if (const input::Action* a = scene_wait_action()) return input_.presses(e, a->id);
+    // Any key but Shift, Ctrl, Alt and Win alone and the shell's own (Esc opens the pause menu), any mouse or gamepad
+    // button; not a stick nor a trigger.
+    const std::optional<input::Bind> b = input::bind_of(e);
+    if (!b || b->device == input::Device::PadAxis) return false;
+    if (b->device == input::Device::Key && ((b->code >= SDL_SCANCODE_LCTRL && b->code <= SDL_SCANCODE_RGUI) || b->code == SDL_SCANCODE_ESCAPE))
+        return false;
+    for (const input::ActionDef& d : input::shell_actions())
+        if (const input::Action* a = input_.action(d.id); a && std::find(a->binds.begin(), a->binds.end(), *b) != a->binds.end()) return false;
+    return true;
+}
+
 bool Shell::world_hears() const { return screen_ == Screen::Playing && !in_dialogue() && !scene_holds(); }
 
 bool Shell::over_world() const {
@@ -824,6 +864,7 @@ void Shell::bind_model() {
     c.Bind("playtime", &m.playtime);
     c.Bind("own_menu", &m.own_menu);
     c.Bind("scene_skip", &m.scene_skip);
+    c.Bind("scene_wait", &m.scene_wait);
     c.Bind("keys", &m.keys);
     c.Bind("keys_note", &m.keys_note);
     c.Bind("keys_changed", &m.keys_changed);
@@ -941,6 +982,14 @@ void Shell::refresh_model() {
     };
     set(m.screen, Rml::String(screen_key(screen_)));
     set(m.scene_skip, scene_->going() && scene_->how().skip);
+    // A scene waiting for the player says what moves it on (part 6г3): its action's first key, or any key.
+    Rml::String wait;
+    if (screen_ == Screen::Playing && !in_dialogue())
+        if (const vector::SceneStop* w = scene_->waiting(); w && !w->talk) {
+            const input::Action* a = scene_wait_action();
+            wait = a ? Rml::String(input_.first_words(a->id)) : Rml::String("Любая клавиша");
+        }
+    set(m.scene_wait, wait);
     set(m.own_menu, screens_ && screens_->has_menu());
     set(m.title, Rml::String(title_));
 

@@ -1053,7 +1053,7 @@ bool layout(Impl& im, lua_State* L, u32 id, const Place& at_in, f64& end) {
         break;
     }
     case Task::Kind::Mark:
-        ms.rec->marks.push_back({task.mark, task.name, t, snap_time(task.number), task.site, {}});
+        ms.rec->marks.push_back({task.mark, task.name, t, snap_time(task.number), task.site, {}, ms.order});
         end = t;
         break;
     case Task::Kind::Save: {

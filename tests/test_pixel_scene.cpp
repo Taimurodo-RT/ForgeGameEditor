@@ -12,6 +12,9 @@
 // game puts each picture and actor against the tab's rig, a run drawing only its own, an actor's frame beyond its canvas,
 // and the scene on a game's screen: its layers, its marks frame by frame, its music, its end, skipped and dropped; a
 // picture the camera turns drawn where it stands unturned (as the game draws it).
+// Part 6г3: the scene's marks by the time it lived (its waits counted), those made after a wait coming after it, and the
+// scene on a game's screen standing at its waits and talks while its actors and its music go on, skipped or dropped in a
+// talk closing it.
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
@@ -3532,4 +3535,462 @@ TEST_CASE("Сцена в игре: места — в единицах рамки
     CHECK(top[0].m.d == doctest::Approx(1));
     CHECK(top[0].m.e == doctest::Approx(30));
     CHECK(top[0].m.f == doctest::Approx(20));
+}
+
+namespace {
+
+// Part 6г3: a scene waiting for an action, any key and a talk at one moment and any key at its end, the hedgehog walking
+// before the waits and landing from the first; the stage kPlaceStage's.
+const char* kWaitScene = R"(    sound("бум")
+    emit("начало")
+    music("тема", { fade = 1 })
+    actor("ёжик"):loop("walk")
+    wait(1)
+    emit("середина")
+    wait_action("Поговорить")
+    emit("ответ")
+    actor("ёжик"):loop("land")
+    wait_action()
+    talk("Встреча")
+    wait(1)
+    sound("тишина")
+    wait_action())";
+
+// Where a scene is when it has lived `lived` seconds, standing at each stop as long as `wait` says (gone on when it has,
+// to a nanosecond).
+vector::SceneAt at_lived(const vector::SceneFile& f, std::span<const f64> wait, f64 lived) {
+    vector::SceneAt a;
+    a.held.assign(f.stops.size(), 0);
+    f64 rest = lived;
+    for (usize i = 0; i < f.stops.size(); ++i) {
+        const f64 gap = f.stops[i].at - a.t;
+        if (rest < gap) break;
+        a.t = f.stops[i].at;
+        rest -= gap;
+        if (rest < wait[i] - 1e-9) {
+            a.held[i] = rest;
+            a.waiting = static_cast<i32>(i);
+            return a;
+        }
+        a.held[i] = wait[i];
+        rest = std::max(0.0, rest - wait[i]);
+    }
+    a.t = std::min(a.t + rest, f.length);
+    return a;
+}
+
+std::vector<std::string> said(const std::vector<vector::SceneMark>& marks) {
+    std::vector<std::string> out;
+    for (const vector::SceneMark& m : marks) out.push_back(m.name + (m.actor.empty() ? "" : " " + m.actor));
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("Сцена в игре: метки по прожитому времени — без ожиданий как у вкладки, с ожиданиями после тех, что сделаны до них") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kWaitScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    const vector::SceneFile& f = m.file;
+    CHECK(f.length == doctest::Approx(2));
+    REQUIRE(f.stops.size() == 4);
+    const char* names[] = {"Поговорить", "", "Встреча", ""};
+    for (usize i = 0; i < 4; ++i) {
+        CAPTURE(i);
+        CHECK(f.stops[i].name == names[i]);
+        CHECK(f.stops[i].talk == (i == 2));
+        CHECK(f.stops[i].at == doctest::Approx(i == 3 ? 2 : 1));
+    }
+    // The scene's own marks keep their place among its waits: «середина» before the first, «ответ» between the first two,
+    // «тишина» before the last; in its file and back.
+    const vector::MotionClip* own = m.stage.clip("scene");
+    REQUIRE(own);
+    std::map<std::string, u32> order;
+    for (const vector::MotionMark& mk : own->marks) order[mk.name] = mk.order;
+    REQUIRE(order.size() == 5);
+    CHECK(order["середина"] <= f.stops[0].order);
+    CHECK(order["ответ"] > f.stops[0].order);
+    CHECK(order["ответ"] <= f.stops[1].order);
+    CHECK(order["тишина"] > f.stops[2].order);
+    CHECK(order["тишина"] <= f.stops[3].order);
+    for (const Mark& mk : s.recording()->marks) CHECK(mk.order == order[mk.name]);
+    const std::string& text = *gift_file(gift, "stage.motion.json");
+    CHECK(has(text, "\"emit\": \"ответ\", \"at\": 1, \"order\": " + std::to_string(order["ответ"]) + "}"));
+    vector::MotionFile back;
+    std::string why;
+    REQUIRE(vector::read_motion_file(text, back, why));
+    CHECK(back == m.stage);
+    std::string broken = text;
+    const std::string tail = "\"order\": " + std::to_string(order["ответ"]) + "}";
+    broken.replace(broken.find(tail), tail.size(), "\"order\": -1}");
+    CHECK_FALSE(vector::read_motion_file(broken, back, why));
+    CHECK(has(why, "clips.scene.marks["));
+    CHECK(has(why, "]: order: нужен номер метки среди вызовов сцены, целое от 0"));
+    broken = text;
+    broken.replace(broken.find(tail), tail.size(), "\"order\": 1.5}");
+    CHECK_FALSE(vector::read_motion_file(broken, back, why));
+    CHECK(has(why, "order: нужен номер"));
+    // A scene with no waits writes none.
+    Scene plain;
+    load(plain, files, kPlaceScene, kPlaceStage);
+    for (const vector::MotionMark& mk : gift_of(plain, files).motion.stage.clip("scene")->marks) CHECK(mk.order == 0);
+
+    // Without waits: the tab's marks at the tab's moments.
+    std::vector<vector::SceneMark> tab, got;
+    REQUIRE(vector::scene_marks(m, tab, why));
+    CHECK(said(tab) == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "середина", "ответ", "земля ёжик", "тишина", "земля ёжик"});
+    const std::vector<f64> none(4, 0);
+    REQUIRE(vector::scene_marks_between(m, nullptr, at_lived(f, none, 2), got, why));
+    CHECK(got == tab);
+    // With them (0.6 s for the action, 0.3 for the key, 0.4 the talk, 0.5 at the end): by the time it lived. The steps go
+    // on while it waits up to the landing; the landing begins when the first wait is done, a landing comes in the talk and
+    // one at the end's wait.
+    const std::vector<f64> wait = {0.6, 0.3, 0.4, 0.5};
+    const vector::SceneAt end = at_lived(f, wait, 3.8);
+    CHECK(end.t == doctest::Approx(2));
+    CHECK(end.waiting == -1);
+    CHECK(vector::scene_lived(end) == doctest::Approx(3.8));
+    REQUIRE(vector::scene_marks_between(m, nullptr, end, got, why));
+    CHECK(said(got) == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "середина", "шаг ёжик", "ответ", "земля ёжик", "земля ёжик",
+                                                "земля ёжик", "тишина", "земля ёжик"});
+    const f64 lived_at[] = {0, 0, 0.25, 0.75, 1, 1.25, 1.6, 2.1, 2.6, 3.1, 3.3, 3.6};
+    REQUIRE(got.size() == std::size(lived_at));
+    for (usize i = 0; i < got.size(); ++i) {
+        CAPTURE(i);
+        CHECK(got[i].at == doctest::Approx(lived_at[i]));
+    }
+    // A step of the walk at the very moment the landing begins (0.75 s at the first wait): the landing's time, not the walk's.
+    const std::vector<f64> exact = {0.75, 0.3, 0.4, 0.5};
+    REQUIRE(vector::scene_marks_between(m, nullptr, at_lived(f, exact, 3.95), got, why));
+    CHECK(said(got) == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "середина", "шаг ёжик", "ответ", "земля ёжик", "земля ёжик",
+                                                "земля ёжик", "тишина", "земля ёжик"});
+    REQUIRE(got.size() == 12);
+    CHECK(got[6].at == doctest::Approx(1.75));
+    CHECK(got[7].at == doctest::Approx(2.25));
+    // Standing at the first wait 0.3 s: what was made after it has not begun, the steps go on.
+    const vector::SceneAt first = at_lived(f, wait, 1.3);
+    CHECK(first.waiting == 0);
+    CHECK(first.held[0] == doctest::Approx(0.3));
+    REQUIRE(vector::scene_marks_between(m, nullptr, first, got, why));
+    CHECK(said(got) == std::vector<std::string>{"бум", "начало", "шаг ёжик", "шаг ёжик", "середина", "шаг ёжик"});
+    // How long a thing has lived since it began: the music from 0, the landing from when the first wait was done.
+    const u32 music = f.music[0].order;
+    u32 land = 0;
+    for (const vector::ScenePlay& p : f.plays)
+        if (p.clip == "land") land = p.order;
+    CHECK(vector::scene_since(f, first, 0, music) == doctest::Approx(1.3));
+    CHECK(vector::scene_since(f, first, 1, land) == -1);
+    const vector::SceneAt talk = at_lived(f, wait, 2.0);
+    CHECK(talk.waiting == 2);
+    CHECK(vector::scene_since(f, talk, 1, land) == doctest::Approx(0.4));
+    CHECK(vector::scene_since(f, talk, 0, music) == doctest::Approx(2));
+
+    // Frame by frame, from nothing at its start: each mark once, in the frame its lived time passes, the same in all.
+    for (const std::vector<f64>* w : {&none, &wait})
+        for (const f64 dt : {1.0 / 60, 1.0 / 37, 0.1, 0.35}) {
+            CAPTURE(dt);
+            CAPTURE((*w)[0]);
+            const f64 last = 2 + (*w)[0] + (*w)[1] + (*w)[2] + (*w)[3];
+            std::vector<vector::SceneMark> all, whole;
+            REQUIRE(vector::scene_marks_between(m, nullptr, at_lived(f, *w, last), whole, why));
+            vector::SceneAt was = at_lived(f, *w, 0);
+            REQUIRE(vector::scene_marks_between(m, nullptr, was, got, why));
+            CHECK(said(got) == std::vector<std::string>{"бум", "начало"});
+            all = got;
+            for (int k = 1;; ++k) {
+                const f64 lived = std::min(k * dt, last);
+                const vector::SceneAt now = at_lived(f, *w, lived);
+                REQUIRE(vector::scene_marks_between(m, &was, now, got, why));
+                for (const vector::SceneMark& mk : got) {
+                    CAPTURE(mk.name);
+                    CHECK(mk.at >= vector::scene_lived(was) - 1e-9);
+                    CHECK(mk.at <= vector::scene_lived(now) + 1e-9);
+                }
+                all.insert(all.end(), got.begin(), got.end());
+                was = now;
+                if (lived >= last) break;
+            }
+            CHECK(all == whole);
+            // Again from where it is: nothing.
+            REQUIRE(vector::scene_marks_between(m, &was, was, got, why));
+            CHECK(got.empty());
+        }
+
+    // A loop too short at once.
+    vector::SceneMotion fast = m;
+    for (vector::ScenePlay& p : fast.file.plays)
+        if (p.clip == "land") p.speed = 1e5;
+    CHECK_FALSE(vector::scene_marks_between(fast, nullptr, end, got, why));
+    CHECK(why == "меток клипов за раз больше 100000 — клип по кругу слишком короткий");
+}
+
+TEST_CASE("Сцена в игре: ожидание и разговор на экране — время сцены стоит, клипы и музыка идут, пропуск закрывает разговор") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kWaitScene, kPlaceStage);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    const fs::path game_dir = empty_dir("forge_tests_сцена_ждёт");
+    give(gift, game_dir, "Ожидание");
+    Scene first;
+    load(first, files, R"(    music("тема", { fade = 1 })
+    wait_action()
+    emit("сразу")
+    talk("Нет")
+    emit("потом")
+    wait(0.5))",
+         kPlaceStage);
+    give(gift_of(first, files, "Сразу"), game_dir, "Сразу");
+    put_file(game_dir / "sounds" / utf8_path("бум.ogg"), "звук");
+    put_file(game_dir / "sounds" / utf8_path("тема.ogg"), "музыка");
+
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("scene", {400, 240});
+    REQUIRE(context);
+    {
+        game::GameScene scene;
+        std::vector<std::string> heard;
+        std::vector<f64> heard_at; // the time it lived then
+        scene.on_message = [&](const std::string& name) {
+            heard.push_back("сообщение " + name);
+            heard_at.push_back(scene.lived());
+        };
+        scene.on_sound = [&](const std::string& file) {
+            heard.push_back("звук " + file);
+            heard_at.push_back(scene.lived());
+        };
+        std::vector<game::SceneTune> tunes;
+        f64 share = 1;
+        scene.on_music = [&](const std::vector<game::SceneTune>& t, f64 g) {
+            tunes = t;
+            share = g;
+        };
+        std::vector<std::string> ends;
+        scene.on_end = [&](const std::string& name, bool skipped, u64) { ends.push_back(name + (skipped ? " пропущена" : "")); };
+        // The game's dialogue: open after on_talk when it fits, closed by the player (open = false) or by end_talk.
+        bool open = false, fits = true;
+        std::vector<std::string> talks;
+        int closed = 0;
+        scene.on_talk = [&](const std::string& d) {
+            talks.push_back(d);
+            if (fits) open = true;
+            return fits;
+        };
+        scene.talking = [&] { return open; };
+        scene.end_talk = [&] {
+            open = false;
+            ++closed;
+        };
+        const f64 dt = 1.0 / 60;
+        auto frames = [&](int n) {
+            for (int k = 0; k < n; ++k) scene.update(dt, 400, 240);
+        };
+        auto hedgehog = [&]() -> const ui::SvgPose* {
+            Rml::Element* camera = scene.document() ? scene.document()->GetElementById("camera") : nullptr;
+            REQUIRE(camera);
+            for (int i = 0; i < camera->GetNumChildren(); ++i)
+                if (camera->GetChild(i)->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg") return ui::svg_posed(camera->GetChild(i));
+            return nullptr;
+        };
+        auto head = [](const std::vector<vector::MotionPartPose>& parts) { return game_value_of(parts, "ёжик/head", vector::MotionProp::Y).v; };
+        REQUIRE(m.file.actors[0].id == "ёжик");
+
+        std::string why;
+        REQUIRE(scene.play(context, game_dir, "Ожидание", {true, true}, why));
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.waiting_index() == -1);
+        scene.update(0.5, 400, 240);
+        CHECK(heard == std::vector<std::string>{"звук бум.ogg", "сообщение начало"});
+        // Its time to the first wait: it stands at 1 s, having said what was before it, not what was after.
+        frames(60);
+        REQUIRE(scene.waiting());
+        CHECK(scene.waiting_index() == 0);
+        CHECK(scene.waiting()->name == "Поговорить");
+        CHECK_FALSE(scene.waiting()->talk);
+        CHECK(scene.time() == 1);
+        CHECK(heard.back() == "сообщение середина");
+        // 0.6 s at it: its time stands, the hedgehog walks on (a step at 1.25 s lived), the music plays on.
+        frames(36);
+        CHECK(scene.time() == 1);
+        CHECK(scene.waiting_index() == 0);
+        CHECK(scene.held()[0] == doctest::Approx(0.6));
+        CHECK(scene.lived() == doctest::Approx(1.6));
+        CHECK(heard.size() == 6);
+        CHECK(heard.back() == "сообщение шаг");
+        const std::vector<f64> held = scene.held();
+        const ui::SvgPose* hog = hedgehog();
+        REQUIRE(hog);
+        CHECK(head(hog->parts) == doctest::Approx(head(vector::scene_pose(m, 1, held, 0).actors[0].parts)));
+        CHECK(head(hog->parts) != doctest::Approx(head(vector::scene_pose(m, 1).actors[0].parts)));
+        std::vector<game::SceneTune> now;
+        for (const vector::SceneMusicVoice& v : vector::scene_music_at(m.file, 1, held, 0)) now.push_back({v.call, v.name + ".ogg", v.since, v.volume});
+        CHECK(tunes == now);
+        REQUIRE(tunes.size() == 1);
+        CHECK(tunes[0].since == doctest::Approx(1.6));
+        CHECK(share == 0);
+        CHECK(talks.empty());
+        // Moved on: what came after the wait comes, and it stands at the next, any key, at the same moment.
+        scene.go_on();
+        frames(1);
+        CHECK(heard.back() == "сообщение ответ");
+        CHECK(scene.waiting_index() == 1);
+        CHECK(scene.waiting()->name.empty());
+        CHECK(scene.time() == 1);
+        frames(17);
+        scene.go_on();
+        // A frame of no time (the pause menu up): it does not come to the talk, which could not open over the menu.
+        scene.update(0, 400, 240);
+        CHECK(talks.empty());
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.held()[1] == doctest::Approx(0.3));
+        // The talk: it opens the game's dialogue and stands while that is open; the landing comes meanwhile.
+        frames(1);
+        CHECK(scene.waiting_index() == 2);
+        CHECK(scene.waiting()->talk);
+        CHECK(talks == std::vector<std::string>{"Встреча"});
+        CHECK(open);
+        frames(23);
+        CHECK(talks.size() == 1);
+        CHECK(scene.time() == 1);
+        CHECK(heard.back() == "сообщение земля");
+        open = false; // the player ended it
+        frames(1);
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.time() == doctest::Approx(1 + dt));
+        CHECK(closed == 0);
+        // To the wait at its end: it stands there, its landing goes on; it ends when moved on.
+        frames(59);
+        CHECK(scene.time() == 2);
+        CHECK(scene.waiting_index() == 3);
+        frames(30);
+        CHECK(scene.going());
+        CHECK(ends.empty());
+        scene.go_on();
+        frames(1);
+        CHECK_FALSE(scene.going());
+        CHECK(ends == std::vector<std::string>{"Ожидание"});
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.waiting_index() == -1);
+        const std::vector<std::string> want = {"звук бум.ogg",     "сообщение начало", "сообщение шаг",    "сообщение шаг",
+                                               "сообщение середина", "сообщение шаг",    "сообщение ответ",  "сообщение земля",
+                                               "сообщение земля",  "сообщение земля",  "сообщение земля"};
+        CHECK(heard == want);
+        const f64 want_at[] = {0, 0, 0.25, 0.75, 1, 1.25, 1.6, 2.1, 2.6, 3.1, 3.6};
+        REQUIRE(heard_at.size() == std::size(want_at));
+        for (usize i = 0; i < heard_at.size(); ++i) {
+            CAPTURE(i);
+            CHECK(heard_at[i] >= want_at[i] - 1e-9);
+            CHECK(heard_at[i] < want_at[i] + dt + 1e-9);
+        }
+        const std::vector<std::string> problems = scene.problems();
+        CHECK(std::count(problems.begin(), problems.end(), "сцена «Ожидание»: звука «тишина» нет в звуках игры") == 1);
+
+        // Skipped at a wait: what it had left to say, those after the wait too, its sounds not.
+        REQUIRE(scene.play(context, game_dir, "Ожидание", {true, true}, why));
+        scene.update(0, 400, 240);
+        frames(60 + 18);
+        CHECK(scene.waiting_index() == 0);
+        heard.clear();
+        scene.skip();
+        CHECK(heard == std::vector<std::string>{"сообщение ответ", "сообщение земля", "сообщение земля"});
+        CHECK(ends.back() == "Ожидание пропущена");
+        CHECK(scene.waiting() == nullptr);
+        CHECK(talks.size() == 1);
+        // Skipped in its talk: the talk closes; dropped in it: the same, nothing said.
+        for (const bool skip : {true, false}) {
+            CAPTURE(skip);
+            REQUIRE(scene.play(context, game_dir, "Ожидание", {true, true}, why));
+            scene.update(0, 400, 240);
+            frames(60);
+            scene.go_on();
+            frames(1);
+            scene.go_on();
+            frames(6);
+            REQUIRE(scene.waiting_index() == 2);
+            CHECK(open);
+            heard.clear();
+            const int was = closed;
+            if (skip) scene.skip();
+            else scene.drop();
+            CHECK(closed == was + 1);
+            CHECK_FALSE(open);
+            CHECK_FALSE(scene.going());
+            CHECK(heard == (skip ? std::vector<std::string>{"сообщение земля", "сообщение земля"} : std::vector<std::string>{}));
+        }
+        const usize ended = ends.size();
+        // Another dialogue open when it comes to its talk: it waits for that to end, then opens its own.
+        REQUIRE(scene.play(context, game_dir, "Ожидание", {true, true}, why));
+        scene.update(0, 400, 240);
+        frames(60);
+        scene.go_on();
+        frames(1);
+        open = true; // the game's own
+        talks.clear();
+        scene.go_on();
+        frames(10);
+        CHECK(scene.waiting_index() == 2);
+        CHECK(talks.empty());
+        open = false;
+        frames(1);
+        CHECK(talks == std::vector<std::string>{"Встреча"});
+        CHECK(open);
+        CHECK(scene.waiting_index() == 2);
+        open = false;
+        frames(1);
+        CHECK(scene.waiting() == nullptr);
+        scene.drop();
+        CHECK(closed == 2); // its own was over: not closed again
+        // A talk that does not begin: a line in the log, the scene goes on at once, from the same frame.
+        fits = false;
+        REQUIRE(scene.play(context, game_dir, "Ожидание", {true, true}, why));
+        scene.update(0, 400, 240);
+        frames(60);
+        scene.go_on();
+        frames(1);
+        scene.go_on();
+        frames(1);
+        CHECK(scene.waiting() == nullptr);
+        CHECK(scene.time() == doctest::Approx(1 + dt));
+        CHECK(scene.held()[2] == 0);
+        CHECK_FALSE(open);
+        const std::vector<std::string> lines = scene.problems();
+        CHECK(std::count(lines.begin(), lines.end(),
+                         "сцена «Ожидание»: разговор «Встреча» не начался (его нет в игре или ни одно начало не подошло) — сцена идёт дальше") == 1);
+        scene.drop();
+        CHECK(ends.size() == ended);
+
+        // A wait at its very start, before what it says first; a talk that does not begin, at the same moment.
+        REQUIRE(scene.play(context, game_dir, "Сразу", {true, true}, why));
+        heard.clear();
+        scene.update(0.5, 400, 240);
+        CHECK(scene.waiting_index() == 0);
+        CHECK(heard.empty());
+        frames(5);
+        CHECK(scene.time() == 0);
+        CHECK(scene.lived() == doctest::Approx(5 * dt));
+        // Its music began before the wait: the game's goes out under it by the time it lived, waiting.
+        CHECK(share == doctest::Approx(1 - 5 * dt));
+        scene.go_on();
+        frames(1);
+        CHECK(heard == std::vector<std::string>{"сообщение сразу", "сообщение потом"});
+        CHECK(scene.waiting() == nullptr);
+        frames(30);
+        CHECK_FALSE(scene.going());
+        CHECK(ends.back() == "Сразу");
+        // Not going: nothing waits, go_on does nothing.
+        scene.go_on();
+        CHECK(scene.waiting() == nullptr);
+    }
+    Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
 }

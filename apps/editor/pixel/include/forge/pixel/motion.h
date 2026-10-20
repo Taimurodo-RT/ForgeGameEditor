@@ -157,6 +157,10 @@ struct Mark {
     f64 time = 0, length = 0;
     SiteRef site;
     std::string actor; // a scene's (part 6а): the actor whose clip made it, «ёжик: шаг»; empty for the scene's own
+    // Its place among the calls that take a number (blocks, saves, a scene's plays, music, waits and talks): the number
+    // the next of them takes (part 6г3 of docs/models/сцены-модель.md), so a wait at its moment with a smaller number was
+    // made before it.
+    u32 order = 0;
 };
 
 // actor("ёжик"):play("walk"[, { speed, params }]), :loop(…) and :stop() in a scene (part 6а of

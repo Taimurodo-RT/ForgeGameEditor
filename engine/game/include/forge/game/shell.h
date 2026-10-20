@@ -253,6 +253,11 @@ private:
     Value call(std::string_view name, const std::vector<Value>& args);
     // A save may be written now (false: why, for the player).
     bool may_save(std::string* why) const;
+    // Part 6г3 of docs/models/сцены-модель.md: the action of the game's «Ввод» the scene waits for, by its name (null:
+    // any key, mouse button or gamepad button: it named none, or one the game has not or without a button, said once
+    // in the log); whether this event is what the scene waits for.
+    const input::Action* scene_wait_action();
+    bool scene_wants(const SDL_Event& e);
 
     Game* game_ = nullptr;
     SDL_GPUDevice* device_ = nullptr;

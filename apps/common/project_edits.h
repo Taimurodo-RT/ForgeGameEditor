@@ -231,6 +231,15 @@ struct ProjectEdits {
     double sg_length = 0, sg_fade = 0;
     std::vector<double> sg_frames;
     std::vector<std::string> sg_frame_files, sg_heard;
+    // Part 6г3 (the editor's self-test pixel-scene-f): the scene sw_scene the same scheme shows at the start (sg_scene
+    // empty, its other sg_* as above) stands at its waits at sw_at s: for the action whose first key is sw_key, any key,
+    // the talk; the player stands sw_holds at each (E, a click, the space ending the talk). sw_frames: how long into the
+    // first wait the frames sw_frame_files are; sw_heard: what it says by the time it lived ("lived message name", "lived
+    // sound file"); sw_length its length. sw_other: a scene waiting for an action the game has not, its line sw_other_line.
+    std::string sw_scene, sw_key, sw_other, sw_other_line;
+    double sw_at = 0, sw_length = 0;
+    std::vector<double> sw_holds, sw_frames;
+    std::vector<std::string> sw_frame_files, sw_heard;
 };
 
 // False (error says why) when the file cannot be read.

@@ -152,6 +152,9 @@
         </div>
     </div>
 
+    <!-- A scene waiting for the player (part 6г3 of docs/models/сцены-модель.md) -->
+    <div id="scene-wait" class="scene-wait body-small" data-if="scene_wait != ''"><span class="key-hint">{{ scene_wait }}</span><span>дальше</span></div>
+
     <!-- Messages -->
     <div class="toasts">
         <div class="toast" data-for="t : toasts"><icon name="info"/><span>{{ t }}</span></div>
