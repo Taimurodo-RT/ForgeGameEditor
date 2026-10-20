@@ -321,6 +321,15 @@ bool Mixer::where(Voice v, f64& x, f64& y) const {
     return true;
 }
 
+bool Mixer::heard(Voice v, f32& volume, f64& seconds) const {
+    std::lock_guard lock(mutex_);
+    const Slot* s = find(v);
+    if (!s || s->stopping) return false;
+    volume = s->volume;
+    seconds = s->pos / kRate;
+    return true;
+}
+
 u32 Mixer::voices() const {
     std::lock_guard lock(mutex_);
     u32 n = 0;

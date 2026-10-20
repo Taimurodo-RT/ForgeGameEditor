@@ -974,7 +974,7 @@ bool PixelEditor::music_to_code(i32 call) {
 
 std::vector<PixelEditor::MusicNow> PixelEditor::music_now() const {
     std::vector<MusicNow> out;
-    for (const MusicOn& m : music_on_) out.push_back({m.name, m.volume, m.call});
+    for (const MusicOn& m : music_on_) out.push_back({m.name, m.volume, m.call, m.voice});
     return out;
 }
 

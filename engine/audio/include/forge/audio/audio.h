@@ -148,6 +148,8 @@ public:
     u64 started() const { return started_; }
     // Where a sound plays in the world, while it plays (for tests): false for one not in the world or over.
     bool where(Voice v, f64& x, f64& y) const;
+    // Where in its clip a sound is and its volume, while it plays (for tests): false for one over.
+    bool heard(Voice v, f32& volume, f64& seconds) const;
 
     static constexpr u32 kMaxVoices = 64;
 

@@ -490,6 +490,7 @@ public:
         std::string name;
         f32 volume = 0;
         u32 call = 0;
+        audio::Voice voice; // in mixer()
     };
     std::vector<MusicNow> music_now() const;
     void set_hold(bool on);

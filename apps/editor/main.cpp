@@ -28543,6 +28543,11 @@ return {
     static bool sv_now(const std::vector<PixelEditor::MusicNow>& now, f32 volume) {
         return now.size() == 1 && now[0].name == "мелодия" && std::fabs(now[0].volume - volume) < 1e-4f && now[0].call == 0;
     }
+    // Where the one music playing is in its file and how loud, as the mixer has it.
+    bool sv_heard(f32& volume, f64& at) {
+        const std::vector<PixelEditor::MusicNow> now = px().music_now();
+        return now.size() == 1 && px().mixer().heard(now[0].voice, volume, at);
+    }
     static std::string sv_now_words(const std::vector<PixelEditor::MusicNow>& now) {
         std::string out;
         for (const PixelEditor::MusicNow& m : now) out += " «" + m.name + "» " + std::to_string(m.volume) + " вызов " + std::to_string(m.call);
@@ -28702,11 +28707,15 @@ return {
             key(SDLK_SPACE, SDL_KMOD_NONE);
             break;
         case 10: {
-            if (wait(3)) return true;
+            if (hold(!px().music_played().empty(), "the music begins")) return true;
             const std::vector<PixelEditor::MusicPlayed>& played = px().music_played();
             check(px().playing() && played.size() == 1 && played[0].name == "мелодия" && played[0].call == 0 && played[0].from > 0.5 && played[0].from < 0.6,
                   "«мелодия» from 0,5 s into its file: " + (played.empty() ? std::string("ничего") : std::to_string(played[0].from)));
             check(sv_now(px().music_now(), 1) && px().mixer().voices(audio::Bus::Music) == 1, "one voice of music, at 1:" + sv_now_words(px().music_now()));
+            f32 loud = 0;
+            f64 at = 0;
+            check(sv_heard(loud, at) && loud == 1 && !played.empty() && std::fmod(at - played[0].from + 2, 1.0) < 0.4,
+                  "the mixer plays it from there: " + std::to_string(at) + " s into the file, at " + std::to_string(loud));
             key(SDLK_M, SDL_KMOD_NONE);
             break;
         }
@@ -28754,13 +28763,17 @@ return {
             in_key(SDL_SCANCODE_E);
             check(px().held_at() == 1, "E at the talk: still there");
             break;
-        case 17:
+        case 17: {
             if (wait(15)) return true;
             check(px().held_at() == 1 && px().held()[1] > 0.2 && lit() == "1", "at the talk, its flag lit: " + lit());
             check(sv_now(px().music_now(), 0.4f) && px().music_played().size() == 1, "the same «мелодия» at 0,4 after 0,2 s of the talk:" + sv_now_words(px().music_now()));
+            f32 loud = 0;
+            f64 at = 0;
+            check(sv_heard(loud, at) && std::fabs(loud - 0.4f) < 1e-4f, "the mixer has it at 0,4: " + std::to_string(loud));
             waited(1, "at the talk");
             check(px_click("px-play"), "▶");
             break;
+        }
         // ▶: on to «Нырок»; E does nothing there (no such action), the space goes on; then the scene's time again.
         case 18:
             if (hold(px().held_at() == 2, "▶: the player at «Нырок»")) return true;

@@ -159,6 +159,21 @@ TEST_CASE("audio: a clip begins from a moment of it") {
     CHECK_FALSE(past.playing(past.play(ramp, {.from = 1})));
     CHECK(past.voices() == 0);
     CHECK(past.playing(past.play(ramp, {.loop = true, .from = 7.25})));
+    // What the tests see of a sound: where in its clip, how loud.
+    audio::Mixer seen;
+    const audio::Voice v = seen.play(ramp, {.volume = 0.5f, .from = 0.25});
+    f32 volume = 0;
+    f64 at = 0;
+    REQUIRE(seen.heard(v, volume, at));
+    CHECK(volume == 0.5f);
+    CHECK(at == doctest::Approx(0.25));
+    seen.set(v, 0.2f, 0);
+    seen.advance(0.5);
+    REQUIRE(seen.heard(v, volume, at));
+    CHECK(volume == 0.2f);
+    CHECK(at == doctest::Approx(0.75));
+    seen.stop(v);
+    CHECK_FALSE(seen.heard(v, volume, at));
 }
 
 TEST_CASE("audio: sounds in the world are heard from the listener") {
