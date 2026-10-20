@@ -2837,7 +2837,7 @@
                             <div class="ue-num ue-short" title="Размер"><icon class="xs" name="format_size"/><input id="ue-font-size" type="text" data-attr-value="ue_p.size" data-event-change="ue_text('size', ev.value, ev.linebreak)" data-event-blur="ue_commit('size')"/></div>
                         </div>
                         <div class="ue-grid2">
-                            <div class="ue-num" title="Высота строки"><icon class="xs" name="format_line_spacing"/><input type="text" data-attr-value="ue_p.line_height" data-event-change="ue_text('line_height', ev.value, ev.linebreak)" data-event-blur="ue_commit('line_height')"/></div>
+                            <div class="ue-num" title="Высота строки в пикселях (140%: доля размера текста; Авто: как у шрифта)"><icon class="xs" name="format_line_spacing"/><input id="ue-line-height" type="text" data-attr-value="ue_p.line_height" data-event-change="ue_text('line_height', ev.value, ev.linebreak)" data-event-blur="ue_commit('line_height')"/></div>
                             <div class="ue-num" title="Расстояние между буквами"><span>А|А</span><input type="text" data-attr-value="ue_p.letter_spacing" data-event-change="ue_text('letter_spacing', ev.value, ev.linebreak)" data-event-blur="ue_commit('letter_spacing')"/></div>
                         </div>
                         <div class="ue-line row">

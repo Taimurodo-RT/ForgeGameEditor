@@ -5,6 +5,7 @@
 namespace Rml {
 
 class Element;
+class RenderBox;
 struct Mesh;
 
 /*
@@ -37,7 +38,12 @@ bool HasBackgroundPlacement(Element* element);
 
 /// Adds quads covering the area with the placed tiles, clipped to the area. With 'local_texcoords', texture coordinates are
 /// pixel positions inside each tile (for gradient shaders); otherwise they interpolate between uv0 and uv1.
+/// Forge: with an 'outline' (RoundedOutline), each tile is also cut to it, as a browser cuts a background at rounded corners.
 void GenerateBackgroundTiles(Mesh& mesh, Vector2f origin, Vector2f area, const BackgroundPlacement& placement, ColourbPremultiplied colour, Vector2f uv0,
-	Vector2f uv1, bool local_texcoords);
+	Vector2f uv1, bool local_texcoords, const Vector<Vector2f>& outline = {});
+
+/// Forge: the edge of the box's painting area with its rounded corners, as its background colour is drawn (a convex polygon,
+/// in the coordinates of the box's fill offset); empty when no corner is rounded.
+Vector<Vector2f> RoundedOutline(const RenderBox& render_box);
 
 } // namespace Rml

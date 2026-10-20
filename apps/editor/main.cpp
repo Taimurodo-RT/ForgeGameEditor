@@ -11428,10 +11428,18 @@ private:
                 check(il && il->text_style.size == 44 && std::find(il->overrides.begin(), il->overrides.end(), "text_style") != il->overrides.end() &&
                           steps() == ue_fl_cursor_ + 1,
                       "the copy's label 44, its own change; one step");
+                // Its line's height is in pixels: 150% typed is that share of its 44, as in Figma.
+                ue_fl_cursor_ = steps();
+                check(ue_type("ue-line-height", "150%"), "150% typed into its line's height");
+                il = label_of(ue_fl_inst_);
+                check(il && il->text_style.line_height == 66 && steps() == ue_fl_cursor_ + 1, "its line 66 px; one step");
                 return true;
             }
             case 18: {
-                if (wait(ue_field("ue-font-size") == "44", "the right panel shows 44")) return true;
+                if (wait(ue_field("ue-font-size") == "44" && ue_field("ue-line-height") == "66px", "the right panel shows 44 and 66px")) return true;
+                ue().undo();
+                const d::Node* lh = label_of(ue_fl_inst_);
+                check(lh && lh->text_style.line_height == 0 && lh->text_style.size == 44 && steps() == ue_fl_cursor_, "undone: «Авто» again, 44 kept");
                 // The component's label changes again: this copy keeps 44.
                 const d::Node* inst = ue_node(ue_fl_inst_);
                 const std::string component = inst ? inst->component : std::string();

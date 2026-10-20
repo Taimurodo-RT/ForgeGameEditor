@@ -38,6 +38,7 @@ add_executable(forge_tests
   test_key_timeline.cpp
   test_layer_move.cpp
   test_screen_sound.cpp
+  test_ui_rounded.cpp
   test_project.cpp
   test_modules.cpp
   test_sources.cpp

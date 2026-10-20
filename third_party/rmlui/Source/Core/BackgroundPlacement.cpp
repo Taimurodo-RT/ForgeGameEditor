@@ -7,6 +7,7 @@
 #include "../../Include/RmlUi/Core/Mesh.h"
 #include "../../Include/RmlUi/Core/MeshUtilities.h"
 #include "../../Include/RmlUi/Core/Property.h"
+#include "../../Include/RmlUi/Core/RenderBox.h"
 #include "../../Include/RmlUi/Core/StringUtilities.h"
 #include "CalcExpression.h"
 #include <cctype>
@@ -207,8 +208,54 @@ bool ComputeBackgroundPlacement(Element* element, Vector2f area, Vector2f natura
 	return true;
 }
 
+Vector<Vector2f> RoundedOutline(const RenderBox& render_box)
+{
+	const CornerSizes radii = render_box.GetBorderRadius();
+	if (radii[0] <= 0.f && radii[1] <= 0.f && radii[2] <= 0.f && radii[3] <= 0.f)
+		return {};
+	// The background colour's own shape: a fan over the edge's points in order.
+	Mesh shape;
+	MeshUtilities::GenerateBackground(shape, render_box, ColourbPremultiplied(255));
+	Vector<Vector2f> outline;
+	outline.reserve(shape.vertices.size());
+	for (const Vertex& vertex : shape.vertices)
+		outline.push_back(vertex.position);
+	return outline;
+}
+
+namespace {
+
+	// The part of a convex polygon inside the rectangle [p0, p1] (Sutherland-Hodgman, one side of the rectangle at a time).
+	Vector<Vector2f> ClipToRectangle(const Vector<Vector2f>& polygon, Vector2f p0, Vector2f p1)
+	{
+		Vector<Vector2f> in = polygon, out;
+		for (int side = 0; side < 4 && !in.empty(); side++)
+		{
+			// Sides 0 and 1 keep what is right of and below p0, sides 2 and 3 what is left of and above p1.
+			const bool x = (side % 2 == 0);
+			const bool low = (side < 2);
+			const float edge = x ? (low ? p0.x : p1.x) : (low ? p0.y : p1.y);
+			auto at = [x](Vector2f p) { return x ? p.x : p.y; };
+			auto inside = [&](Vector2f p) { return low ? at(p) >= edge : at(p) <= edge; };
+			out.clear();
+			for (size_t i = 0; i < in.size(); i++)
+			{
+				const Vector2f a = in[i], b = in[(i + 1) % in.size()];
+				const bool a_in = inside(a), b_in = inside(b);
+				if (a_in)
+					out.push_back(a);
+				if (a_in != b_in)
+					out.push_back(a + (b - a) * ((edge - at(a)) / (at(b) - at(a))));
+			}
+			std::swap(in, out);
+		}
+		return in;
+	}
+
+} // namespace
+
 void GenerateBackgroundTiles(Mesh& mesh, Vector2f origin, Vector2f area, const BackgroundPlacement& placement, ColourbPremultiplied colour, Vector2f uv0,
-	Vector2f uv1, bool local_texcoords)
+	Vector2f uv1, bool local_texcoords, const Vector<Vector2f>& outline)
 {
 	const Vector2f image = placement.image_size;
 	if (image.x <= 0.f || image.y <= 0.f)
@@ -229,7 +276,28 @@ void GenerateBackgroundTiles(Mesh& mesh, Vector2f origin, Vector2f area, const B
 			// Clip the tile to the painting area.
 			const Vector2f p0 = {Math::Max(x, 0.f), Math::Max(y, 0.f)};
 			const Vector2f p1 = {Math::Min(x + image.x, area.x), Math::Min(y + image.y, area.y)};
-			if (p1.x > p0.x && p1.y > p0.y)
+			if (p1.x > p0.x && p1.y > p0.y && !outline.empty())
+			{
+				// Forge: the tile cut to the rounded edge, its texture coordinates by where each corner lies in the tile.
+				const Vector<Vector2f> part = ClipToRectangle(outline, origin + p0, origin + p1);
+				if (part.size() >= 3)
+				{
+					const int first = (int)mesh.vertices.size();
+					for (const Vector2f& p : part)
+					{
+						const Vector2f in_tile = p - origin - Vector2f(x, y);
+						const Vector2f texcoord = local_texcoords ? in_tile : uv0 + (uv1 - uv0) * (in_tile / image);
+						mesh.vertices.push_back(Vertex{p, colour, texcoord});
+					}
+					for (int i = 1; i + 1 < (int)part.size(); i++)
+					{
+						mesh.indices.push_back(first);
+						mesh.indices.push_back(first + i);
+						mesh.indices.push_back(first + i + 1);
+					}
+				}
+			}
+			else if (p1.x > p0.x && p1.y > p0.y)
 			{
 				Vector2f t0, t1;
 				if (local_texcoords)
