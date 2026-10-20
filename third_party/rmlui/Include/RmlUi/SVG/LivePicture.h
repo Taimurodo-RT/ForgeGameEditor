@@ -4,6 +4,8 @@
 // <svg>, a decorator, a mask image, a border-image) from documents of its own, read from the same files, so a script
 // can change their parts; other elements showing a file keep it as it is. The apply function changes such a document:
 // when it is made (from the file's text) and on each Touch; the element draws it again, at its size, when next used.
+// It may put another document in its place (a stage of the picture, part 5г of docs/models/движение-модель.md): one of
+// the same size.
 
 #include "../Core/Header.h"
 #include "../Core/Types.h"
@@ -18,8 +20,10 @@ class Element;
 
 namespace SVG {
 
-	/// 'path' is the picture's file (or the key of an inline <svg>), 'text' what the document was read from.
-	using LiveApply = Function<void(Element* element, const String& path, const String& text, lunasvg::Document& document)>;
+	/// 'path' is the picture's file (or the key of an inline <svg>), 'text' what the document was read from; 'made' when
+	/// the document has just been read (the first time, or again after the element let it go), not on a Touch.
+	using LiveApply =
+		Function<void(Element* element, const String& path, const String& text, UniquePtr<lunasvg::Document>& document, bool made)>;
 	RMLUICORE_API void SetLiveApply(LiveApply apply);
 	/// Makes the element live, or takes it back to the shared pictures; it takes its pictures again either way.
 	RMLUICORE_API void SetLive(Element* element, bool live);

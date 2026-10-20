@@ -105,6 +105,9 @@ public:
     bool pose(const Rig& rig, f64 t, std::string_view clip, const std::map<std::string, f64>& values, u64 seed, Pose& out);
     // The lengths pose() records `clip` with.
     void set_lengths(std::string_view clip, const MotionLengths& lengths);
+    // The lengths of all clips, by clip, in place of those set before: a clip a start_from names is recorded with its
+    // own (part 5б).
+    void set_lengths(const std::map<std::string, MotionLengths>& all);
     // The recording of clip `clip` that pose() reads, made when the code, the values, the seed or its lengths changed
     // and kept until they change again (or forget()); null with error() when the code has no such clip or it fails.
     const Recording* recording(const Rig& rig, std::string_view clip, const std::map<std::string, f64>& values, u64 seed);

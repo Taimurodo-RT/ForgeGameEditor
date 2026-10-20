@@ -87,6 +87,16 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("an_hero", &forge::edits::ProjectEdits::an_hero);
     t.field("an_walker", &forge::edits::ProjectEdits::an_walker);
     t.field("an_still", &forge::edits::ProjectEdits::an_still);
+    t.field("mk_of", &forge::edits::ProjectEdits::mk_of);
+    t.field("mk_state", &forge::edits::ProjectEdits::mk_state);
+    t.field("mk_name", &forge::edits::ProjectEdits::mk_name);
+    t.field("mk_sound", &forge::edits::ProjectEdits::mk_sound);
+    t.field("mk_frame", &forge::edits::ProjectEdits::mk_frame);
+    t.field("mk_frames", &forge::edits::ProjectEdits::mk_frames);
+    t.field("mk_scheme", &forge::edits::ProjectEdits::mk_scheme);
+    t.field("mk_mark", &forge::edits::ProjectEdits::mk_mark);
+    t.field("mk_count_var", &forge::edits::ProjectEdits::mk_count_var);
+    t.field("mk_going_var", &forge::edits::ProjectEdits::mk_going_var);
     t.field("in_action", &forge::edits::ProjectEdits::in_action);
     t.field("in_count", &forge::edits::ProjectEdits::in_count);
     t.field("in_binds", &forge::edits::ProjectEdits::in_binds);
@@ -170,6 +180,21 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("vlc_said", &forge::edits::ProjectEdits::vlc_said);
     t.field("vlc_again", &forge::edits::ProjectEdits::vlc_again);
     t.field("vlc_parts", &forge::edits::ProjectEdits::vlc_parts);
+    t.field("ms_screen", &forge::edits::ProjectEdits::ms_screen);
+    t.field("ms_layer_name", &forge::edits::ProjectEdits::ms_layer_name);
+    t.field("ms_other_name", &forge::edits::ProjectEdits::ms_other_name);
+    t.field("ms_file", &forge::edits::ProjectEdits::ms_file);
+    t.field("ms_svg", &forge::edits::ProjectEdits::ms_svg);
+    t.field("ms_sound", &forge::edits::ProjectEdits::ms_sound);
+    t.field("ms_scheme_error", &forge::edits::ProjectEdits::ms_scheme_error);
+    t.field("ms_code", &forge::edits::ProjectEdits::ms_code);
+    t.field("ms_code_error", &forge::edits::ProjectEdits::ms_code_error);
+    t.field("ms_not_drawn", &forge::edits::ProjectEdits::ms_not_drawn);
+    t.field("ms_rename_from", &forge::edits::ProjectEdits::ms_rename_from);
+    t.field("ms_rename_to", &forge::edits::ProjectEdits::ms_rename_to);
+    t.field("ms_layer", &forge::edits::ProjectEdits::ms_layer);
+    t.field("ms_layer_box", &forge::edits::ProjectEdits::ms_layer_box);
+    t.field("ms_tab", &forge::edits::ProjectEdits::ms_tab);
 }
 
 namespace forge::edits {

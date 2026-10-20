@@ -25,6 +25,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace slice {
@@ -288,6 +289,25 @@ public:
     // How many times the game ended since it began or was loaded (at most once).
     u32 endings() const { return endings_; }
 
+    // Marks of the animations shown (part 5а of docs/models/движение-модель.md): whether the animation a thing is
+    // shown with shows a mark of that name now, its frame or a frame of its window (forge.anim.going); and the marks
+    // that fired since the game began or was loaded, the first kMarksKept of them, and how many in all.
+    bool anim_going(flecs::entity_t thing, std::string_view mark) const;
+    struct FiredMark {
+        std::string name;
+        bool sound = false;
+        bool sounded = false; // a sound whose file is there
+        flecs::entity_t thing = 0;
+        forge::u64 tick = 0;  // the level's tick it fired after
+        forge::f64 x = 0, y = 0; // where: the thing's place, the hero's feet
+    };
+    static constexpr forge::usize kMarksKept = 4096;
+    const std::vector<FiredMark>& marks_fired() const { return marks_fired_; }
+    forge::u64 marks_count() const { return marks_count_; }
+    // A copy's pose for its animation now, and whether its part of the world sleeps (its marks do not fire).
+    Pose copy_pose_of(flecs::entity_t copy) const;
+    bool asleep(flecs::entity_t copy) const;
+
 private:
     friend class SliceLogic;
     struct Level;
@@ -314,6 +334,10 @@ private:
     void build_sprites();
     void emit_effects(f64 dt);
     void hero_sounds(f64 dt);
+    // The marks of the frames the hero and the copies of templates came to since the last look, after the frame is
+    // drawn (the hero's pose is seen then). fire: false while the game is over: the clocks are taken, nothing fires.
+    void anim_marks(bool fire);
+    void fire_mark(const forge::objects::ClipEvent& e, flecs::entity_t thing, f64 x, f64 y, const Pictures::Picture& pic);
 
     f64 inv(const std::string& item) const;
     void give(const std::string& item, f64 n, bool announce);
@@ -414,6 +438,19 @@ private:
     // Its frame (HeroLook), the tick of its last jump's push, the frame drawn last (0..3), whether by its picture and
     // where.
     HeroLook hero_look_;
+    // Where the marks were taken to (anim_marks): in which level's world, the level's tick for the copies, the hero's
+    // pose and its start, and the ticks of its animation (kTake: none yet, the next look takes them).
+    struct Marks {
+        static constexpr forge::i64 kTake = -2;
+        const void* world = nullptr;
+        forge::u64 tick = 0;
+        Pose hero_pose = Pose::Stand;
+        forge::u64 hero_since = 0;
+        forge::i64 hero_was = kTake;
+    } marks_;
+    std::vector<FiredMark> marks_fired_;
+    forge::u64 marks_count_ = 0;
+    std::set<std::string> marks_silent_; // sounds of marks not there: said once each
     f32 zoom_ = 30; // a new game's view: pixels per tile
     u64 jump_tick_ = HeroLook::kNever;
     u32 hero_frame_ = 0;

@@ -45,14 +45,27 @@ BakeOptions bake_options(const PixelDoc& doc, const std::vector<Rgba8>& game_col
 bool bake_frame(Rig& rig, PoseScript& script, const PixelDoc& doc, const ClipSpec& clip, u32 k, const BakeOptions& options,
                 assets::CookedTexture& out, std::string& why);
 
+// The marks of a clip's recording on the frames of its cut (part 5а of docs/models/движение-модель.md): each on the
+// frame that first shows its moment, as the preview sounds it (sound_frame); a window (emit with a length) on the
+// frames from there to the last whose moment is not past its end, one at least. By frame, those of one frame in the
+// order of the recording. The marks before the cut or past its last frame are left out: their indices in rec.marks
+// go to `left`.
+std::vector<StripEvent> strip_events(const Recording& rec, const ClipCut& cut, std::vector<usize>* left = nullptr);
+
 struct Strip {
     assets::CookedTexture picture;
     std::vector<StripClip> clips;
     u32 frames = 0;
+    // The marks of the code that no frame shows, by clip, as the console says them.
+    struct Left {
+        std::string clip, name;
+        f64 time = 0;
+    };
+    std::vector<Left> left;
 };
-// Every clip, frame by frame, in a game of that frame limit; a clip of the code by its range. The rig is left at rest.
-// False with why: a clip of the code that fails, more frames than the limit, a strip wider than kMaxStripWidth, or the
-// first frame that fails.
+// Every clip, frame by frame, in a game of that frame limit; a clip of the code by its range, with its marks on its
+// frames. The rig is left at rest. False with why: a clip of the code that fails, more frames than the limit, a strip
+// wider than kMaxStripWidth, or the first frame that fails.
 bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOptions& options, u32 frame_limit, Strip& out,
                 std::string& why);
 

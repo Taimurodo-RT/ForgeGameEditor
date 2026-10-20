@@ -2,6 +2,7 @@
 
 #include "forge/vector/trig.h"
 
+#include <cfloat>
 #include <charconv>
 #include <cmath>
 
@@ -191,6 +192,300 @@ f64 area(const Contour& c) {
     return sum;
 }
 
+namespace {
+
+// ThorVG's trimming (src/renderer/tvgRender.cpp, RenderTrimPath; src/common/tvgMath.cpp), in its own single precision
+// and order of operations.
+struct TP {
+    f32 x = 0, y = 0;
+};
+enum class TCmd : u8 { Move, Line, Cubic, Close };
+struct TPath {
+    std::vector<TCmd> cmds;
+    std::vector<TP> pts;
+};
+
+constexpr f32 kTrimEpsilon = 1e-4f;
+constexpr f32 kBezierEpsilon = 1e-2f;
+
+f32 exact_length(TP a, TP b) {
+    const f32 dx = b.x - a.x, dy = b.y - a.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+// tvg::length(Point, Point): alpha max plus beta min.
+f32 quick_length(TP a, TP b) {
+    f32 x = b.x - a.x, y = b.y - a.y;
+    if (x < 0) x = -x;
+    if (y < 0) y = -y;
+    return x > y ? x + 0.375f * y : y + 0.375f * x;
+}
+
+struct TLine {
+    TP pt1, pt2;
+    void split(f32 at, TLine& left, TLine& right) const {
+        const f32 len = exact_length(pt1, pt2);
+        const f32 dx = ((pt2.x - pt1.x) / len) * at, dy = ((pt2.y - pt1.y) / len) * at;
+        left.pt1 = pt1;
+        left.pt2 = {left.pt1.x + dx, left.pt1.y + dy};
+        right.pt1 = left.pt2;
+        right.pt2 = pt2;
+    }
+};
+
+struct TBez {
+    TP start, ctrl1, ctrl2, end;
+    void halve(TBez& left, TBez& right) const {
+        f32 c = (ctrl1.x + ctrl2.x) * 0.5f;
+        left.ctrl1.x = (start.x + ctrl1.x) * 0.5f;
+        right.ctrl2.x = (ctrl2.x + end.x) * 0.5f;
+        left.start.x = start.x;
+        right.end.x = end.x;
+        left.ctrl2.x = (left.ctrl1.x + c) * 0.5f;
+        right.ctrl1.x = (right.ctrl2.x + c) * 0.5f;
+        left.end.x = right.start.x = (left.ctrl2.x + right.ctrl1.x) * 0.5f;
+        c = (ctrl1.y + ctrl2.y) * 0.5f;
+        left.ctrl1.y = (start.y + ctrl1.y) * 0.5f;
+        right.ctrl2.y = (ctrl2.y + end.y) * 0.5f;
+        left.start.y = start.y;
+        right.end.y = end.y;
+        left.ctrl2.y = (left.ctrl1.y + c) * 0.5f;
+        right.ctrl1.y = (right.ctrl2.y + c) * 0.5f;
+        left.end.y = right.start.y = (left.ctrl2.y + right.ctrl1.y) * 0.5f;
+    }
+    f32 length() const {
+        const f32 len = exact_length(start, ctrl1) + exact_length(ctrl1, ctrl2) + exact_length(ctrl2, end);
+        const f32 chord = exact_length(start, end);
+        if (std::fabs(len - chord) > kBezierEpsilon) {
+            TBez left, right;
+            halve(left, right);
+            return left.length() + right.length();
+        }
+        return len;
+    }
+    // Cuts at t: this becomes the part after it, `left` the part before.
+    void split(f32 t, TBez& left) {
+        auto lerp = [t](TP a, TP b) { return TP{a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)}; };
+        left.start = start;
+        left.ctrl1 = lerp(start, ctrl1);
+        left.ctrl2 = lerp(ctrl1, ctrl2); // a temporary holding spot
+        ctrl2 = lerp(ctrl2, end);
+        ctrl1 = lerp(left.ctrl2, ctrl2);
+        left.ctrl2 = lerp(left.ctrl1, left.ctrl2);
+        left.end = start = lerp(left.ctrl2, ctrl1);
+    }
+    // The t where the length from its start is `want`, by halving (Bezier::at).
+    f32 t_at(f32 want, f32 length) const {
+        f32 biggest = 1.0f, smallest = 0.0f, t = 0.5f;
+        if (want <= 0) return 0.0f;
+        if (want >= length) return 1.0f;
+        while (true) {
+            TBez right = *this, left;
+            right.split(t, left);
+            length = left.length();
+            if (std::fabs(length - want) < kBezierEpsilon || std::fabs(smallest - biggest) < 1e-3f) break;
+            if (length < want) {
+                smallest = t;
+                t = (t + biggest) * 0.5f;
+            } else {
+                biggest = t;
+                t = (smallest + t) * 0.5f;
+            }
+        }
+        return t;
+    }
+    // Cuts at the length `at` from its start.
+    void split(f32 at, TBez& left, TBez& right) const {
+        right = *this;
+        const f32 t = right.t_at(at, right.length());
+        right.split(t, left);
+    }
+};
+
+void trim_at(const TCmd* cmd, const TP* pts, TP& move_to, f32 at1, f32 at2, bool start, TPath& out) {
+    switch (*cmd) {
+    case TCmd::Line:
+    case TCmd::Close: {
+        TLine tmp, left, right;
+        TLine{*(pts - 1), *cmd == TCmd::Line ? *pts : move_to}.split(at1, left, tmp);
+        tmp.split(at2, left, right);
+        if (start) {
+            out.pts.push_back(left.pt1);
+            move_to = left.pt1;
+            out.cmds.push_back(TCmd::Move);
+        }
+        out.pts.push_back(left.pt2);
+        out.cmds.push_back(TCmd::Line);
+        break;
+    }
+    case TCmd::Cubic: {
+        TBez tmp, left, right;
+        TBez{*(pts - 1), *pts, *(pts + 1), *(pts + 2)}.split(at1, left, tmp);
+        tmp.split(at2, left, right);
+        if (start) {
+            move_to = left.start;
+            out.pts.push_back(left.start);
+            out.cmds.push_back(TCmd::Move);
+        }
+        out.pts.insert(out.pts.end(), {left.ctrl1, left.ctrl2, left.end});
+        out.cmds.push_back(TCmd::Cubic);
+        break;
+    }
+    case TCmd::Move: break;
+    }
+}
+
+void trim_add(const TCmd* cmd, const TP* pts, TP move_to, bool& start, TPath& out) {
+    switch (*cmd) {
+    case TCmd::Move:
+        out.cmds.push_back(TCmd::Move);
+        out.pts.push_back(*pts);
+        start = false;
+        break;
+    case TCmd::Line:
+    case TCmd::Cubic:
+        if (start) {
+            out.cmds.push_back(TCmd::Move);
+            out.pts.push_back(*(pts - 1));
+        }
+        out.cmds.push_back(*cmd);
+        out.pts.insert(out.pts.end(), pts, pts + (*cmd == TCmd::Line ? 1 : 3));
+        start = false;
+        break;
+    case TCmd::Close:
+        if (start) {
+            out.cmds.push_back(TCmd::Move);
+            out.pts.push_back(*(pts - 1));
+        }
+        out.cmds.push_back(TCmd::Line);
+        out.pts.push_back(move_to);
+        start = true;
+        break;
+    }
+}
+
+f32 trim_total(const TPath& in) {
+    f32 length = 0;
+    const TP* pts = in.pts.data();
+    const TP* start = pts;
+    for (TCmd c : in.cmds) {
+        switch (c) {
+        case TCmd::Close: length += quick_length(*(pts - 1), *start); break;
+        case TCmd::Move: start = pts++; break;
+        case TCmd::Line:
+            length += quick_length(*(pts - 1), *pts);
+            ++pts;
+            break;
+        case TCmd::Cubic:
+            length += TBez{*(pts - 1), *pts, *(pts + 1), *(pts + 2)}.length();
+            pts += 3;
+            break;
+        }
+    }
+    return length;
+}
+
+void trim_path(const TPath& in, f32 trim_start, f32 trim_end, TPath& out) {
+    const TCmd* cmds = in.cmds.data();
+    const TP* pts = in.pts.data();
+    TP move_to_trimmed = *pts, move_to = *pts;
+    f32 len = 0;
+    auto seg_length = [&]() -> f32 {
+        switch (*cmds) {
+        case TCmd::Move: return 0.0f;
+        case TCmd::Line: return quick_length(*(pts - 1), *pts);
+        case TCmd::Cubic: return TBez{*(pts - 1), *pts, *(pts + 1), *(pts + 2)}.length();
+        case TCmd::Close: return quick_length(*(pts - 1), move_to);
+        }
+        return 0.0f;
+    };
+    auto shift = [&]() {
+        switch (*cmds) {
+        case TCmd::Move:
+            move_to = move_to_trimmed = *pts;
+            ++pts;
+            break;
+        case TCmd::Line: ++pts; break;
+        case TCmd::Cubic: pts += 3; break;
+        case TCmd::Close: break;
+        }
+        ++cmds;
+    };
+    bool start = true;
+    for (usize i = 0; i < in.cmds.size(); ++i) {
+        const f32 d_len = seg_length();
+        if (len <= trim_start) {
+            if (len + d_len > trim_end) {
+                trim_at(cmds, pts, move_to_trimmed, trim_start - len, trim_end - trim_start, start, out);
+                start = false;
+            } else if (len + d_len > trim_start + kTrimEpsilon) {
+                trim_at(cmds, pts, move_to_trimmed, trim_start - len, len + d_len - trim_start, start, out);
+                start = false;
+            }
+        } else if (len <= trim_end - kTrimEpsilon) {
+            if (len + d_len > trim_end) {
+                trim_at(cmds, pts, move_to, 0.0f, trim_end - len, start, out);
+                start = true;
+            } else if (len + d_len > trim_start + kTrimEpsilon) {
+                trim_add(cmds, pts, move_to, start, out);
+            }
+        }
+        len += d_len;
+        shift();
+    }
+}
+
+bool is_line(Point from, const Cubic& c) {
+    const Cubic l = line(from, c.to);
+    return l.c1 == c.c1 && l.c2 == c.c2;
+}
+
+TP tp(Point p) { return {static_cast<f32>(p.x), static_cast<f32>(p.y)}; }
+Point pt(TP p) { return {p.x, p.y}; }
+
+} // namespace
+
+Path trim(const Path& path, f64 from, f64 to, bool lines) {
+    Path out;
+    if (!(from >= 0 && to <= 1 && from < to)) return out;
+    // The path as ThorVG holds it: a closed contour's last line is its Close.
+    TPath in;
+    for (const Contour& c : path.contours) {
+        in.cmds.push_back(TCmd::Move);
+        in.pts.push_back(tp(c.start));
+        for (usize i = 0; i < c.curves.size(); ++i) {
+            const Cubic& q = c.curves[i];
+            const bool straight = lines && is_line(c.from(i), q);
+            if (straight && c.closed && i + 1 == c.curves.size()) break;
+            in.cmds.push_back(straight ? TCmd::Line : TCmd::Cubic);
+            if (!straight) in.pts.insert(in.pts.end(), {tp(q.c1), tp(q.c2)});
+            in.pts.push_back(tp(q.to));
+        }
+        if (c.closed) in.cmds.push_back(TCmd::Close);
+    }
+    const f32 begin = static_cast<f32>(from), end = static_cast<f32>(to);
+    if (in.pts.size() < 2 || std::fabs(begin - end) < FLT_EPSILON) return out;
+    const f32 total = trim_total(in);
+    TPath cut;
+    trim_path(in, begin * total, end * total, cut);
+    if (cut.pts.size() < 2) return out;
+    const TP* p = cut.pts.data();
+    for (TCmd c : cut.cmds) {
+        switch (c) {
+        case TCmd::Move: out.contours.push_back({pt(*p++), {}, false}); break;
+        case TCmd::Line:
+            out.contours.back().curves.push_back(line(out.contours.back().from(out.contours.back().curves.size()), pt(*p)));
+            ++p;
+            break;
+        case TCmd::Cubic:
+            out.contours.back().curves.push_back({pt(p[0]), pt(p[1]), pt(p[2])});
+            p += 3;
+            break;
+        case TCmd::Close: break; // trimming makes none
+        }
+    }
+    return out;
+}
+
 bool parse_path(std::string_view d, Path& out, std::string* why) {
     out.contours.clear();
     Reader r{d};
@@ -355,16 +650,23 @@ bool parse_path(std::string_view d, Path& out, std::string* why) {
     return true;
 }
 
-std::string to_d(const Path& path) {
+std::string to_d(const Path& path) { return to_d(path, false); }
+
+std::string to_d(const Path& path, bool lines) {
     std::string out;
     for (const Contour& c : path.contours) {
         if (!out.empty()) out += ' ';
         out += 'M';
         write_point(out, c.start);
-        for (const Cubic& q : c.curves) {
-            out += " C";
-            write_point(out, q.c1);
-            write_point(out, q.c2);
+        for (usize i = 0; i < c.curves.size(); ++i) {
+            const Cubic& q = c.curves[i];
+            if (lines && is_line(c.from(i), q)) {
+                out += " L";
+            } else {
+                out += " C";
+                write_point(out, q.c1);
+                write_point(out, q.c2);
+            }
             write_point(out, q.to);
         }
         if (c.closed) out += " Z";

@@ -1,8 +1,11 @@
 #include "forge/ui/live_svg.h"
 
+#include "svg_stage.h"
+
 #include "forge/vector/morph.h"
 #include "forge/vector/path.h"
 #include "forge/vector/svg_shape.h"
+#include "forge/vector/trig.h"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/SVG/LivePicture.h>
@@ -20,10 +23,45 @@ namespace forge::ui {
 
 namespace {
 
-// What the scripts said of one element.
+// The presentation attributes a pose set on a picture, by element of the file and name: the next frame puts them back
+// to the file's before it sets its own.
+struct Written {
+    u64 file = 0; // File::serial: the file as it read then
+    std::vector<std::pair<i32, std::string>> attributes;
+};
+
+struct File;
+
+// A picture a live element draws from a stage (part 5г): what the stage carries and its file; the plugin's document of
+// the picture is the one made from it.
+struct Staged {
+    StageNeeds needs;
+    File* file = nullptr;
+};
+
+// What the scripts said of one element, and the clip it shows (svg_pose).
 struct Live {
     Rml::ObserverPtr<Rml::Element> element;
     std::map<std::string, SvgPart, std::less<>> parts;
+    bool posed = false;
+    SvgPose pose;
+    std::map<std::string, Written> written; // by the picture's path
+    std::map<std::string, Staged> staged;   // by the picture's path
+};
+
+// A shape's paint as the tab's picture has it (ThorVG's): 0 … 255 channels, the alpha its opacity of the paint; a
+// gradient, or what does not read as a colour, is `other` and does not mix.
+struct Paint8 {
+    u8 r = 0, g = 0, b = 0, a = 0;
+    bool other = false;
+};
+// A shape of a part as drawn now: its paints, its stroke width (0 without a stroke) and the width SVG gives it.
+struct LeafLook {
+    Paint8 fill, stroke;
+    f64 width = 0, own_width = 1;
+    f64 opacity = 1;
+    bool fill_set = false, stroke_set = false, morphed = false;
+    vector::Path path; // morphed: its outline now
 };
 
 // A file as the live pictures read it: its outline, the document as the file draws it (for where a part stands
@@ -35,7 +73,44 @@ struct File {
     std::map<std::string, vector::Morph> morphs; // key: part '\n' target
     std::set<std::string> broken;                // the same keys: the pair does not make
     vector::Shape scratch;
+    std::map<i32, std::vector<i32>> leaves; // a part's shapes, by its element (svg_pose)
+    std::map<i32, LeafLook> looks;          // a shape's look as the file draws it
+    u64 serial = 0;                         // another each time the file is read
+    // Each element as lunasvg makes it: its place among the elements made under its parent, -1 when lunasvg makes
+    // none of it; whether getElementById finds it (the first element made with that id).
+    struct Made {
+        i32 place = -1;
+        bool by_id = false;
+    };
+    std::vector<Made> made;
+    // A stage's file (part 5г): what each of its elements is; null for a picture's own file.
+    std::shared_ptr<const Stage> stage;
+    std::map<i32, vector::MotionMatrix> rest_m;    // an element's own transform
+    std::map<std::string, i32, std::less<>> parts; // the element of a part's id (a stage's)
 };
+
+// Whether lunasvg makes an element of this tag: it leaves out the others, with all inside them.
+bool lunasvg_makes(const vector::SvgElement& e) {
+    static const char* const kTags[] = {"a", "circle", "clipPath", "defs", "ellipse", "g", "image", "line", "linearGradient",
+                                        "marker", "mask", "path", "pattern", "polygon", "polyline", "radialGradient", "rect",
+                                        "stop", "style", "svg", "symbol", "text", "tspan", "use"};
+    return e.prefix.empty() && std::any_of(std::begin(kTags), std::end(kTags), [&](const char* t) { return e.tag == t; });
+}
+
+std::vector<File::Made> made_of(const vector::SvgOutline& o) {
+    std::vector<File::Made> made(o.elements.size());
+    std::vector<i32> children(o.elements.size(), 0); // made so far under each element
+    std::set<std::string_view> ids;
+    for (usize i = 0; i < o.elements.size(); ++i) {
+        const vector::SvgElement& e = o.elements[i];
+        if (i == 0)
+            made[i].place = 0;
+        else if (e.parent >= 0 && made[static_cast<usize>(e.parent)].place >= 0 && lunasvg_makes(e))
+            made[i].place = children[static_cast<usize>(e.parent)]++;
+        if (made[i].place >= 0 && !e.id.empty()) made[i].by_id = ids.insert(e.id).second;
+    }
+    return made;
+}
 
 std::unordered_map<Rml::Element*, Live>& lives() {
     static std::unordered_map<Rml::Element*, Live> m;
@@ -76,11 +151,21 @@ std::string num(f64 v) {
 File& file(const std::string& path, const std::string& text) {
     File& f = files()[path];
     if (f.rest && f.text == text) return f;
+    static u64 serial = 0;
     f = {};
     f.text = text;
     f.outline = vector::scan_svg(text);
+    f.made = made_of(f.outline);
     f.rest = lunasvg::Document::loadFromData(text.data(), text.size());
+    f.serial = ++serial;
     return f;
+}
+
+// The key of the stages an element draws from in files() (stage_file) starts so.
+std::string stage_key(const void* owner) {
+    char key[32];
+    std::snprintf(key, sizeof key, "\x02%p\x03", owner);
+    return key;
 }
 
 Live* live_of(Rml::Element* element) {
@@ -88,6 +173,10 @@ Live* live_of(Rml::Element* element) {
     const auto it = m.find(element);
     if (it == m.end()) return nullptr;
     if (!it->second.element) {
+        // Its stages go with it.
+        const std::string key = stage_key(element);
+        auto& fs = files();
+        for (auto f = fs.lower_bound(key); f != fs.end() && f->first.rfind(key, 0) == 0;) f = fs.erase(f);
         m.erase(it); // another element at a dead one's address
         return nullptr;
     }
@@ -101,7 +190,11 @@ bool say(Rml::Element* element, std::string_view part, F&& change) {
     auto& m = lives();
     for (auto it = m.begin(); it != m.end();) it = it->second.element ? std::next(it) : m.erase(it);
     Live* live = live_of(element);
-    if (!live) live = &m.emplace(element, Live{element->GetObserverPtr(), {}}).first->second;
+    if (!live) {
+        Live fresh;
+        fresh.element = element->GetObserverPtr();
+        live = &m.emplace(element, std::move(fresh)).first->second;
+    }
     auto it = live->parts.find(part);
     if (it == live->parts.end()) it = live->parts.emplace(std::string(part), SvgPart{}).first;
     change(it->second);
@@ -116,7 +209,7 @@ bool plain_paint(const std::string& v) {
     return v.empty() || v == "none" || vector::parse_svg_color(v, c);
 }
 
-const vector::Morph* morph_of(File& f, const std::string& path, const std::string& part, i32 index, const std::string& target) {
+const vector::Morph* morph_of(File& f, const std::string& path, const std::string& part, i32 index, const std::string& target, i32 ti) {
     const std::string key = part + '\n' + target;
     if (const auto it = f.morphs.find(key); it != f.morphs.end()) return &it->second;
     if (f.broken.count(key)) return nullptr;
@@ -126,7 +219,6 @@ const vector::Morph* morph_of(File& f, const std::string& path, const std::strin
         problem(who + why);
         return nullptr;
     };
-    const i32 ti = f.outline.find(target);
     if (ti < 0) return fail("в файле нет фигуры с id «" + target + "»");
     if (f.outline.elements[static_cast<usize>(index)].tag != "path")
         return fail("морфинг меняет контур d, а «" + part + "» — <" + f.outline.elements[static_cast<usize>(index)].tag +
@@ -159,7 +251,7 @@ void apply_part(File& f, const std::string& path, lunasvg::Document& doc, const 
     }
     const vector::SvgElement& rest = f.outline.elements[static_cast<usize>(index)];
     if (!p.morph.empty()) {
-        if (const vector::Morph* m = morph_of(f, path, id, index, p.morph)) {
+        if (const vector::Morph* m = morph_of(f, path, id, index, p.morph, f.outline.find(p.morph))) {
             vector::mix(*m, p.k, f.scratch);
             e.setAttribute("d", vector::to_d(f.scratch.path));
             const vector::Look& look = f.scratch.look;
@@ -196,15 +288,750 @@ void apply_part(File& f, const std::string& path, lunasvg::Document& doc, const 
     }
 }
 
-void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, lunasvg::Document& doc) {
+// --- a clip's pose (svg_pose) ----------------------------------------------------------------
+
+bool shape_tag(const std::string& tag) { return stage_shape_tag(tag); }
+
+bool drawable_tag(const std::string& tag) { return tag == "g" || tag == "use" || shape_tag(tag); }
+
+// The shapes a part draws (stage_leaves). On a stage, a part of the file does not draw its group's copies: the tab's
+// fill, stroke and width of a group leave the copies in it as they are (forge::pixel::Rig::Impl::add_copy).
+const std::vector<i32>& leaves_of(File& f, i32 index) {
+    if (const auto it = f.leaves.find(index); it != f.leaves.end()) return it->second;
+    std::vector<i32> all = stage_leaves(f.outline, index);
+    if (f.stage && f.stage->copy_of[static_cast<usize>(index)].empty())
+        all.erase(std::remove_if(all.begin(), all.end(), [&](i32 j) { return !f.stage->copy_of[static_cast<usize>(j)].empty(); }), all.end());
+    return f.leaves[index] = std::move(all);
+}
+
+// The element a part's id names: on a stage a copy's, else the file's own part (stage_part: the first that draws,
+// never one in a copy); in a picture's file the first element with the id, as in part 5в.
+i32 part_element(File& f, std::string_view id) {
+    if (!f.stage) return f.outline.find(id);
+    if (const auto it = f.parts.find(id); it != f.parts.end()) return it->second;
+    const Stage& st = *f.stage;
+    i32 best = -1;
+    if (const auto c = st.copy_root.find(id); c != st.copy_root.end()) best = c->second;
+    else
+        for (usize i = 0; i < f.outline.elements.size(); ++i) {
+            const vector::SvgElement& e = f.outline.elements[i];
+            if (!st.copy_of[i].empty() || e.id != id || !drawable_tag(e.tag)) continue;
+            if (best < 0 || st.file_of[i] < st.file_of[static_cast<usize>(best)]) best = static_cast<i32>(i);
+        }
+    f.parts.emplace(std::string(id), best);
+    return best;
+}
+
+// A shape a morph goes to: the file's first element with the id (on a stage, never one in a copy).
+i32 target_element(File& f, std::string_view id) {
+    if (!f.stage) return f.outline.find(id);
+    i32 best = -1;
+    for (usize i = 0; i < f.outline.elements.size(); ++i)
+        if (f.stage->copy_of[i].empty() && f.outline.elements[i].id == id &&
+            (best < 0 || f.stage->file_of[i] < f.stage->file_of[static_cast<usize>(best)]))
+            best = static_cast<i32>(i);
+    return best;
+}
+
+// SVG's transform list: matrix, translate, scale, rotate, skewX and skewY, the first outermost.
+bool parse_transform(std::string_view s, vector::MotionMatrix& out) {
+    out = {};
+    usize i = 0;
+    auto space = [&] {
+        while (i < s.size() && (s[i] == ' ' || s[i] == ',' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) ++i;
+    };
+    auto rad = [](f64 deg, f64& sn, f64& cs) { vector::trig::sin_cos(deg * vector::trig::kPi / 180.0, sn, cs); };
+    for (;;) {
+        space();
+        if (i >= s.size()) return true;
+        const usize a = i;
+        while (i < s.size() && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z'))) ++i;
+        const std::string_view name = s.substr(a, i - a);
+        space();
+        if (i >= s.size() || s[i] != '(') return false;
+        ++i;
+        f64 v[6] = {};
+        int k = 0;
+        for (;;) {
+            space();
+            if (i < s.size() && s[i] == ')') {
+                ++i;
+                break;
+            }
+            if (k == 6 || i >= s.size()) return false;
+            if (s[i] == '+') ++i;
+            const auto [end, ec] = std::from_chars(s.data() + i, s.data() + s.size(), v[k]);
+            if (ec != std::errc()) return false;
+            i = static_cast<usize>(end - s.data());
+            ++k;
+        }
+        vector::MotionMatrix m;
+        f64 sn = 0, cs = 1;
+        if (name == "matrix" && k == 6) m = {v[0], v[1], v[2], v[3], v[4], v[5]};
+        else if (name == "translate" && (k == 1 || k == 2)) m = {1, 0, 0, 1, v[0], k == 2 ? v[1] : 0};
+        else if (name == "scale" && (k == 1 || k == 2)) m = {v[0], 0, 0, k == 2 ? v[1] : v[0], 0, 0};
+        else if (name == "rotate" && (k == 1 || k == 3)) {
+            rad(v[0], sn, cs);
+            m = {cs, sn, -sn, cs, 0, 0};
+            if (k == 3) m = vector::MotionMatrix{1, 0, 0, 1, v[1], v[2]} * m * vector::MotionMatrix{1, 0, 0, 1, -v[1], -v[2]};
+        } else if (name == "skewX" && k == 1) {
+            rad(v[0], sn, cs);
+            m = {1, 0, sn / cs, 1, 0, 0};
+        } else if (name == "skewY" && k == 1) {
+            rad(v[0], sn, cs);
+            m = {1, sn / cs, 0, 1, 0, 0};
+        } else return false;
+        out = out * m;
+    }
+}
+
+// An element's own transform as the file has it.
+const vector::MotionMatrix& rest_matrix(File& f, i32 index) {
+    if (const auto it = f.rest_m.find(index); it != f.rest_m.end()) return it->second;
+    vector::MotionMatrix m;
+    if (const std::string* t = f.outline.elements[static_cast<usize>(index)].attr("transform"))
+        if (!parse_transform(*t, m)) m = {};
+    return f.rest_m[index] = m;
+}
+
+// From an element's units to the picture's (the root's own, inside its viewBox), each element above it at the
+// transform `now` gives it, else at its own.
+vector::MotionMatrix screen(File& f, const std::map<i32, vector::MotionMatrix>& now, i32 index) {
+    vector::MotionMatrix m;
+    for (i32 k = index; k > 0; k = f.outline.elements[static_cast<usize>(k)].parent) {
+        const auto it = now.find(k);
+        m = (it != now.end() ? it->second : rest_matrix(f, k)) * m;
+    }
+    return m;
+}
+
+u8 to_u8(f64 v) { return static_cast<u8>(std::clamp(std::lround(v * 255.0), 0L, 255L)); }
+
+Paint8 paint8(const vector::SvgOutline& o, i32 index, std::string_view prop, std::string_view opacity_prop, bool default_on) {
+    const std::string v = vector::inherited(o, index, prop);
+    Paint8 p;
+    const u8 alpha = to_u8(std::clamp(vector::svg_number(vector::inherited(o, index, opacity_prop), 1.0), 0.0, 1.0));
+    u8 c[3];
+    if (v.empty()) {
+        if (default_on) p.a = alpha;
+    } else if (v == "none") {
+    } else if (vector::parse_svg_color(v, c)) {
+        p = {c[0], c[1], c[2], alpha, false};
+    } else {
+        p.other = true; // a gradient, currentColor
+        p.a = 255;
+    }
+    return p;
+}
+
+const LeafLook& rest_look(File& f, i32 leaf) {
+    if (const auto it = f.looks.find(leaf); it != f.looks.end()) return it->second;
+    LeafLook l;
+    const vector::SvgOutline& o = f.outline;
+    l.fill = paint8(o, leaf, "fill", "fill-opacity", true);
+    l.stroke = paint8(o, leaf, "stroke", "stroke-opacity", false);
+    l.own_width = std::max(0.0, vector::svg_number(vector::inherited(o, leaf, "stroke-width"), 1.0));
+    l.width = l.stroke.other || l.stroke.a > 0 ? l.own_width : 0;
+    l.opacity = std::clamp(vector::svg_number(o.elements[static_cast<usize>(leaf)].property("opacity"), 1.0), 0.0, 1.0);
+    return f.looks.emplace(leaf, l).first->second;
+}
+
+std::string hex6(const Paint8& p) {
+    char buf[8];
+    std::snprintf(buf, sizeof buf, "#%02x%02x%02x", p.r, p.g, p.b);
+    return buf;
+}
+
+std::string matrix_text(const vector::MotionMatrix& m) {
+    return "matrix(" + num(m.a) + " " + num(m.b) + " " + num(m.c) + " " + num(m.d) + " " + num(m.e) + " " + num(m.f) + ")";
+}
+
+// The presentation properties a pose sets, by element. lunasvg's Element::setAttribute sets them over the file's
+// attribute and its `style` alike (and over a stylesheet's rule).
+struct Writes {
+    std::map<i32, std::vector<std::pair<std::string, std::string>>> by_element;
+    void set(i32 element, std::string name, std::string value) {
+        auto& v = by_element[element];
+        for (auto& [n, x] : v)
+            if (n == name) {
+                x = std::move(value);
+                return;
+            }
+        v.push_back({std::move(name), std::move(value)});
+    }
+    const std::string* get(i32 element, std::string_view name) const {
+        const auto it = by_element.find(element);
+        if (it == by_element.end()) return nullptr;
+        for (const auto& [n, x] : it->second)
+            if (n == name) return &x;
+        return nullptr;
+    }
+};
+
+// An element of the file in the document: the root, an element lunasvg finds by its id, else (a shape without one,
+// inside a part) by its place among the elements lunasvg makes under the element above it.
+lunasvg::Element element_at(const File& f, lunasvg::Document& doc, i32 index) {
+    const File::Made& m = f.made[static_cast<usize>(index)];
+    if (m.place < 0) return {};
+    if (index == 0) return doc.documentElement();
+    if (m.by_id) return doc.getElementById(f.outline.elements[static_cast<usize>(index)].id);
+    lunasvg::Element up = element_at(f, doc, f.outline.elements[static_cast<usize>(index)].parent);
+    if (!up) return {};
+    i32 place = m.place;
+    for (const lunasvg::Node& n : up.children())
+        if (n.isElement() && place-- == 0) return n.toElement();
+    return {};
+}
+
+Written write_all(const File& f, lunasvg::Document& doc, const Writes& w) {
+    Written out{f.serial, {}};
+    for (const auto& [index, list] : w.by_element) {
+        lunasvg::Element e = element_at(f, doc, index);
+        if (!e) continue;
+        for (const auto& [name, value] : list) {
+            e.setAttribute(name, value);
+            out.attributes.push_back({index, name});
+        }
+    }
+    return out;
+}
+
+// The tab's fill of a part over a shape (forge::pixel::Rig::pose): from the shape's own colour by the share; a shape
+// without a fill stays without one, a gradient changes halfway.
+void fill_over(Paint8& p, const vector::MotionValue& v) {
+    const f64 k = std::isfinite(v.v) ? std::clamp(v.v, 0.0, 1.0) : 1.0;
+    if (k <= 0) return;
+    if (!p.other && p.a == 0) return;
+    if (p.other && k < 0.5) return;
+    const u8 base = p.other ? 255 : p.a;
+    const u8 fa = static_cast<u8>((base * v.color.a + 127) / 255);
+    if (p.other || k >= 1) {
+        p = {v.color.r, v.color.g, v.color.b, fa, false};
+        return;
+    }
+    auto lerp = [k](u8 c0, u8 c1) { return static_cast<u8>(std::lround(c0 + (c1 - c0) * k)); };
+    p = {lerp(p.r, v.color.r), lerp(p.g, v.color.g), lerp(p.b, v.color.b), lerp(p.a, fa), false};
+}
+
+// The stroke as the fill; a shape without one gets it at its own width, coming in from transparent.
+void stroke_over(LeafLook& l, const vector::MotionValue& v) {
+    const f64 k = std::clamp(v.v, 0.0, 1.0);
+    if (!(k > 0)) return;
+    Paint8& p = l.stroke;
+    if (p.other && k < 0.5) return;
+    const bool none = !p.other && (p.a == 0 || l.width <= 0);
+    const u8 base = p.other || none ? 255 : p.a;
+    const u8 sa = static_cast<u8>((base * v.color.a + 127) / 255);
+    if (none) {
+        if (l.width <= 0) l.width = l.own_width;
+        p = {v.color.r, v.color.g, v.color.b, static_cast<u8>(std::lround(sa * k)), false};
+    } else if (p.other || k >= 1) {
+        p = {v.color.r, v.color.g, v.color.b, sa, false};
+    } else {
+        auto lerp = [k](u8 c0, u8 c1) { return static_cast<u8>(std::lround(c0 + (c1 - c0) * k)); };
+        p = {lerp(p.r, v.color.r), lerp(p.g, v.color.g), lerp(p.b, v.color.b), lerp(p.a, sa), false};
+    }
+}
+
+// A part's tint and flash (forge::pixel::Rig's Tone): the tint multiplies each channel by white + (tint − white) · k,
+// the flash takes red, green and blue its share of the way to white + (colour − white) · k.
+struct Tone {
+    bool tint = false;
+    f64 m[4] = {255, 255, 255, 255};
+    f64 flash = 0;
+    f64 f[3] = {255, 255, 255};
+
+    void apply(u8& r, u8& g, u8& b, u8& a) const {
+        u8* c[4] = {&r, &g, &b, &a};
+        auto byte = [](f64 v) { return static_cast<u8>(std::clamp(std::lround(v), 0L, 255L)); };
+        if (tint)
+            for (int i = 0; i < 4; ++i) *c[i] = byte(*c[i] * m[i] / 255.0);
+        if (flash > 0)
+            for (int i = 0; i < 3; ++i) *c[i] = byte(*c[i] + (f[i] - *c[i]) * flash);
+    }
+};
+
+bool tone_of(const vector::MotionPartPose& pp, Tone& t) {
+    using vector::MotionProp;
+    auto val = [&](MotionProp p) -> const vector::MotionValue& { return pp.values[static_cast<usize>(p)]; };
+    auto has = [&](MotionProp p) { return pp.has[static_cast<usize>(p)]; };
+    t = {};
+    const f64 tk = has(MotionProp::Tint) ? std::clamp(val(MotionProp::Tint).v, 0.0, 1.0) : 0.0;
+    const f64 fl = has(MotionProp::Flash) ? std::clamp(val(MotionProp::Flash).v, 0.0, 1.0) : 0.0;
+    if (tk > 0) {
+        t.tint = true;
+        const vector::MotionColor& c = val(MotionProp::Tint).color;
+        const u8 cs[4] = {c.r, c.g, c.b, c.a};
+        for (int i = 0; i < 4; ++i) t.m[i] = 255 + (cs[i] - 255) * tk;
+    }
+    if (fl > 0) {
+        t.flash = fl;
+        const f64 ck = has(MotionProp::FlashColor) ? std::clamp(val(MotionProp::FlashColor).v, 0.0, 1.0) : 0.0;
+        const vector::MotionColor& c = val(MotionProp::FlashColor).color;
+        const u8 cs[3] = {c.r, c.g, c.b};
+        if (ck > 0)
+            for (int i = 0; i < 3; ++i) t.f[i] = 255 + (cs[i] - 255) * ck;
+    }
+    return t.tint || t.flash > 0;
+}
+
+// An opacity as ThorVG's SVG loader keeps one: 0 … 255.
+u8 opacity8(const std::string& text) { return to_u8(std::clamp(vector::svg_number(text, 1.0), 0.0, 1.0)); }
+
+Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, const SvgPose& pose) {
+    const vector::SvgOutline& o = f.outline;
+    const Stage* st = f.stage.get();
+    using vector::MotionProp;
+    auto has = [](const vector::MotionPartPose& pp, MotionProp p) { return pp.has[static_cast<usize>(p)]; };
+    auto val = [](const vector::MotionPartPose& pp, MotionProp p) -> const vector::MotionValue& { return pp.values[static_cast<usize>(p)]; };
+    auto parent_of = [&](i32 i) { return o.elements[static_cast<usize>(i)].parent; };
+    // Each part by its element.
+    std::vector<std::pair<i32, const vector::MotionPartPose*>> parts;
+    std::map<i32, const vector::MotionPartPose*> posed;
+    for (const vector::MotionPartPose& pp : pose.parts) {
+        const i32 index = part_element(f, pp.id);
+        if (index < 0 || !element_at(f, doc, index)) {
+            problem("«" + file_name(path) + "»: нет части с id «" + pp.id + "»");
+            continue;
+        }
+        if (!posed.emplace(index, &pp).second) continue;
+        parts.push_back({index, &pp});
+    }
+    Writes w;
+    std::map<i32, LeafLook> looks; // the shapes the pose touches, as they are drawn now
+    auto look = [&](i32 leaf) -> LeafLook& {
+        auto it = looks.find(leaf);
+        if (it == looks.end()) it = looks.emplace(leaf, rest_look(f, leaf)).first;
+        return it->second;
+    };
+
+    // Copies (part 5г): shown from their birth, as the tab shows them; a copy of a hidden shape shows, one of a hidden
+    // group shows nothing (ThorVG reads none of what is inside it).
+    if (st)
+        for (const auto& [id, root] : st->copy_root) {
+            const bool drawn = std::any_of(pose.copies.begin(), pose.copies.end(), [&](const vector::MotionCopy& c) { return c.id == id; });
+            const vector::SvgElement& e = o.elements[static_cast<usize>(root)];
+            const std::string shown = e.property("display");
+            const bool hidden = shown == "none" && !shape_tag(e.tag);
+            w.set(root, "display", drawn && !hidden ? (shown.empty() || shown == "none" ? std::string("inline") : shown) : std::string("none"));
+        }
+
+    // Morphs first: the shape's outline and looks become the pair's at k.
+    for (const auto& [index, pp] : parts) {
+        if (!has(*pp, MotionProp::Morph)) continue;
+        const vector::MotionValue& m = val(*pp, MotionProp::Morph);
+        if (!(m.v > 0) || m.target.empty()) continue;
+        if (!shape_tag(o.elements[static_cast<usize>(index)].tag)) {
+            problem("«" + file_name(path) + "», морфинг «" + pp->id + "»: это группа, морфинг бывает только у фигуры");
+            continue;
+        }
+        const i32 ti = target_element(f, m.target);
+        const vector::Morph* mo = morph_of(f, path, pp->id, index, m.target, ti);
+        if (!mo) continue;
+        vector::mix(*mo, m.v, f.scratch);
+        w.set(index, "d", vector::to_d(f.scratch.path));
+        LeafLook& l = look(index);
+        const vector::Look& lk = f.scratch.look;
+        if (plain_paint(vector::inherited(o, index, "fill")) && plain_paint(vector::inherited(o, ti, "fill"))) {
+            l.fill = {to_u8(lk.fill.r), to_u8(lk.fill.g), to_u8(lk.fill.b), lk.fill.on ? to_u8(lk.fill.opacity) : u8(0), false};
+            l.fill_set = true;
+        }
+        if (plain_paint(vector::inherited(o, index, "stroke")) && plain_paint(vector::inherited(o, ti, "stroke"))) {
+            l.stroke = {to_u8(lk.stroke.r), to_u8(lk.stroke.g), to_u8(lk.stroke.b), lk.stroke.on ? to_u8(lk.stroke.opacity) : u8(0), false};
+            l.width = lk.stroke.on ? lk.stroke_width : 0;
+            l.stroke_set = true;
+        }
+        l.opacity = lk.opacity;
+        l.morphed = true;
+        l.path = f.scratch.path;
+    }
+
+    // Links (part 5г): the part carrying each, a link that comes back round to its own part dropped (as the tab does).
+    std::map<i32, i32> carrier;
+    for (const auto& [index, pp] : parts) {
+        if (!has(*pp, MotionProp::Link) || val(*pp, MotionProp::Link).target.empty()) continue;
+        const i32 c = part_element(f, val(*pp, MotionProp::Link).target);
+        if (c < 0) problem("«" + file_name(path) + "», крепление «" + pp->id + "»: нет части «" + val(*pp, MotionProp::Link).target + "»");
+        else carrier[index] = c;
+    }
+    // What a part's place waits for: the posed parts it is inside, and its carrier with the posed parts that one is
+    // inside (the file has no track of a carrier at rest, which the tab poses at rest and places after its groups).
+    auto deps = [&](i32 p, std::vector<i32>& out) {
+        out.clear();
+        for (i32 q = parent_of(p); q >= 0; q = parent_of(q))
+            if (posed.count(q)) out.push_back(q);
+        if (const auto c = carrier.find(p); c != carrier.end()) {
+            out.push_back(c->second);
+            for (i32 q = parent_of(c->second); q >= 0; q = parent_of(q))
+                if (posed.count(q)) out.push_back(q);
+        }
+    };
+    std::vector<i32> work, next;
+    for (auto it = carrier.begin(); it != carrier.end();) {
+        std::set<i32> seen;
+        bool back = false;
+        deps(it->first, work);
+        while (!work.empty() && !back) {
+            const i32 q = work.back();
+            work.pop_back();
+            if (q == it->first) back = true;
+            if (back || !seen.insert(q).second) continue;
+            deps(q, next);
+            work.insert(work.end(), next.begin(), next.end());
+        }
+        if (back) {
+            problem("«" + file_name(path) + "»: крепление по кругу: «" + o.elements[static_cast<usize>(it->first)].id + "» и «" +
+                    o.elements[static_cast<usize>(it->second)].id + "» несут друг друга");
+            it = carrier.erase(it);
+        } else ++it;
+    }
+    // Each part after what it waits for (a group before the parts in it, so a part's own look goes over its group's).
+    std::vector<std::pair<i32, const vector::MotionPartPose*>> order;
+    {
+        std::map<i32, int> placed; // 1 placed, 2 on the way
+        std::vector<std::pair<i32, usize>> stack;
+        for (const auto& [index, pp] : parts) {
+            if (placed.count(index)) continue;
+            stack.push_back({index, 0});
+            while (!stack.empty()) {
+                auto& [q, i] = stack.back();
+                deps(q, work);
+                while (i < work.size() && (placed.count(work[i]) || !posed.count(work[i]))) ++i;
+                if (i < work.size()) {
+                    const i32 d = work[i];
+                    placed[d] = 2;
+                    stack.push_back({d, 0});
+                    continue;
+                }
+                if (placed[q] != 1) order.push_back({q, posed[q]});
+                placed[q] = 1;
+                stack.pop_back();
+            }
+        }
+    }
+
+    // Then each part: its matrix, its opacity, its shapes' fill, stroke, width, dash and drawn share, whether it shows.
+    std::map<i32, vector::MotionMatrix> now; // the transforms written, for where elements stand now
+    for (const auto& [index, pp] : order) {
+        const vector::SvgElement& rest = o.elements[static_cast<usize>(index)];
+        vector::MotionMatrix local = pp->moves ? pp->local : rest_matrix(f, index);
+        bool placed = pp->moves;
+        if (has(*pp, MotionProp::Link)) {
+            const vector::MotionValue& link = val(*pp, MotionProp::Link);
+            const auto c = carrier.find(index);
+            if (c != carrier.end() || link.m != vector::MotionMatrix{}) {
+                // C over its groups: the part's place in picture units as it would stand, then C.
+                vector::MotionMatrix carry = link.m;
+                if (c != carrier.end()) {
+                    vector::MotionMatrix at_rest;
+                    for (i32 k = c->second; k > 0; k = parent_of(k)) at_rest = rest_matrix(f, k) * at_rest;
+                    carry = screen(f, now, c->second) * vector::inverse(at_rest) * carry;
+                }
+                const vector::MotionMatrix pg = screen(f, now, parent_of(index));
+                local = vector::inverse(pg) * carry * pg * local;
+                placed = true;
+            }
+        }
+        if (placed) {
+            now[index] = local;
+            w.set(index, "transform", matrix_text(local));
+        }
+        if (has(*pp, MotionProp::Opacity)) {
+            const auto it = looks.find(index);
+            const f64 own = it != looks.end() && it->second.morphed ? it->second.opacity
+                                                                     : std::clamp(vector::svg_number(rest.property("opacity"), 1.0), 0.0, 1.0);
+            w.set(index, "opacity", num(own * std::clamp(val(*pp, MotionProp::Opacity).v, 0.0, 1.0)));
+        }
+        if (has(*pp, MotionProp::Fill) && val(*pp, MotionProp::Fill).v > 0)
+            for (i32 leaf : leaves_of(f, index)) {
+                LeafLook& l = look(leaf);
+                const Paint8 before = l.fill;
+                fill_over(l.fill, val(*pp, MotionProp::Fill));
+                l.fill_set = l.fill_set || before.r != l.fill.r || before.g != l.fill.g || before.b != l.fill.b || before.a != l.fill.a ||
+                             before.other != l.fill.other;
+            }
+        if (has(*pp, MotionProp::Stroke) && val(*pp, MotionProp::Stroke).v > 0)
+            for (i32 leaf : leaves_of(f, index)) {
+                LeafLook& l = look(leaf);
+                stroke_over(l, val(*pp, MotionProp::Stroke));
+                l.stroke_set = true;
+            }
+        if (has(*pp, MotionProp::StrokeWidth) && val(*pp, MotionProp::StrokeWidth).v > 0)
+            for (i32 leaf : leaves_of(f, index)) {
+                LeafLook& l = look(leaf);
+                const vector::MotionValue& v = val(*pp, MotionProp::StrokeWidth);
+                const f64 own = l.width > 0 ? l.width : l.own_width;
+                l.width = std::max(0.0, own + (v.n - own) * v.v);
+                l.stroke_set = true;
+            }
+        // The dash: each shape's own pattern moved along its line.
+        if (has(*pp, MotionProp::Dash) && val(*pp, MotionProp::Dash).v != 0)
+            for (i32 leaf : leaves_of(f, index)) {
+                const std::string pattern = vector::inherited(o, leaf, "stroke-dasharray");
+                if (pattern.empty() || pattern == "none") continue;
+                w.set(leaf, "stroke-dashoffset", num(vector::svg_number(vector::inherited(o, leaf, "stroke-dashoffset"), 0.0) + val(*pp, MotionProp::Dash).v));
+            }
+        // The share of each shape's outline drawn, its contours one line after another; nothing when from ≥ to.
+        const f64 from = has(*pp, MotionProp::DrawFrom) ? val(*pp, MotionProp::DrawFrom).v : 0.0;
+        const f64 to = has(*pp, MotionProp::DrawTo) ? val(*pp, MotionProp::DrawTo).v : 1.0;
+        if (from != 0 || to != 1) {
+            const f64 a = std::clamp(from, 0.0, 1.0), b = std::clamp(to, 0.0, 1.0);
+            for (i32 leaf : leaves_of(f, index)) {
+                if (o.elements[static_cast<usize>(leaf)].tag != "path") {
+                    problem("«" + file_name(path) + "», прорисовка «" + pp->id + "»: фигура не стала контуром");
+                    continue;
+                }
+                const auto lk = looks.find(leaf);
+                const bool morphed = lk != looks.end() && lk->second.morphed;
+                vector::Path whole;
+                std::string why;
+                if (morphed) whole = lk->second.path;
+                else if (!vector::shape_path(o, leaf, whole, why)) continue;
+                const vector::Path part = a < b ? vector::trim(whole, a, b, !morphed) : vector::Path{};
+                w.set(leaf, "d", part.contours.empty() ? std::string("M0 0") : vector::to_d(part, !morphed));
+            }
+        }
+        if (has(*pp, MotionProp::Visible)) {
+            const bool copy = st && !st->copy_of[static_cast<usize>(index)].empty() && st->copy_root.count(pp->id);
+            if (val(*pp, MotionProp::Visible).v <= 0) w.set(index, "display", "none");
+            else if (!copy) {
+                const std::string shown = rest.property("display");
+                w.set(index, "display", shown.empty() ? std::string("inline") : shown);
+            }
+        }
+    }
+
+    // Tints and flashes: the colours of each shape, its own part's first, then its groups' (copies in them too).
+    std::set<i32> toned_leaves;
+    for (const auto& [index, pp] : parts) {
+        Tone t;
+        if (!tone_of(*pp, t)) continue;
+        for (i32 leaf : stage_leaves(o, index)) toned_leaves.insert(leaf);
+    }
+    std::map<i32, std::vector<Tone>> tones; // by shape
+    for (const i32 leaf : toned_leaves) {
+        std::vector<Tone>& ts = tones[leaf];
+        for (i32 q = leaf; q >= 0; q = parent_of(q))
+            if (const auto it = posed.find(q); it != posed.end())
+                if (Tone t; tone_of(*it->second, t)) ts.push_back(t);
+        LeafLook& l = look(leaf);
+        auto colour = [&](Paint8& p) {
+            for (const Tone& t : ts) t.apply(p.r, p.g, p.b, p.a);
+        };
+        if (!l.fill.other && l.fill.a > 0) {
+            colour(l.fill);
+            l.fill_set = true;
+        }
+        if (!l.stroke.other && l.stroke.a > 0 && l.width > 0) {
+            colour(l.stroke);
+            l.stroke_set = true;
+        }
+    }
+
+    // Masks (part 5г): a part drawn only inside (or outside) the shapes of its mask part as they stand, white whatever
+    // their colours; ThorVG keeps a mask shape's fill if it has one or no stroke, its stroke if it has one.
+    if (st)
+        for (const auto& [index, pp] : parts) {
+            if (!has(*pp, MotionProp::Mask) || !(val(*pp, MotionProp::Mask).v > 0)) continue;
+            const vector::MotionValue& mv = val(*pp, MotionProp::Mask);
+            const StageMask key{pp->id, mv.target, mv.v > 1.5};
+            const auto mk = st->mask.find(key);
+            const i32 by = part_element(f, mv.target);
+            if (mk == st->mask.end() || by < 0) {
+                problem("«" + file_name(path) + "», маска «" + pp->id + "»: нет части «" + mv.target + "»");
+                continue;
+            }
+            w.set(index, "mask", "url(#" + o.elements[static_cast<usize>(mk->second)].id + ")");
+            const vector::MotionMatrix into = vector::inverse(screen(f, now, index));
+            const std::string colour = std::get<2>(key) ? "#000000" : "#ffffff";
+            for (i32 leaf : leaves_of(f, by)) {
+                const auto mp = st->mask_path.find({key, st->file_of[static_cast<usize>(leaf)]});
+                if (mp == st->mask_path.end()) continue;
+                const i32 to_el = mp->second;
+                const LeafLook& l = look(leaf);
+                bool fill = l.fill.other || l.fill.a > 0;
+                bool stroke = l.width > 0 && (l.stroke.other || l.stroke.a > 0);
+                if (vector::display_none(o, leaf)) fill = true, stroke = false; // ThorVG reads a hidden shape without paints
+                w.set(to_el, "fill", fill || !stroke ? colour : std::string("none"));
+                w.set(to_el, "stroke", stroke ? colour : std::string("none"));
+                w.set(to_el, "stroke-width", num(l.width));
+                if (const std::string* d = w.get(leaf, "d")) w.set(to_el, "d", *d);
+                if (const std::string* off = w.get(leaf, "stroke-dashoffset")) w.set(to_el, "stroke-dashoffset", *off);
+                w.set(to_el, "transform", matrix_text(into * screen(f, now, leaf)));
+            }
+        }
+
+    // The shapes' looks, a gradient a tone changes in its own copy (part 5г).
+    for (const auto& [leaf, l] : looks) {
+        const auto tn = tones.find(leaf);
+        auto gradient = [&](const char* paint, const char* opacity, const std::map<std::pair<std::string, i32>, i32>& copies) {
+            if (!st || tn == tones.end()) return;
+            const auto g = copies.find({st->copy_of[static_cast<usize>(leaf)], st->file_of[static_cast<usize>(leaf)]});
+            if (g == copies.end()) return;
+            // ThorVG bakes the shape's fill (or stroke) opacity into the stops, then tones each.
+            const u8 own = opacity8(vector::inherited(o, leaf, opacity));
+            for (i32 s = g->second + 1; s < static_cast<i32>(o.elements.size()) && parent_of(s) == g->second; ++s) {
+                const vector::SvgElement& stop = o.elements[static_cast<usize>(s)];
+                u8 c[3] = {0, 0, 0};
+                vector::parse_svg_color(stop.property("stop-color"), c);
+                Paint8 p{c[0], c[1], c[2], static_cast<u8>(opacity8(stop.property("stop-opacity")) * own / 255), false};
+                for (const Tone& t : tn->second) t.apply(p.r, p.g, p.b, p.a);
+                w.set(s, "stop-color", hex6(p));
+                w.set(s, "stop-opacity", num(p.a / 255.0));
+            }
+            w.set(leaf, paint, "url(#" + o.elements[static_cast<usize>(g->second)].id + ")");
+            w.set(leaf, opacity, "1");
+        };
+        if (l.fill_set && !l.fill.other) {
+            w.set(leaf, "fill", l.fill.a > 0 || !l.morphed ? hex6(l.fill) : std::string("none"));
+            w.set(leaf, "fill-opacity", num(l.fill.a / 255.0));
+        } else if (l.fill.other && st) {
+            gradient("fill", "fill-opacity", st->fill_gradient);
+        }
+        if (l.stroke_set && !l.stroke.other) {
+            w.set(leaf, "stroke", hex6(l.stroke));
+            w.set(leaf, "stroke-opacity", num(l.stroke.a / 255.0));
+            w.set(leaf, "stroke-width", num(l.width));
+        } else if (l.stroke.other && l.width > 0 && st) {
+            gradient("stroke", "stroke-opacity", st->stroke_gradient);
+        }
+        // A morphed shape without its own opacity track: the pair's opacity at k.
+        if (l.morphed) {
+            bool own_track = false;
+            for (const auto& [index, pp] : parts)
+                if (index == leaf && has(*pp, MotionProp::Opacity)) own_track = true;
+            if (!own_track) w.set(leaf, "opacity", num(l.opacity));
+        }
+    }
+    return write_all(f, doc, w);
+}
+
+// What a pose needs of a stage (part 5г), against the picture's own file: its copies, the shapes it draws along their
+// length or morphs that are not a <path>, the gradients it tints, its masks, its order.
+StageNeeds needs_of(File& f, const SvgPose& pose) {
+    using vector::MotionProp;
+    const vector::SvgOutline& o = f.outline;
+    StageNeeds n;
+    n.copies = pose.copies;
+    n.order = pose.order;
+    auto source_of = [&](const std::string& id, std::string& copy) -> i32 {
+        for (const vector::MotionCopy& c : pose.copies)
+            if (c.id == id) {
+                copy = c.id;
+                return stage_part(o, c.source);
+            }
+        copy.clear();
+        return stage_part(o, id);
+    };
+    for (const vector::MotionPartPose& pp : pose.parts) {
+        auto has = [&](MotionProp p) { return pp.has[static_cast<usize>(p)]; };
+        auto val = [&](MotionProp p) -> const vector::MotionValue& { return pp.values[static_cast<usize>(p)]; };
+        std::string copy;
+        const i32 e = source_of(pp.id, copy);
+        if (e < 0) continue;
+        const bool drawn = (has(MotionProp::DrawFrom) && val(MotionProp::DrawFrom).v != 0) || (has(MotionProp::DrawTo) && val(MotionProp::DrawTo).v != 1);
+        const bool morph = has(MotionProp::Morph) && val(MotionProp::Morph).v > 0 && !val(MotionProp::Morph).target.empty();
+        if (drawn || morph)
+            for (const i32 leaf : stage_leaves(o, e))
+                if (o.elements[static_cast<usize>(leaf)].tag != "path" && (drawn || leaf == e)) n.outlines.insert(leaf);
+        Tone t;
+        if (tone_of(pp, t)) {
+            auto toned = [&](const std::string& in, i32 under) {
+                for (const i32 leaf : stage_leaves(o, under)) {
+                    if (vector::inherited(o, leaf, "fill").rfind("url(", 0) == 0) n.fill_gradients.insert({in, leaf});
+                    if (vector::inherited(o, leaf, "stroke").rfind("url(", 0) == 0) n.stroke_gradients.insert({in, leaf});
+                }
+            };
+            toned(copy, e);
+            // A group's tone reaches the copies of the parts inside it.
+            if (copy.empty())
+                for (const vector::MotionCopy& c : pose.copies) {
+                    const i32 s = stage_part(o, c.source);
+                    bool inside = false;
+                    for (i32 k = s >= 0 ? o.elements[static_cast<usize>(s)].parent : -1; k >= 0 && !inside; k = o.elements[static_cast<usize>(k)].parent)
+                        inside = k == e;
+                    if (inside) toned(c.id, s);
+                }
+        }
+        if (has(MotionProp::Mask) && val(MotionProp::Mask).v > 0 && !val(MotionProp::Mask).target.empty())
+            n.masks.insert({pp.id, val(MotionProp::Mask).target, val(MotionProp::Mask).v > 1.5});
+    }
+    return n;
+}
+
+// The stage a live element (or a check, `owner` 0) draws a picture from, its file in files(); null with a line when it
+// does not make.
+File* stage_file(File& f, const std::string& path, const void* owner, const StageNeeds& needs) {
+    Stage stage;
+    std::vector<std::string> notes;
+    const bool made = make_stage(f.text, f.outline, needs, stage, notes);
+    for (const std::string& n : notes) problem("«" + file_name(path) + "»: " + n);
+    if (!made) return nullptr;
+    File& sf = file(stage_key(owner) + path, stage.text);
+    if (sf.outline.elements.size() != stage.file_of.size() || !sf.outline.error.empty()) {
+        problem("«" + file_name(path) + "»: сцена картинки не сложилась (" + std::to_string(sf.outline.elements.size()) + " элементов вместо " +
+                std::to_string(stage.file_of.size()) + ")");
+        return nullptr;
+    }
+    if (!sf.stage) sf.stage = std::make_shared<const Stage>(std::move(stage));
+    return &sf;
+}
+
+std::unique_ptr<lunasvg::Document> load(const std::string& text) { return lunasvg::Document::loadFromData(text.data(), text.size()); }
+
+void apply(Rml::Element* element, const Rml::String& path, const Rml::String& text, Rml::UniquePtr<lunasvg::Document>& doc, bool made) {
     Live* live = live_of(element);
-    if (!live) return;
+    if (!live || !doc) return;
+    // A document the plugin has just read (the first time, or again after the element let it go) is the file's, not a
+    // stage, wherever it stands in memory.
+    if (made) live->staged.erase(path);
     File& f = file(path, text);
     if (!f.outline.error.empty()) {
         problem("«" + file_name(path) + "»: " + f.outline.error);
         return;
     }
-    for (const auto& [id, part] : live->parts) apply_part(f, path, doc, id, part);
+    // The picture is drawn from its file, or from a stage (part 5г) when the clip needs one: made again when the clip
+    // needs what it has not, or when the plugin has read the file again.
+    File* drawn = &f;
+    const bool posed = live->posed && file_name(path) == live->pose.picture;
+    auto staged = live->staged.find(path);
+    if (posed) {
+        const StageNeeds want = needs_of(f, live->pose);
+        if (staged != live->staged.end() || !want.empty()) {
+            Staged& s = live->staged[path];
+            File* sf = s.file && s.needs.covers(want) ? s.file : nullptr;
+            if (!sf) {
+                s.needs.add(want);
+                sf = stage_file(f, path, element, s.needs);
+                std::unique_ptr<lunasvg::Document> fresh = sf ? load(sf->text) : nullptr;
+                if (fresh) {
+                    doc = std::move(fresh);
+                    s.file = sf;
+                    live->written.erase(path);
+                } else {
+                    sf = nullptr;
+                    live->staged.erase(path);
+                }
+            }
+            if (sf) drawn = sf;
+        }
+    } else if (staged != live->staged.end()) {
+        if (std::unique_ptr<lunasvg::Document> fresh = load(f.text)) doc = std::move(fresh);
+        live->staged.erase(staged);
+        live->written.erase(path);
+    }
+    // What the last frame's pose set goes back to the file's first (the attribute or the `style` the file gives it, ""
+    // when it gives none: inherited or the initial value), so a frame does not build on the last one: a fill or a morph
+    // back at 0, a property the pose leaves.
+    if (const auto it = live->written.find(path); it != live->written.end()) {
+        if (it->second.file == drawn->serial)
+            for (const auto& [index, name] : it->second.attributes)
+                if (lunasvg::Element e = element_at(*drawn, *doc, index))
+                    e.setAttribute(name, drawn->outline.elements[static_cast<usize>(index)].property(name));
+        live->written.erase(it);
+    }
+    for (const auto& [id, part] : live->parts) apply_part(*drawn, path, *doc, id, part);
+    if (posed) live->written[path] = apply_pose(*drawn, path, *doc, live->pose);
 }
 
 } // namespace
@@ -276,6 +1103,96 @@ std::vector<std::string> svg_problems() {
     std::vector<std::string> out;
     out.swap(waiting());
     return out;
+}
+
+void svg_pose(Rml::Element* element, SvgPose pose) {
+    if (!element) return;
+    auto& m = lives();
+    for (auto it = m.begin(); it != m.end();) it = it->second.element ? std::next(it) : m.erase(it);
+    Live* live = live_of(element);
+    if (!live) {
+        Live fresh;
+        fresh.element = element->GetObserverPtr();
+        live = &m.emplace(element, std::move(fresh)).first->second;
+    }
+    live->posed = true;
+    live->pose = std::move(pose);
+    if (!Rml::SVG::IsLive(element)) Rml::SVG::SetLive(element, true); // the pictures are made again: apply runs then
+    else Rml::SVG::Touch(element);
+}
+
+void svg_unpose(Rml::Element* element) {
+    Live* live = live_of(element);
+    if (!live || !live->posed) return;
+    live->posed = false;
+    live->pose = {};
+    live->written.clear();
+    live->staged.clear();
+    // Made again from the files: what the clip changed goes, what svg_move and the others said comes back.
+    Rml::SVG::SetLive(element, false);
+    Rml::SVG::SetLive(element, true);
+}
+
+const SvgPose* svg_posed(Rml::Element* element) {
+    Live* live = live_of(element);
+    return live && live->posed ? &live->pose : nullptr;
+}
+
+namespace {
+
+std::unique_ptr<lunasvg::Document> posed_document(std::string_view svg, const SvgPose& pose, std::string& why, std::string* stage_text = nullptr) {
+    const std::string text(svg);
+    File& f = file("\x01" + pose.picture, text); // not a path a live element has
+    if (!f.outline.error.empty()) {
+        why = f.outline.error;
+        return nullptr;
+    }
+    File* drawn = &f;
+    if (const StageNeeds needs = needs_of(f, pose); !needs.empty()) {
+        drawn = stage_file(f, pose.picture, nullptr, needs);
+        if (!drawn) {
+            why = "сцена картинки не сложилась";
+            return nullptr;
+        }
+        if (stage_text) *stage_text = drawn->text;
+    }
+    std::unique_ptr<lunasvg::Document> doc = load(drawn->text);
+    if (!doc) {
+        why = "картинка не читается как SVG";
+        return nullptr;
+    }
+    apply_pose(*drawn, pose.picture, *doc, pose);
+    return doc;
+}
+
+} // namespace
+
+bool render_posed_svg(std::string_view svg, const SvgPose& pose, u32 w, u32 h, std::vector<u8>& rgba, std::string& why) {
+    rgba.clear();
+    std::unique_ptr<lunasvg::Document> doc = posed_document(svg, pose, why);
+    if (!doc) return false;
+    lunasvg::Bitmap bmp = doc->renderToBitmap(static_cast<int>(w), static_cast<int>(h), 0);
+    if (bmp.isNull()) return why = "картинка не рисуется", false;
+    bmp.convertToRGBA();
+    rgba.resize(static_cast<usize>(w) * h * 4);
+    for (u32 y = 0; y < h; ++y)
+        std::copy_n(bmp.data() + static_cast<usize>(y) * static_cast<usize>(bmp.stride()), static_cast<usize>(w) * 4,
+                    rgba.begin() + static_cast<std::ptrdiff_t>(y) * w * 4);
+    return true;
+}
+
+std::string posed_attribute(std::string_view svg, const SvgPose& pose, std::string_view id, std::string_view name) {
+    std::string why;
+    std::unique_ptr<lunasvg::Document> doc = posed_document(svg, pose, why);
+    if (!doc) return {};
+    lunasvg::Element e = doc->getElementById(std::string(id));
+    return e ? e.getAttribute(std::string(name)) : std::string();
+}
+
+std::string posed_stage(std::string_view svg, const SvgPose& pose) {
+    std::string why, text;
+    posed_document(svg, pose, why, &text);
+    return text;
 }
 
 void install_live_svg() { Rml::SVG::SetLiveApply(&apply); }

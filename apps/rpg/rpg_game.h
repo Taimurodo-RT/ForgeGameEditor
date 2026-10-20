@@ -87,6 +87,12 @@ public:
     // The sounds of things that played (their files), in order. Without a sound device (the self-test) they still
     // "play" when their file is read.
     const std::vector<std::string>& sounds_played() const { return sounds_played_; }
+    // Marks of the animations shown that fired (part 5а of docs/models/движение-модель.md): "name@who", who "hero" or
+    // the thing's id, in order, the first kMarksKept of them. Their sounds are in sounds_played (RPG catches no emit).
+    static constexpr forge::usize kMarksKept = 4096;
+    const std::vector<std::string>& marks_fired() const { return marks_fired_; }
+    // The game's clock: the ticks played (things stand by it), never set back.
+    u64 clock_ticks() const { return clock_ticks_; }
     Outcome outcome() const { return outcome_; }
     u32 ends() const { return ends_; }
     // Problems of the game's data, and why the last begin() refused.
@@ -120,6 +126,9 @@ private:
     void set_values();
     void say(std::string text);
     void play_sound(const std::string& name);
+    // After the ticks of a frame: the marks the hero's animation and the things' came to (anim_marks), each fired.
+    void anim_marks(bool turned, u64 clock_was);
+    void fire_mark(const forge::objects::ClipEvent& e, const Thing& who);
     void fit_camera(u32 width, u32 height);
     f64 inv(const std::string& item) const;
     void give(const std::string& item, f64 n, bool tell);
@@ -169,6 +178,13 @@ private:
     forge::audio::ScreenSounds screen_sounds_;
     std::unordered_map<std::string, forge::audio::SoundPtr> named_; // a file that does not read: null
     std::vector<std::string> sounds_played_;
+    // Where the marks were taken to: the ticks of the hero's animation (kTake: none yet on this map, the next look
+    // takes them), and whether the things' were taken on this map.
+    static constexpr forge::i64 kTake = -2;
+    forge::i64 hero_marks_ = kTake;
+    bool thing_marks_ = false;
+    std::vector<std::string> marks_fired_;
+    std::vector<std::string> marks_silent_; // sounds of marks not there: said once each
 };
 
 } // namespace rpg

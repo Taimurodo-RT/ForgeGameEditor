@@ -1229,8 +1229,9 @@
                 </div>
                 <div class="lg-nav-title">{{ an_state_name }}: кадры по порядку</div>
                 <div class="an-seq row">
-                    <div data-for="f : an_seq" class="an-frame small"><img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span></div>
+                    <div data-for="f : an_seq" class="an-frame small" data-attr-id="'an-seq-' + it_index"><img data-attr-src="f.icon"/><span class="an-num">{{ f.index + 1 }}</span><icon class="an-mark" data-if="f.mark != ''" data-attr-name="f.mark"/><div class="an-window" data-if="f.window"/></div>
                 </div>
+                <div id="an-marks" class="an-marks" data-if="an_marks != ''">Метки: {{ an_marks }}</div>
                 <div class="row an-actions">
                     <div id="an-remove-last" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_remove_last"><icon class="s" name="backspace"/><span>Убрать последний</span></div>
                     <div id="an-reset" class="button outlined small" data-class-disabled="!an_own" data-event-click="an_reset"><icon class="s" name="restart_alt"/><span>Как в игре</span></div>
@@ -1303,7 +1304,7 @@
                 </div>
             </div>
 
-            <div class="an-stage px-stage column" data-if="px_has">
+            <div id="px-stage" class="an-stage px-stage column" data-if="px_has">
                 <div id="px-tools" class="px-tools row">
                     <div id="px-tool-select" class="an-chip" data-class-selected="px_tool == 'select'" title="Выбор (V): щелчок выбирает часть, протяжка двигает её" data-event-click="px_tool('select')"><icon class="s" name="arrow_selector_tool"/></div>
                     <div id="px-tool-rect" class="an-chip" data-class-selected="px_tool == 'rect'" title="Прямоугольник (R): протяните от угла до угла" data-event-click="px_tool('rect')"><icon class="s" name="crop_square"/></div>
@@ -1335,11 +1336,11 @@
                     <div id="px-grid" class="an-chip" data-class-selected="px_grid" title="Сетка в единицах рисунка (')" data-event-click="px_grid_toggle">Сетка</div>
                     <div id="px-picking" class="an-chip" data-class-selected="px_picking" title="Пипетка (I): щелчок копирует цвет под мышью; I или Esc выключает" data-event-click="px_picking_toggle"><icon class="s" name="colorize"/></div>
                 </div>
-                <div id="px-problem" class="an-problem px-problem" data-if="px_problem != ''">{{ px_problem }}</div>
-                <div id="px-note" class="an-sel-note" data-if="px_note != ''">{{ px_note }}</div>
+                <div class="px-said row" data-if="px_problem != ''"><div id="px-problem" class="an-problem px-problem">{{ px_problem }}</div></div>
+                <div class="px-said row" data-if="px_note != ''"><div id="px-note" class="an-sel-note">{{ px_note }}</div></div>
             </div>
 
-            <div class="an-side column" data-if="px_has">
+            <div id="px-side" class="an-side column" data-if="px_has">
                 <div class="lg-nav-title">Блок</div>
                 <div id="px-inspector" class="px-inspector column" data-if="px_has_block">
                     <span id="px-inspector-text" class="px-inspector-text">{{ px_inspector }}</span>
@@ -1359,12 +1360,25 @@
                     <div id="px-timings" class="px-timings column" data-if="px_timings_open">
                         <div data-for="t : px_timings" class="px-timing-row row" data-attr-id="'px-timing-' + it_index" data-class-selected="t.selected" data-event-click="px_timing(it_index)"><img data-attr-src="t.icon"/><span>{{ t.word }}</span></div>
                     </div>
+                    <div id="px-ease" class="px-ease column" data-if="px_has_ease">
+                        <img id="px-ease-graph" class="px-ease-graph" data-attr-src="px_ease_image" title="Сглаживание: x — доля времени блока, y — доля пути. У кривой bezier(…) точки тянутся мышью; Esc при нажатой кнопке — назад"/>
+                        <span id="px-ease-share" class="an-hint" data-if="px_ease_share != ''">{{ px_ease_share }}</span>
+                        <span id="px-ease-why" class="an-hint px-why" data-if="px_ease_why != ''">{{ px_ease_why }}</span>
+                    </div>
                     <span id="px-block-why" class="an-hint px-why" data-if="px_block_why != ''">{{ px_block_why }}</span>
                 </div>
                 <div class="an-hint" data-if="!px_has_block">Щёлкните блок на таймлайне: здесь будет, что он делает и какой вызов кода его сделал. Края блока тянут его длину и начало.</div>
 
                 <div class="lg-nav-title" data-if="px_has_part">Часть «{{ px_part_name }}»</div>
                 <div id="px-inspect-part" class="px-inspector column" data-if="px_has_part">
+                    <div data-for="f : px_part_fields" class="px-pf column">
+                        <span class="an-label px-pf-section" data-if="f.section != ''" data-attr-id="'px-pf-section-' + f.name">{{ f.section }}</span>
+                        <div class="px-field row">
+                            <span class="px-pf-name" data-attr-id="'px-pf-label-' + f.name" title="Что этому свойству в этот кадр даёт код клипа; стрелка — его переход идёт, в поле его конец">{{ f.label }}</span>
+                            <span class="grow px-pf-now" data-attr-id="'px-pf-now-' + f.name">{{ f.now }}</span>
+                            <input type="text" class="small" data-attr-id="'px-pf-' + f.name" data-attr-value="f.value" data-event-change="px_part_field(f.name, ev.value, ev.linebreak)" data-event-blur="px_part_field_commit(f.name)"/>
+                        </div>
+                    </div>
                     <div data-for="v : px_part_values" class="px-value row" data-attr-id="'px-pv-' + v.name"><span class="grow">{{ v.name }}</span><span class="px-num">{{ v.value }}</span></div>
                     <div class="row px-value" data-if="px_part_code != ''">
                         <span id="px-inspect-call" class="px-call grow">{{ px_part_code }}</span>
@@ -1436,6 +1450,7 @@
                     <div id="px-bake" class="button filled small" title="Все клипы, каждый по своему диапазону, полосой кадров в картинку «Ресурсов» рядом с .pixel.json" data-event-click="px_bake"><icon class="s" name="grid_on"/><span>Запечь</span></div>
                     <div id="px-snapshot" class="button outlined small" title="Пиксельный кадр под бегунком, как запечётся, — PNG в «Ресурсы»" data-event-click="px_snapshot"><icon class="s" name="photo_camera"/><span>Снимок кадра</span></div>
                     <div id="px-give-open" class="button outlined small" data-class-disabled="!px_can_give" data-event-click="px_give_open"><icon class="s" name="person_add"/><span>Отдать шаблону…</span></div>
+                    <div id="px-give-screen" class="button outlined small" title="Клипы кода и рисунок — в картинки игры («Имя.svg» и «Имя.motion.json»): слой экрана играет их нодой «Проиграть анимацию картинки»" data-event-click="px_give_screen"><icon class="s" name="smart_display"/><span>Отдать экрану</span></div>
                 </div>
                 <div id="px-edited" class="px-warn column" data-if="px_edited">
                     <span>Картинку правили после запекания: новое запекание заменит правки (Ctrl+Z вернёт их).</span>
@@ -1481,6 +1496,12 @@
                         <div data-for="t : px_ticks" class="px-tick" data-attr-style="t.style">{{ t.label }}</div>
                         <div id="px-range-from" class="px-edge" title="Начало диапазона (B): тяните по кадрам" data-attr-style="px_range_from"/>
                         <div id="px-range-to" class="px-edge" title="Конец диапазона (N): тяните по кадрам" data-attr-style="px_range_to"/>
+                    </div>
+                </div>
+                <div class="px-tl-row row" data-if="px_start != ''">
+                    <span class="px-tl-name">Начало</span>
+                    <div id="px-starts" class="px-tl-time">
+                        <div id="px-start" class="px-flag" data-attr-style="px_start_style" data-attr-title="px_start_title" data-event-dblclick="px_start_code()"><span>{{ px_start }}</span></div>
                     </div>
                 </div>
                 <div class="px-tl-row row" data-if="px_flags.size > 0">

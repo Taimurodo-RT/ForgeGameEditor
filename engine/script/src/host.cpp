@@ -34,7 +34,7 @@ FORGE_REFLECT(forge::script::ScriptVars, 1) { t.field("vars", &forge::script::Sc
 
 namespace forge::script {
 
-const char* const kHandlerNames[kHandlerCount] = {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message"};
+const char* const kHandlerNames[kHandlerCount] = {"on_start", "on_tick", "on_enter", "on_leave", "on_hit", "on_message", "on_anim"};
 
 const ScriptVar* ScriptVars::find(std::string_view name) const {
     for (const ScriptVar& v : vars)
@@ -380,6 +380,10 @@ void ScriptHost::send(flecs::entity_t to, std::string_view message, f64 value, f
     impl_->outbox.push_back({to, from, std::string(message), value});
 }
 
+void ScriptHost::anim(flecs::entity_t thing, std::string_view mark) {
+    impl_->outbox.push_back({thing, 0, std::string(mark), 0, true});
+}
+
 namespace {
 
 // Runs a handler (or resumes a paused one) on a pooled thread and deals with
@@ -566,6 +570,16 @@ void ScriptHost::tick(const sim::TickContext& ctx) {
     im.inbox.clear();
     im.inbox.swap(im.outbox);
     for (const Impl::Message& msg : im.inbox) {
+        if (msg.anim) {
+            if (const Impl::Module* m = module_of(msg.to); m && !m->fn[OnAnim].empty()) {
+                ++stats_.messages;
+                c.call(*m, OnAnim, msg.to, [&](lua_State* T) {
+                    lua_pushlstring(T, msg.name.data(), msg.name.size());
+                    return 1;
+                });
+            }
+            continue;
+        }
         if (msg.to == 0) { // to everyone listening
             for (const auto& [e, dt] : im.due)
                 if (const Impl::Module* m = module_of(e); m && !m->fn[OnMessage].empty()) {

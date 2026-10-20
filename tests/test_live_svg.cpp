@@ -225,6 +225,104 @@ TEST_CASE("Live SVG: a script's parts drawn on one element, the other keeps the 
         CHECK_FALSE(forge::ui::svg_color(a, "eyes", "зелёный", &why));
         CHECK(why.find("не цвет") != std::string::npos);
     }
+    SUBCASE("a clip's pose over what was said, then taken off: what was said draws again, the clip's goes") {
+        using forge::vector::MotionProp;
+        CHECK(forge::ui::svg_move(a, "box", 10, 5));
+        forge::vector::MotionPartPose head;
+        head.id = "head";
+        for (usize p = 0; p < forge::vector::kMotionPropCount; ++p) head.values[p] = forge::vector::motion_rest(static_cast<MotionProp>(p));
+        head.has[static_cast<usize>(MotionProp::Opacity)] = true;
+        head.values[static_cast<usize>(MotionProp::Opacity)].v = 0.5;
+        forge::ui::svg_pose(a, {"face.svg", {head}});
+        frame();
+        const std::string moved = replaced(kFace, R"(<rect id="box")", R"x(<rect transform="translate(10 5)" id="box")x");
+        CHECK(differ(pixels(0), drawn(replaced(moved, R"(fill="#f0c040"/>)", R"(fill="#f0c040" opacity="0.5"/>)"))) == 0);
+        REQUIRE(forge::ui::svg_posed(a));
+        CHECK(forge::ui::svg_posed(a)->parts.size() == 1);
+        CHECK_FALSE(forge::ui::svg_posed(b));
+        forge::ui::svg_unpose(a);
+        CHECK_FALSE(forge::ui::svg_posed(a));
+        frame();
+        CHECK(differ(pixels(0), drawn(moved)) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+    }
+    SUBCASE("a clip's frames do not build on each other: a morph and a colour back at 0, a part the next frame lacks, are the file's") {
+        using forge::vector::MotionProp;
+        using forge::vector::MotionValue;
+        auto part = [](const char* id, MotionProp p, MotionValue v) {
+            forge::vector::MotionPartPose pp;
+            pp.id = id;
+            for (usize i = 0; i < forge::vector::kMotionPropCount; ++i) pp.values[i] = forge::vector::motion_rest(static_cast<MotionProp>(i));
+            pp.has[static_cast<usize>(p)] = true;
+            pp.values[static_cast<usize>(p)] = v;
+            return pp;
+        };
+        forge::ui::svg_pose(a, {"face.svg", {part("mouth", MotionProp::Morph, {1, {}, "smile", 0}), part("head", MotionProp::Fill, {1, {0, 0, 255, 255}, {}, 0}),
+                                             part("box", MotionProp::Opacity, {0.3, {}, {}, 0})}});
+        frame();
+        CHECK(differ(pixels(0), file, 8) > 20);
+        forge::ui::svg_pose(a, {"face.svg", {part("mouth", MotionProp::Morph, {0, {}, "", 0}), part("head", MotionProp::Fill, {0, {0, 0, 255, 255}, {}, 0})}});
+        frame();
+        CHECK(differ(pixels(0), file) == 0);
+        CHECK(differ(pixels(64), file) == 0);
+    }
+    SUBCASE("a clip's copy (part 5г): drawn on a stage from its birth, not before it once more, nor once the clip is off or is another picture's") {
+        using forge::vector::MotionProp;
+        // The box half seen through, so a copy left on its source (as it is before its birth) shows.
+        const std::string solid = R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0"/>)";
+        const std::string box = R"(<rect id="box" x="4" y="4" width="10" height="10" fill="#2040a0" fill-opacity="0.5"/>)";
+        const std::string half = replaced(kFace, solid, box);
+        files.svg = half;
+        doc->Close();
+        frame();
+        load();
+        frame();
+        const std::vector<u8> plain = drawn(half);
+        CHECK(differ(pixels(0), plain) == 0);
+        // The box's copy 20 to the right; the box to the top all along, so a stage is there before the copy is born.
+        forge::vector::MotionPartPose copy;
+        copy.id = "box[1]";
+        for (usize p = 0; p < forge::vector::kMotionPropCount; ++p) copy.values[p] = forge::vector::motion_rest(static_cast<MotionProp>(p));
+        copy.has[static_cast<usize>(MotionProp::X)] = true;
+        copy.values[static_cast<usize>(MotionProp::X)].v = 20;
+        copy.moves = true;
+        copy.local = {1, 0, 0, 1, 20, 0};
+        const std::vector<forge::vector::MotionOrderStep> top{{0, "box", forge::vector::MotionOrder::Top, ""}};
+        const forge::ui::SvgPose before{"face.svg", {}, {}, top}, after{"face.svg", {copy}, {{"box[1]", "box", 1, 0.5}}, top};
+        const std::vector<u8> with_copy =
+            drawn(replaced(half, box, box + R"x(<rect transform="translate(20 0)" id="box" x="4" y="4" width="10" height="10" fill="#2040a0" fill-opacity="0.5"/>)x"));
+        forge::ui::svg_pose(a, before);
+        frame();
+        CHECK(differ(pixels(0), plain) == 0);
+        forge::ui::svg_pose(a, after); // the stage made again: it had no copy
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        forge::ui::svg_pose(a, before); // round again, before the birth
+        frame();
+        CHECK(differ(pixels(0), plain) == 0);
+        forge::ui::svg_pose(a, after);
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        forge::ui::svg_pose(a, {"other.svg", {}}); // a pose of another picture: this one is its file again
+        frame();
+        CHECK(differ(pixels(0), plain) == 0);
+        forge::ui::svg_pose(a, after);
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        // The element shows another file and this one again: the plugin reads this one anew (its document may well
+        // stand where the stage's did), and the stage is made again on it.
+        a->SetAttribute("src", "back_face.svg");
+        frame();
+        CHECK(differ(pixels(0), plain) == 0);
+        a->SetAttribute("src", "face.svg");
+        frame();
+        CHECK(differ(pixels(0), with_copy) == 0);
+        forge::ui::svg_unpose(a); // the file again, not the stage
+        frame();
+        CHECK(differ(pixels(0), plain) == 0);
+        CHECK(differ(pixels(64), plain) == 0);
+        CHECK(forge::ui::svg_problems().empty());
+    }
     SUBCASE("reset: the element takes the file again; what the file lacks is said once") {
         CHECK(forge::ui::svg_move(a, "nose", 3, 3));
         CHECK(forge::ui::svg_morph(a, "box", "smile", 0.5));

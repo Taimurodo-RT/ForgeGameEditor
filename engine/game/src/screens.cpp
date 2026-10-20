@@ -6,14 +6,19 @@
 #include "forge/core/time.h"
 #include "forge/ui/html.h"
 #include "forge/ui/live_svg.h"
+#include "forge/vector/motion_file.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/StyleSheetTypes.h>
 #include <yyjson.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <memory>
+#include <set>
 #include <unordered_map>
 
 namespace forge::game {
@@ -137,6 +142,7 @@ struct ListView {
 struct GameScreens::Page {
     std::string name;
     fs::path path;
+    std::string address; // where it was read from: its pictures are found next to it
     fs::file_time_type time{};
     Rml::ElementDocument* doc = nullptr;
     Rml::Element* root = nullptr;
@@ -185,9 +191,169 @@ struct GameScreens::Impl : Rml::EventListener {
     Rows item_rows, quest_rows;
     f64 lists_ms = 0;
     std::function<u64()> clock; // of the windows' coming and going (set_clock); none: the real one
+    // Clips the layers' pictures play (svg "play", part 5в of docs/models/движение-модель.md): the files read, by path,
+    // again when written again; what plays where.
+    struct Motion {
+        fs::file_time_type time{};
+        std::uintmax_t size = 0;
+        std::shared_ptr<const vector::MotionFile> file;
+    };
+    std::map<std::string, Motion> motions;
+    // The pictures' outlines, for the parts a clip names (part 5г).
+    struct Outline {
+        fs::file_time_type time{};
+        std::uintmax_t size = 0;
+        std::shared_ptr<const vector::SvgOutline> outline;
+    };
+    std::map<std::string, Outline> outlines;
+    struct Playing {
+        Rml::ObserverPtr<Rml::Element> element;
+        std::string page, picture; // picture: its file name, "Ёжик.svg"
+        std::shared_ptr<const vector::MotionFile> file;
+        const vector::MotionClip* clip = nullptr;
+        f64 played = 0;   // seconds of play
+        f64 counted = -1; // the marks passed up to here (below 0: none yet, those at 0 too)
+        f64 speed = 1;
+        bool loop = false, going = true;
+        u64 last = 0; // the clock at the last update; 0: none yet
+    };
+    std::vector<Playing> playing;
+    std::set<std::string> said_once; // what the clips said in the log once
 
     void ProcessEvent(Rml::Event& event) override { self->click(event.GetTargetElement()); }
     u64 now() const { return clock ? clock() : time_now_ns(); }
+
+    void say_once(const std::string& line) {
+        if (!said_once.insert(line).second) return;
+        FORGE_WARN("живая картинка: %s", line.c_str());
+        svg_problems.push_back(line);
+    }
+
+    // The SVG picture a layer shows: its <img>'s, else the first of its fill's pictures (background-image), as a path
+    // next to its page; "" for none.
+    static bool is_svg(std::string_view s) {
+        if (s.size() < 4) return false;
+        std::string end(s.substr(s.size() - 4));
+        std::transform(end.begin(), end.end(), end.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return end == ".svg";
+    }
+    std::string layer_picture(const Page& p, Rml::Element* e) const {
+        std::string rel;
+        if (e->GetTagName() == "img") rel = e->GetAttribute<Rml::String>("src", "");
+        if (!is_svg(rel)) {
+            rel.clear();
+            const Rml::Property* prop = e->GetProperty(Rml::PropertyId::Decorator);
+            if (prop && prop->unit == Rml::Unit::DECORATOR)
+                if (const Rml::DecoratorsPtr d = prop->Get<Rml::DecoratorsPtr>()) {
+                    // image(../pictures/Ёжик.svg scale-none …), one per picture of the fill
+                    const std::string& v = d->value;
+                    for (usize at = v.find("image("); at != std::string::npos && rel.empty(); at = v.find("image(", at + 1)) {
+                        usize b = at + 6;
+                        while (b < v.size() && v[b] == ' ') ++b;
+                        const char quote = b < v.size() && (v[b] == '"' || v[b] == '\'') ? v[b] : 0;
+                        if (quote) ++b;
+                        usize e2 = b;
+                        while (e2 < v.size() && (quote ? v[e2] != quote : v[e2] != ' ' && v[e2] != ')')) ++e2;
+                        if (is_svg(std::string_view(v).substr(b, e2 - b))) rel = v.substr(b, e2 - b);
+                    }
+                }
+        }
+        if (rel.empty()) return {};
+        std::string addr = p.address;
+        std::replace(addr.begin(), addr.end(), '|', ':');
+        return path_to_utf8((utf8_path(addr).parent_path() / utf8_path(rel)).lexically_normal());
+    }
+
+    // The clips beside a picture: Ёжик.motion.json for Ёжик.svg, read again when written again.
+    std::shared_ptr<const vector::MotionFile> motion_of(const std::string& picture, std::string& why) {
+        const fs::path pic = utf8_path(picture);
+        const fs::path path = pic.parent_path() / utf8_path(path_to_utf8(pic.stem()) + ".motion.json");
+        const std::string key = path_to_utf8(path), name = path_to_utf8(path.filename());
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec)) {
+            why = "нет «" + name + "» рядом с «" + path_to_utf8(pic.filename()) + "»: отдайте персонажа экрану во вкладке «Векторная»";
+            return nullptr;
+        }
+        const fs::file_time_type time = fs::last_write_time(path, ec);
+        const std::uintmax_t size = fs::file_size(path, ec);
+        Motion& m = motions[key];
+        if (m.file && m.time == time && m.size == size) return m.file;
+        std::vector<u8> bytes;
+        auto file = std::make_shared<vector::MotionFile>();
+        std::string err;
+        if (!read_file(path, bytes)) err = "не читается";
+        else if (!vector::read_motion_file(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), *file, err)) {}
+        if (!err.empty()) {
+            motions.erase(key);
+            why = "«" + name + "»: " + err;
+            return nullptr;
+        }
+        m = {time, size, std::move(file)};
+        return m.file;
+    }
+
+    std::shared_ptr<const vector::SvgOutline> outline_of(const std::string& picture) {
+        const fs::path path = utf8_path(picture);
+        std::error_code ec;
+        const fs::file_time_type time = fs::last_write_time(path, ec);
+        const std::uintmax_t size = fs::file_size(path, ec);
+        Outline& o = outlines[picture];
+        if (o.outline && o.time == time && o.size == size) return o.outline;
+        std::vector<u8> bytes;
+        if (!read_file(path, bytes)) return nullptr;
+        o = {time, size, std::make_shared<const vector::SvgOutline>(
+                             vector::scan_svg(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size())))};
+        return o.outline;
+    }
+
+    Playing* playing_of(Rml::Element* e) {
+        for (Playing& p : playing)
+            if (p.element.get() == e) return &p;
+        return nullptr;
+    }
+
+    // Each frame: every clip at its moment on its picture, its marks passed.
+    void play_clips(GameScreens& screens) {
+        std::erase_if(playing, [](const Playing& p) { return !p.element; });
+        const u64 t = now();
+        const fs::path sounds = dir.empty() ? fs::path() : dir.parent_path() / "sounds";
+        for (Playing& p : playing) {
+            const f64 dt = p.last && t > p.last ? static_cast<f64>(t - p.last) / 1e9 : 0;
+            p.last = t;
+            const vector::MotionClip& c = *p.clip;
+            if (p.going) {
+                p.played += dt * p.speed;
+                if (!p.loop) p.played = std::min(p.played, c.length);
+                for (const usize m : vector::motion_marks_passed(c, p.counted, p.played, p.loop)) {
+                    const vector::MotionMark& mk = c.marks[m];
+                    if (!mk.sound) {
+                        if (screens.on_action) screens.on_action({"message", mk.name}, p.page);
+                        continue;
+                    }
+                    std::string file;
+                    for (const std::string& f : {mk.name, mk.name + ".wav", mk.name + ".ogg"}) {
+                        std::error_code ec;
+                        if (!sounds.empty() && mk.name.find_first_of("/\\") == std::string::npos && fs::is_regular_file(sounds / utf8_path(f), ec)) {
+                            file = f;
+                            break;
+                        }
+                    }
+                    if (file.empty()) say_once("«" + p.picture + "», клип «" + c.name + "»: звука «" + mk.name + "» нет в звуках игры");
+                    else if (screens.on_sound) screens.on_sound(file);
+                }
+                p.counted = p.played;
+            }
+            ui::svg_pose(p.element.get(), pose_at(p.picture, *p.file, c, vector::motion_clip_time(c, p.played, p.loop)));
+        }
+    }
+
+    // What a clip shows at a moment: its parts, its copies drawn, its order's steps (part 5г).
+    static ui::SvgPose pose_at(const std::string& picture, const vector::MotionFile& file, const vector::MotionClip& c, f64 at) {
+        ui::SvgPose pose{picture, vector::motion_pose(file, c, at), {}, vector::motion_order_at(c, at)};
+        for (const vector::MotionCopy& copy : c.copies)
+            if (vector::motion_copy_drawn(copy, at)) pose.copies.push_back(copy);
+        return pose;
+    }
 
     Page* find(std::string_view name) {
         for (auto& p : pages)
@@ -465,6 +631,7 @@ struct GameScreens::Impl : Rml::EventListener {
     }
 
     bool open(Page& p, const std::string& html, const std::string& address) {
+        p.address = address;
         const std::string rml = ui::html_to_rml(html, "/web/html.rcss");
         // The page's own address: its pictures are found next to it (../pictures/...).
         std::string url = address;
@@ -876,6 +1043,7 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
     }
     if (restacked) impl_->restack();
     impl_->keep_order();
+    impl_->play_clips(*this);
     if (std::string m = impl_->wanted_music(); m != impl_->music) {
         impl_->music = std::move(m);
         if (on_music) on_music(impl_->music);
@@ -1028,6 +1196,7 @@ bool GameScreens::svg(const ScreenSvg& c, std::string* why) {
     if (!impl_->find(c.screen)) return fail("нет экрана «" + c.screen + "»");
     const std::vector<Rml::Element*> found = layers(c.screen, c.layer);
     if (found.empty()) return fail("на экране «" + c.screen + "» нет слоя «" + c.layer + "»");
+    if (c.what == "play" || c.what == "stop") return play(c, found, why);
     if (c.what != "reset" && c.part.empty()) return fail("не сказано, какая часть картинки (её id в файле)");
     for (Rml::Element* e : found) {
         if (c.what == "move") ui::svg_move(e, c.part, c.x, c.y);
@@ -1039,15 +1208,107 @@ bool GameScreens::svg(const ScreenSvg& c, std::string* why) {
         } else if (c.what == "color") {
             std::string w;
             if (!ui::svg_color(e, c.part, c.text, &w)) return fail(w);
-        } else if (c.what == "reset") ui::svg_reset(e);
-        else return fail("«" + c.what + "» — не изменение картинки");
+        } else if (c.what == "reset") {
+            std::erase_if(impl_->playing, [&](const Impl::Playing& p) { return p.element.get() == e; });
+            ui::svg_reset(e);
+        } else return fail("«" + c.what + "» — не изменение картинки");
     }
     return true;
+}
+
+bool GameScreens::play(const ScreenSvg& c, const std::vector<Rml::Element*>& found, std::string* why) {
+    auto fail = [&](std::string text) {
+        if (why) *why = std::move(text);
+        return false;
+    };
+    if (c.what == "stop") {
+        for (Rml::Element* e : found)
+            if (Impl::Playing* p = impl_->playing_of(e)) p->going = false;
+        return true;
+    }
+    if (c.part.empty()) return fail("не сказано, какой клип играть");
+    if (!(c.y > 0) || !std::isfinite(c.y)) return fail("speed: нужно число больше 0");
+    const Page* page = impl_->find(c.screen);
+    // Each layer's picture and its clips first: nothing starts when one of them cannot.
+    struct Start {
+        Rml::Element* e;
+        std::string picture;
+        std::shared_ptr<const vector::MotionFile> file;
+        const vector::MotionClip* clip;
+    };
+    std::vector<Start> starts;
+    for (Rml::Element* e : found) {
+        const std::string picture = impl_->layer_picture(*page, e);
+        if (picture.empty()) return fail("слой «" + c.layer + "» не показывает SVG-картинку");
+        std::string w;
+        std::shared_ptr<const vector::MotionFile> file = impl_->motion_of(picture, w);
+        if (!file) return fail(w);
+        const vector::MotionClip* clip = file->clip(c.part);
+        if (!clip) {
+            std::string names;
+            for (const vector::MotionClip& k : file->clips) names += (names.empty() ? "«" : ", «") + k.name + "»";
+            return fail("в «" + path_to_utf8(utf8_path(picture).stem()) + ".motion.json» нет клипа «" + c.part + "»: есть " + names);
+        }
+        std::string part, role;
+        if (const auto outline = impl_->outline_of(picture); outline && vector::motion_clip_missing(*clip, *outline, part, role))
+            return fail("в «" + path_to_utf8(utf8_path(picture).filename()) + "» нет части «" + part + "»: " + role + " в клипе «" + clip->name + "»");
+        starts.push_back({e, path_to_utf8(utf8_path(picture).filename()), std::move(file), clip});
+    }
+    for (Start& s : starts) {
+        const bool loop = c.x < 0 ? s.clip->loop : c.x > 0;
+        Impl::Playing* p = impl_->playing_of(s.e);
+        // The same clip while it goes keeps going: a call every step does not hold it at its first frame. One that
+        // came to its end without a loop starts again.
+        if (p && p->file == s.file && p->clip == s.clip && p->going && (p->loop || p->played < s.clip->length)) {
+            if (p->loop && !loop) { // on from where it is in this lap, not from the laps behind it
+                const f64 at = vector::motion_clip_time(*s.clip, p->played, true);
+                if (p->counted >= 0) p->counted -= p->played - at;
+                p->played = at;
+            }
+            p->loop = loop;
+            p->speed = c.y;
+            continue;
+        }
+        if (!p) {
+            impl_->playing.emplace_back();
+            p = &impl_->playing.back();
+        }
+        for (const std::string& w : s.clip->not_drawn) {
+            const char* said = vector::motion_not_drawn_words(w);
+            impl_->say_once("«" + s.picture + "», клип «" + s.clip->name + "»: на экране пока не рисуется: " +
+                            (w == "blur" || w == "shadow" ? std::string("размытие и тень (на экране игры не рисуются, в запекании есть)")
+                                                          : std::string(said ? said : w.c_str())));
+        }
+        *p = {};
+        p->element = s.e->GetObserverPtr();
+        p->page = c.screen;
+        p->picture = s.picture;
+        p->file = std::move(s.file);
+        p->clip = s.clip;
+        p->loop = loop;
+        p->speed = c.y;
+        // Its first frame at once, before the next update moves it on.
+        ui::svg_pose(s.e, Impl::pose_at(p->picture, *p->file, *p->clip, 0));
+    }
+    return true;
+}
+
+bool GameScreens::svg_clip(std::string_view screen, std::string_view layer, ScreenClip& out) const {
+    for (Rml::Element* e : layers(screen, layer))
+        for (const Impl::Playing& p : impl_->playing)
+            if (p.element.get() == e) {
+                out.clip = p.clip->name;
+                out.time = vector::motion_clip_time(*p.clip, p.played, p.loop);
+                out.going = p.going;
+                return true;
+            }
+    return false;
 }
 
 const std::vector<std::string>& GameScreens::svg_problems() const { return impl_->svg_problems; }
 
 void GameScreens::reset_pictures() {
+    impl_->playing.clear();
     for (const auto& page : impl_->pages)
         if (page->doc) ui::svg_reset_all(page->doc);
 }

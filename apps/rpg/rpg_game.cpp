@@ -177,6 +177,8 @@ bool RpgGame::start_level(const std::string& id, const fs::path& folder, std::st
     facing_ = Dir::S;
     walking_ = false;
     walk_ticks_ = stand_ticks_ = 0;
+    hero_marks_ = kTake;
+    thing_marks_ = false;
     gone_.clear();
     inside_.clear();
     // Places the hero starts in are entered already: no «доходит до» for standing still.
@@ -208,6 +210,7 @@ bool RpgGame::begin(const fs::path& session, bool new_game, std::string* error) 
     said_.clear();
     fired_.clear();
     toasts_.clear();
+    marks_fired_.clear();
     talked_.clear();
     running_ = false;
     auto refuse = [&](const std::string& w) {
@@ -402,13 +405,58 @@ void RpgGame::walk(f64 dt, bool input) {
     hero_x_ = m.x;
     hero_y_ = m.y;
     facing_ = rpg::facing(h, facing_);
-    if (moved != walking_) (moved ? walk_ticks_ : stand_ticks_) = 0;
+    const bool turned = moved != walking_;
+    if (turned) (moved ? walk_ticks_ : stand_ticks_) = 0;
     walking_ = moved;
     tick_left_ += dt * 60;
     const u64 whole = static_cast<u64>(std::floor(tick_left_ + 1e-9));
     tick_left_ -= static_cast<f64>(whole);
     (walking_ ? walk_ticks_ : stand_ticks_) += whole;
+    const u64 clock_was = clock_ticks_;
     clock_ticks_ += whole;
+    anim_marks(turned, clock_was);
+}
+
+void RpgGame::anim_marks(bool turned, u64 clock_was) {
+    const objects::Library& lib = module_.library_ref();
+    auto marked = [](const objects::Template& t) {
+        return std::any_of(t.animations.begin(), t.animations.end(), [](const auto& a) { return !a.second.events.empty(); });
+    };
+    // The hero: walking or standing from when he began; starting or stopping begins the animation anew.
+    const Thing& hero = map_->hero;
+    const u64 t = walking_ ? walk_ticks_ : stand_ticks_;
+    if (hero_marks_ != kTake && turned) hero_marks_ = -1;
+    if (hero_marks_ != kTake && marked(*hero.tmpl)) {
+        const objects::Clip clip = clip_of(lib, *hero.tmpl, walking_ ? "walk" : "stand");
+        for (u32 i : objects::clip_events(clip, hero_marks_, t)) fire_mark(clip.events[i], hero);
+    }
+    hero_marks_ = static_cast<i64>(t);
+    // The things drawn (as render draws them): their stand by the game's clock.
+    if (thing_marks_ && clock_ticks_ > clock_was) {
+        auto things = [&](const std::vector<Thing>& list, bool pickups) {
+            for (const Thing& p : list) {
+                if ((pickups && gone(p.id)) || !p.shown || !marked(*p.tmpl)) continue;
+                const objects::Clip clip = clip_of(lib, *p.tmpl, "stand");
+                for (u32 i : objects::clip_events(clip, static_cast<i64>(clock_was), clock_ticks_)) fire_mark(clip.events[i], p);
+            }
+        };
+        things(map_->places, false);
+        things(map_->pickups, true);
+        things(map_->villagers, false);
+    }
+    thing_marks_ = true;
+}
+
+void RpgGame::fire_mark(const objects::ClipEvent& e, const Thing& who) {
+    if (marks_fired_.size() < kMarksKept) marks_fired_.push_back(e.name + "@" + (who.kind == Thing::Kind::Hero ? "hero" : who.id));
+    if (!e.sound) return;
+    const fs::path file = objects::mark_sound_file(module_.library_ref().sounds_folder(), e.name);
+    if (!file.empty()) {
+        play_sound(path_to_utf8(file.filename()));
+    } else if (std::find(marks_silent_.begin(), marks_silent_.end(), e.name) == marks_silent_.end()) {
+        marks_silent_.push_back(e.name);
+        FORGE_WARN("метка анимации «%s»: звука «%s» нет в sounds", who.tmpl->name.c_str(), e.name.c_str());
+    }
 }
 
 void RpgGame::touch() {

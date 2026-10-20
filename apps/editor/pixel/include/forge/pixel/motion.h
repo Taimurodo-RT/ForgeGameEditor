@@ -70,6 +70,12 @@ struct SiteRef {
     bool operator==(const SiteRef&) const = default;
 };
 
+// An easing bezier(x1, y1, x2, y2) of the code (part 4ж): its numbers and the call that wrote them.
+struct BezierUse {
+    vector::Bezier curve;
+    SiteRef site;
+};
+
 // The part of the drawing's track (swap, part 4д): no part of a picture has an empty id.
 inline constexpr const char* kDrawingPart = "";
 
@@ -93,9 +99,10 @@ struct Block {
     u32 ref = 0;
     i32 binding = -1;
 
-    // How it goes: a timing word, or an author's easing (Recording::curves), or a spring, or tween(fn)'s frames.
+    // How it goes: a timing word, or an author's easing (Recording::curves), or bezier(…) (Recording::beziers, part
+    // 4ж), or a spring, or tween(fn)'s frames.
     vector::Timing timing = vector::Timing::Smooth;
-    i32 curve = -1;
+    i32 curve = -1, bezier = -1;
     bool spring = false;
     vector::Spring spring_def;
     f64 tolerance = 0.001;
@@ -199,6 +206,24 @@ struct Copy {
 inline constexpr u32 kMaxCopiesCall = 64;
 inline constexpr u32 kMaxCopies = 256;
 
+// start_from("idle") (part 5б): where clip `clip` left a property of a part at its end. A link's carry beside it
+// (Block::carry): W(target) · carry while it holds, carry itself once let go.
+struct StartValue {
+    std::string part; // its id; kDrawingPart for the drawing
+    Prop prop = Prop::X;
+    PropValue value;
+    Affine carry;
+    bool operator==(const StartValue&) const = default;
+};
+
+// The pose a clip starts from: the values of its parts before their tracks' first blocks, in place of the rest.
+struct StartPose {
+    std::string clip;               // empty: none, the clip starts at rest
+    SiteRef site;                   // the start_from(…) call
+    std::vector<StartValue> values; // those not at rest, by part (as `clip` has them) then property
+    std::vector<OrderStep> order;   // the order's calls of `clip` up to its end, before the clip's own
+};
+
 struct Recording {
     std::string clip;
     f64 length = 0;                 // where the clip's own flow ends; what runs on in the background is cut there
@@ -207,6 +232,7 @@ struct Recording {
     std::vector<Block> blocks;      // in the order they were made
     std::vector<Saved> saves;
     std::vector<std::vector<f64>> curves; // authors' easings: kCurvePoints values over 0 … 1
+    std::vector<BezierUse> beziers;       // bezier(…) easings (part 4ж)
     std::vector<TimeEvent> events;
     std::vector<Mark> marks;
     std::vector<Pause> pauses;
@@ -217,6 +243,7 @@ struct Recording {
     std::vector<std::string> snaps; // by Block::ref of To::Snap: the part placed by
     std::vector<Bone> bones;       // the parts of links and snaps, with the parts they are inside, a parent before them
     std::vector<Copy> copies;      // in the order of their calls: by number within each part
+    StartPose start;               // start_from(…) (part 5б); its parts are among `parts`
     u64 generation = 0; // the script's recording it came from: bindings are asked of that one only
 
     // resolve(): each track's blocks by start and order.
@@ -227,6 +254,7 @@ struct Recording {
     };
     std::vector<Track> tracks;
     std::vector<i32> track_of; // parts.size() × kPropCount → index in tracks, -1 for none
+    std::vector<i32> start_of; // parts.size() × kPropCount → index in start.values, -1 for none
 
     i32 track(u32 part, Prop p) const;
 };
@@ -253,13 +281,24 @@ struct BindingEval {
 // was at its start, where it goes; springs run from there. Again after blocks were added. False with why.
 bool resolve(Recording& rec, BindingEval* eval, std::string& why);
 
-// A track's value at t (after resolve): rest before its first block.
+// Where start_from left a part's property (after resolve, part 5б); null when it starts at rest.
+const StartValue* start_value(const Recording& rec, u32 part, Prop p);
+// A part's property before its track's first block: where start_from left it, else its rest.
+PropValue first_value(const Recording& rec, u32 part, Prop p);
+// The pose a clip that starts from this one starts with (part 5б): every property of every part at the recording's
+// length, its own start where no track moved it, a binding's value then; the copies and their calls of the order left
+// out (attach, mask and order name parts of the picture, so nothing else hangs on a copy). False with why.
+bool end_pose(const Recording& rec, BindingEval* eval, StartPose& out, std::string& why);
+
+// A track's value at t (after resolve): first_value before its first block.
 bool sample(const Recording& rec, u32 track, f64 t, BindingEval* eval, PropValue& out, std::string& why);
 // A block's value at t, as if it decided.
 bool block_value(const Recording& rec, const Block& b, f64 t, BindingEval* eval, PropValue& out, std::string& why);
 // How far block b's timing has gone at t: 0 at its start and before, 1 at its end and after (as eased, an easing that
 // overshoots past them).
 f64 block_share(const Recording& rec, const Block& b, f64 t);
+// Block b's easing at s, the share of its time within 0 … 1: its bezier(…) (part 4ж), its author's easing or its word.
+f64 block_ease(const Recording& rec, const Block& b, f64 s);
 // The block that decides a track at t (after resolve): the last, by start then order, that started at t or before; -1
 // before the first one.
 i32 deciding_block(const Recording& rec, u32 track, f64 t);

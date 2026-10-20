@@ -12,6 +12,7 @@
 //   function S.on_leave(self, other) end
 //   function S.on_hit(self, other) end         -- its rigid body started touching another (0: tiles)
 //   function S.on_message(self, name, value, from) end
+//   function S.on_anim(self, name) end          -- its animation came to a mark (emit) of its picture
 //   return S
 //
 // A handler may also be a list of functions (S.on_tick = {f, g}): each runs
@@ -164,6 +165,9 @@ public:
     // to = 0: to every scripted entity running then (a button's «Сообщение
     // логике»).
     void send(flecs::entity_t to, std::string_view message, f64 value = 0, flecs::entity_t from = 0);
+    // The animation a thing is shown with came to a mark (emit("удар") of «Векторная»): its on_anim at the next tick,
+    // in turn with the messages sent before and after.
+    void anim(flecs::entity_t thing, std::string_view mark);
 
     // Per-node time of graphs compiled with CompileOptions::profile, slowest
     // first, since the start or the last reset.
@@ -223,12 +227,19 @@ public:
     // "show", "hide" or "toggle" a screen by its name.
     virtual void screen(std::string_view what, std::string_view name) = 0;
     // A live SVG picture on a screen (forge.ui.svg_*, game::ScreenSvg): "move", "turn", "color", "fade", "morph" or
-    // "reset" of a part (its id in the file) of the picture a layer shows. False with why when there is no such screen
-    // or layer, or the colour does not read. Without a game, nothing happens.
+    // "reset" of a part (its id in the file) of the picture a layer shows; "play" a clip (part: its name, x: loop 1, 0
+    // or below 0 for the clip's own, y: speed) or "stop". False with why when there is no such screen or layer, the
+    // colour does not read, or the clip cannot play. Without a game, nothing happens.
     virtual bool svg(std::string_view what, std::string_view screen, std::string_view layer, std::string_view part, f64 x, f64 y,
                      std::string_view text, std::string* why) {
         (void)what, (void)screen, (void)layer, (void)part, (void)x, (void)y, (void)text, (void)why;
         return true;
+    }
+    // forge.anim.going: whether the animation a thing is shown with now shows the frame of a mark of that name or a
+    // frame of its window. False without a game, or for a thing whose picture has no such mark.
+    virtual bool anim_going(flecs::entity_t thing, std::string_view mark) {
+        (void)thing, (void)mark;
+        return false;
     }
 };
 

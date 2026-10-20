@@ -1,8 +1,34 @@
 #include "forge/pixel/bake.h"
 
+#include "forge/pixel/sound.h"
+
 #include <algorithm>
 
 namespace forge::pixel {
+
+std::vector<StripEvent> strip_events(const Recording& rec, const ClipCut& cut, std::vector<usize>* left) {
+    std::vector<StripEvent> out;
+    for (usize i = 0; i < rec.marks.size(); ++i) {
+        const Mark& m = rec.marks[i];
+        const i64 k = sound_frame(cut, m.time);
+        if (k < 0) {
+            if (left) left->push_back(i);
+            continue;
+        }
+        StripEvent e;
+        e.name = m.name;
+        e.sound = m.kind == Mark::Kind::Sound;
+        e.frame = static_cast<u32>(k);
+        // The window's frames: on while the next frame's moment is not past its end.
+        u32 last = e.frame;
+        if (!e.sound && m.length > 0)
+            while (last + 1 < cut.frames && cut.time(last + 1) <= m.time + m.length + 1e-9) ++last;
+        e.frames = last - e.frame + 1;
+        out.push_back(std::move(e));
+    }
+    std::stable_sort(out.begin(), out.end(), [](const StripEvent& a, const StripEvent& b) { return a.frame < b.frame; });
+    return out;
+}
 
 bool draw_drawings(PoseScript& script, const PixelDoc& doc, std::vector<NamedDrawing>& out, std::string& why, u32& line) {
     out.clear();
@@ -124,7 +150,15 @@ bool bake_strip(Rig& rig, PoseScript& script, const PixelDoc& doc, const BakeOpt
     bool ok = true;
     for (usize i = 0; i < doc.clips.size(); ++i) {
         const ClipSpec& c = doc.clips[i];
-        out.clips.push_back({c.state, at, cuts[i].frames, c.fps, c.loop});
+        out.clips.push_back({c.state, at, cuts[i].frames, c.fps, c.loop, {}});
+        if (cuts[i].code) {
+            // Recorded already by cut_clip, with every clip's lengths (part 5б): the same recording again.
+            if (const Recording* rec = script.recording(rig, c.state, doc.params, doc.seed)) {
+                std::vector<usize> left;
+                out.clips.back().events = strip_events(*rec, cuts[i], &left);
+                for (usize m : left) out.left.push_back({c.state, rec->marks[m].name, rec->marks[m].time});
+            }
+        }
         for (u32 k = 0; k < cuts[i].frames && ok; ++k, ++at) {
             assets::CookedTexture frame;
             ok = bake_frame(rig, script, doc, c, k, options, frame, why);

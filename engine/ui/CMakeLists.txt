@@ -5,12 +5,13 @@ add_library(forge_ui STATIC
   src/html.cpp
   src/elements.cpp
   src/gpu_renderer.cpp
-  src/live_svg.cpp)
+  src/live_svg.cpp
+  src/svg_stage.cpp)
 add_library(forge::ui ALIAS forge_ui)
 target_include_directories(forge_ui PUBLIC include)
 target_link_libraries(forge_ui
-  PUBLIC forge::core forge::render RmlUi::Core SDL3::SDL3-static
-  PRIVATE RmlUi::Debugger yyjson stb_headers forge::assets forge::vector lunasvg::lunasvg)
+  PUBLIC forge::core forge::render forge::vector RmlUi::Core SDL3::SDL3-static
+  PRIVATE RmlUi::Debugger yyjson stb_headers forge::assets lunasvg::lunasvg)
 forge_add_shaders(forge_ui
   shaders/ui.vert
   shaders/ui_texture.frag

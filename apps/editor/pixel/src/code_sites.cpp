@@ -498,6 +498,28 @@ bool insert_clip_line(const CodeSites& code, std::string_view source, std::strin
     }
     if (c->params_end > source.size()) return why = "код изменился: место вызова устарело", false;
     std::vector<Edit> edits;
+    // start_from(…) stays the clip's first line (part 5б): the new one goes right after it.
+    const CallSite* start = nullptr;
+    for (const CallSite& s : code.sites())
+        if (!s.method && s.name == "start_from" && c->first >= 0 && s.span.begin == static_cast<u32>(c->first)) start = &s;
+    if (start) {
+        if (start->span.end > source.size()) return why = "код изменился: место вызова устарело", false;
+        u32 eol = start->span.end;
+        while (eol < source.size() && source[eol] != '\n') ++eol;
+        // Nothing but spaces, ";" and a comment after it on its line: the new line below it.
+        bool alone = true;
+        for (u32 i = start->span.end; i < eol && alone; ++i) {
+            if (source[i] == '-' && i + 1 < eol && source[i + 1] == '-') break;
+            alone = source[i] == ' ' || source[i] == '\t' || source[i] == ';' || source[i] == '\r';
+        }
+        const char* end = eol > 0 && eol < source.size() && source[eol - 1] == '\r' ? "\r\n" : "\n";
+        std::string indent = indent_of(source, static_cast<u32>(c->first));
+        if (c->first_line == c->header_line) indent += "  ";
+        if (alone && eol < source.size()) edits.push_back({eol + 1, eol + 1, indent + std::string(line) + end});
+        else edits.push_back({start->span.end, start->span.end, end + indent + std::string(line)});
+        out = apply_edits(source, edits);
+        return true;
+    }
     if (c->first >= 0 && c->first_line > c->header_line) {
         u32 at = static_cast<u32>(c->first);
         while (at > 0 && source[at - 1] != '\n') --at;

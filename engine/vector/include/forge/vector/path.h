@@ -54,6 +54,15 @@ void split(Point from, const Cubic& c, f64 t, Cubic& first, Cubic& second);
 // down). Exact for cubic curves. An open contour counts as closed by a straight line back to its start.
 f64 area(const Contour& c);
 
+// The share of a path from `from` to `to` of its whole length, its contours one line after another, as ThorVG 1.1.2
+// draws a shape's trimpath(from, to, false) (RenderTrimPath): every contour comes out open, a closed one's way back to
+// its start a line like the others; a curve is cut where ThorVG's estimate of its length reaches the cut (a line's
+// length is ThorVG's quick estimate too: the longer side and 3/8 of the shorter). `lines` says whether a straight curve
+// (as line() makes it) is a line to ThorVG, as it is in a shape it read from SVG, or a curve, as in a path given to it
+// curve by curve (a morph). Worked out in single precision, as ThorVG does, so the points are its own. No path when
+// from ≥ to, outside 0 … 1 or the path has less than a curve.
+Path trim(const Path& path, f64 from, f64 to, bool lines);
+
 // --- SVG ---
 
 // The path of an SVG `d` attribute: every command (M L H V C S Q T A Z; upper case absolute, lower case relative),
@@ -64,6 +73,8 @@ f64 area(const Contour& c);
 bool parse_path(std::string_view d, Path& out, std::string* why = nullptr);
 // The path as `d`: M, C and Z, each number written shortest so that reading it back gives the same number.
 std::string to_d(const Path& path);
+// The same with a curve that line() makes written as L when `lines`: as ThorVG holds the lines of a share trim() cuts.
+std::string to_d(const Path& path, bool lines);
 
 // SVG's basic shapes as paths, laid out as SVG 2 says: they start and go round where an author expects, so a morph
 // between them turns the expected way. Sizes of 0 or less give no path.

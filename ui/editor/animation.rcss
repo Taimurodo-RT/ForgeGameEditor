@@ -71,6 +71,10 @@
 .an-frame.small { width: 44px; height: 44px; cursor: default; }
 .an-frame.small img { width: 36px; height: 36px; }
 .an-num { position: absolute; left: 4px; top: 2px; font-size: 11px; font-weight: 600; color: var(--on-surface-variant); }
+/* Marks of the code (part 5а of docs/models/движение-модель.md): an icon where they begin, a bar under a window. */
+.an-mark { position: absolute; right: 2px; top: 2px; font-size: 13px; color: var(--tertiary); }
+.an-window { position: absolute; left: 2px; right: 2px; bottom: 2px; height: 3px; border-radius: 2px; background-color: var(--tertiary); }
+.an-marks { font-size: 12px; color: var(--on-surface-variant); }
 
 .an-side {
     width: 300px;
@@ -119,6 +123,8 @@
 .px-top { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
 .px-nav { width: 220px; }
 .px-stage { flex: 0 0 auto; overflow-y: auto; }
+/* The problem and the note under the views wrap at the views' width: a long line does not widen the stage. */
+.px-said > div { flex: 1 1 0px; min-width: 0px; }
 .px-views { gap: var(--space-2); flex-wrap: wrap; justify-content: center; }
 .px-view { gap: var(--space-1); align-items: center; }
 .px-canvas {
@@ -165,6 +171,13 @@
 .px-timing-row.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); }
 .px-why { white-space: pre-line; }
 .px-value { gap: var(--space-1); align-items: center; min-height: 20px; }
+/* Part 4ж: the part's fields in three sections; the graph of a block's easing. */
+.px-pf-section { margin-top: var(--space-1); }
+.px-pf-name { min-width: 72px; }
+.px-pf-now { text-align: right; font-size: 11px; color: var(--on-surface-variant); }
+.px-pf input { width: 84px; }
+.px-ease { gap: 2px; }
+.px-ease-graph { width: 200px; height: 180px; border-radius: 6px; background-color: var(--surface-container-lowest); cursor: pointer; }
 
 /* The code panel: line numbers beside the text, the console under it. */
 .px-code {

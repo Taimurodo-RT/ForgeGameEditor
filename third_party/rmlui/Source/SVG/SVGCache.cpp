@@ -254,12 +254,14 @@ namespace SVG {
 				return {};
 			}
 
+			// Forge: a live element's document starts as the element's script has it (maybe another one in its place).
+			if (live_element && live_apply)
+				live_apply(live_element, doc.live_path, doc.live_text, doc.svg_document, true);
+			if (!doc.svg_document)
+				return {};
+
 			doc.intrinsic_dimensions.x = Math::Max(float(doc.svg_document->width()), 1.0f);
 			doc.intrinsic_dimensions.y = Math::Max(float(doc.svg_document->height()), 1.0f);
-
-			// Forge: a live element's document starts as the element's script has it.
-			if (live_element && live_apply)
-				live_apply(live_element, doc.live_path, doc.live_text, *doc.svg_document);
 
 			const auto it_inserted = documents.insert_or_assign(source_id, std::move(doc));
 			RMLUI_ASSERT(it_inserted.second);
@@ -305,9 +307,13 @@ namespace SVG {
 			svg_texture.texture = {};
 
 			// Callback for generating texture.
-			auto texture_callback = [svg_document = doc.svg_document.get(), dimensions, crop_to_content, uses_current_color = doc.uses_current_color,
+			// Forge: the document is found when the texture is made, as a live element's apply may put another in its place.
+			auto texture_callback = [source_id, dimensions, crop_to_content, uses_current_color = doc.uses_current_color,
 										current_color = key.current_color](const CallbackTextureInterface& texture_interface) -> bool {
-				RMLUI_ASSERT(svg_document);
+				const auto it_doc = svg_cache_data->documents.find(source_id);
+				if (it_doc == svg_cache_data->documents.end() || !it_doc->second.svg_document)
+					return false;
+				lunasvg::Document* svg_document = it_doc->second.svg_document.get();
 				RMLUI_SVG_DEBUG_LOG("Generating texture: %s, (%d, %d), %s", GetSourceOr(svg_document, "").c_str(), dimensions.x, dimensions.y,
 					crop_to_content ? "crop_to_content" : "crop_none");
 
@@ -559,8 +565,8 @@ namespace SVG {
 			if (!StringUtilities::StartsWith(entry.first, prefix))
 				continue;
 			SVGDocument& doc = entry.second;
-			if (live_apply)
-				live_apply(element, doc.live_path, doc.live_text, *doc.svg_document);
+			if (live_apply && doc.svg_document)
+				live_apply(element, doc.live_path, doc.live_text, doc.svg_document, false);
 			for (SVGTexture& texture : doc.textures)
 				texture.texture.Regenerate();
 		}

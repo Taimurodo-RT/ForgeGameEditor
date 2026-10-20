@@ -231,6 +231,15 @@ void Objects::init(flecs::world& ecs) {
     enemies = ecs.query<Position, Body, Enemy>();
     hazards = ecs.query<Position, Body, Hazard>();
     bodies = ecs.query_builder<Position, Body>().without<Npc>().without<Critter>().without<Item>().without<Hero>().build();
+    copies = ecs.query_builder<Position, objects::ObjectRef>().build();
+}
+
+Pose critter_pose(const Body& b) { return (b.contacts & sim::OnGround) && std::fabs(b.vx) > 0.3f ? Pose::Walk : Pose::Stand; }
+
+Pose copy_pose(flecs::entity e) {
+    if (e.has<Critter>() && !e.has<Npc>())
+        if (const Body* b = e.try_get<Body>()) return critter_pose(*b);
+    return Pose::Idle;
 }
 
 void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGenerator* gen, f64 cam_x, f64 cam_y,
@@ -261,8 +270,7 @@ void push_objects(render::SpriteBatch& batch, Objects& objects, const SliceGener
         const f32 side = c.dir < 0 ? -1.0f : 1.0f;
         if (const Pictures::Picture* pic = picture(e)) {
             // It walks while it goes on the ground, else it stands: its animation of that pose by the level's clock.
-            const bool walks = (b.contacts & sim::OnGround) && std::fabs(b.vx) > 0.3f;
-            at(x, y, side * pic->aspect, 1.0f, pic->at(walks ? Pose::Walk : Pose::Stand, tick), 1);
+            at(x, y, side * pic->aspect, 1.0f, pic->at(critter_pose(b), tick), 1);
             return;
         }
         Sprite* s = batch.push(1);
