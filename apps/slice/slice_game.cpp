@@ -2310,6 +2310,7 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     sounds_.set_volumes(settings.master_volume, settings.sound_volume, settings.music_volume);
     sounds_.tick(dt);
     if (!running_) {
+        ++logic_runs_; // the backdrop's: no scheme hears a scene
         drift_camera(dt);
         level_->sim->update(dt, focus());
         build_sprites();
@@ -2330,7 +2331,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     }
     const u64 t0 = time_now_ns();
     sync_doors(*level_->scene);
-    level_->sim->update(live ? dt : 0.0, focus());
+    logic_runs_ += level_->sim->update(live ? dt : 0.0, focus());
+    // Over (won or lost), the schemes run no more: a scene's end is heard by nobody.
+    if (ended_ != Ending::None) ++logic_runs_;
     sim_ms_ = ns_to_ms(time_now_ns() - t0);
     settle(); // what the ticks left: no hearts, back after spikes
     do_deeds();

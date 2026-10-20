@@ -31,7 +31,9 @@
 #include "forge/pixel/screen.h"
 #include "forge/pixel/script.h"
 #include "forge/pixel/timeline.h"
+#include "forge/render/offscreen.h"
 #include "forge/ui/live_svg.h"
+#include "forge/ui/ui.h"
 #include "forge/vector/motion_file.h"
 #include "forge/vector/scene_file.h"
 #include "forge/vector/svg.h"
@@ -2090,6 +2092,13 @@ const std::string* gift_file(const SceneGift& g, std::string_view path) {
     return nullptr;
 }
 
+// The element a layer of the scene in the game draws with: a run's itself, a picture's or an actor's inside its own
+// layer (part 6г4: its mask by a shape of the stage).
+Rml::Element* layer_element(Rml::Element* camera, int i) {
+    Rml::Element* e = camera ? camera->GetChild(i) : nullptr;
+    return e && e->GetTagName() == "div" ? e->GetChild(0) : e;
+}
+
 // A part's value as the game poses it, at rest without a track.
 vector::MotionValue game_value_of(const std::vector<vector::MotionPartPose>& parts, std::string_view id, vector::MotionProp p) {
     for (const vector::MotionPartPose& pp : parts)
@@ -3315,7 +3324,9 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
             CHECK_FALSE(scene.going());
             CHECK(scene.over(serial));
             CHECK_FALSE(scene.skipped(serial));
-            CHECK(scene.document() == nullptr);
+            // Its last frame stays till the game's logic has run after its end (part 6г4; untold, the next update), then
+            // it goes.
+            CHECK(scene.document() != nullptr);
             REQUIRE(!ends.empty());
             CHECK(ends.back().name == "Вступление");
             CHECK_FALSE(ends.back().skipped);
@@ -3333,6 +3344,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
             for (int k = 1; k <= 60; ++k) {
                 scene.update(1.0 / 60, 400, 240);
                 CHECK(share == doctest::Approx(k / 60.0));
+                if (k == 1) CHECK(scene.document() == nullptr);
             }
             scene.update(1.0 / 60, 400, 240);
             CHECK(tunes.empty());
@@ -3351,7 +3363,8 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         Rml::ElementDocument* doc = scene.document();
         REQUIRE(doc);
         context->Update();
-        const Rml::Property* bg = doc->GetLocalProperty("background-color");
+        REQUIRE(doc->GetElementById("bg"));
+        const Rml::Property* bg = doc->GetElementById("bg")->GetLocalProperty("background-color");
         REQUIRE(bg);
         CHECK(bg->Get<Rml::Colourb>() == Rml::Colourb(32, 48, 64, 255));
         Rml::Element* frame = doc->GetElementById("frame");
@@ -3371,7 +3384,9 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top) == 0);
         CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Bottom) == 0);
         CHECK(bars->GetBox().GetSize(Rml::BoxArea::Border).x == doctest::Approx(400));
-        CHECK(doc->GetChild(doc->GetNumChildren() - 1) == bars);
+        Rml::Element* look = doc->GetElementById("look");
+        REQUIRE(look);
+        CHECK(look->GetChild(look->GetNumChildren() - 1) == bars);
         const std::vector<std::string> first = {"run " + key("небо"),
                                                 "picture лес " + key("лес"),
                                                 "picture лес cлес[1]",
@@ -3385,7 +3400,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(camera->GetNumChildren() == static_cast<int>(first.size()));
         for (int k = 0; k < 15; ++k) scene.update(1.0 / 60, 400, 240);
         CHECK(scene.time() == doctest::Approx(0.25));
-        Rml::Element* hog = camera->GetChild(5);
+        Rml::Element* hog = layer_element(camera, 5);
         REQUIRE(hog);
         CHECK(hog->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg");
         CHECK(hog->GetLocalProperty("width")->Get<float>() == doctest::Approx(64));
@@ -3409,7 +3424,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         // At 0.35 s the beetle swaps to its flat drawing: its layer shows the swap, the parts of both drawings.
         for (int k = 0; k < 6; ++k) scene.update(1.0 / 60, 400, 240);
         CHECK(scene.time() == doctest::Approx(0.35));
-        const ui::SvgPose* bug = ui::svg_posed(camera->GetChild(7));
+        const ui::SvgPose* bug = ui::svg_posed(layer_element(camera, 7));
         REQUIRE(bug);
         CHECK(bug->picture == "жук.svg");
         CHECK(bug->swap);
@@ -3439,6 +3454,10 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(scene.skipped(3));
         CHECK(ends.back().serial == 3);
         CHECK(ends.back().skipped);
+        // Skipped between frames, its last frame stays till the game's logic has run (part 6г4; untold, an update is a
+        // run), then it goes: nothing came in over it.
+        CHECK(scene.document() != nullptr);
+        scene.update(1.0 / 60, 400, 240);
         CHECK(scene.document() == nullptr);
         CHECK(scene.layers().empty());
 
@@ -3498,7 +3517,7 @@ TEST_CASE("Сцена в игре: прозрачность картинки и 
             const std::vector<std::string> layers = scene.layers();
             for (usize i = 0; i < layers.size(); ++i)
                 if (layers[i].rfind(layer, 0) == 0) {
-                    const Rml::Property* p = camera->GetChild(static_cast<int>(i))->GetLocalProperty("opacity");
+                    const Rml::Property* p = layer_element(camera, static_cast<int>(i))->GetLocalProperty("opacity");
                     return p ? static_cast<f64>(p->Get<float>()) : -1.0;
                 }
             return -2.0;
@@ -3798,7 +3817,7 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
             Rml::Element* camera = scene.document() ? scene.document()->GetElementById("camera") : nullptr;
             REQUIRE(camera);
             for (int i = 0; i < camera->GetNumChildren(); ++i)
-                if (camera->GetChild(i)->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg") return ui::svg_posed(camera->GetChild(i));
+                if (layer_element(camera, i)->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg") return ui::svg_posed(layer_element(camera, i));
             return nullptr;
         };
         auto head = [](const std::vector<vector::MotionPartPose>& parts) { return game_value_of(parts, "ёжик/head", vector::MotionProp::Y).v; };
@@ -3991,6 +4010,428 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
         CHECK(scene.waiting() == nullptr);
     }
     Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена в игре: площадь фигуры для маски — как у вкладки (Rig::area), разница только на краях") {
+    // Filled, only outlined, hidden and faded shapes, one turned by the scene, through a camera that moves, zooms and
+    // turns, on a screen twice the canvas.
+    Files files;
+    project(files);
+    Scene s;
+    const char* stage = R"(    canvas(160, 120)
+    background("#203040")
+    rect("плита", { x = 20, y = 20, w = 50, h = 30, fill = "#ff0000" })
+    circle("кольцо", { x = 110, y = 40, r = 20, fill = "none", stroke = "#00ff00", stroke_width = 6 })
+    rect("тайник", { x = 30, y = 70, w = 30, h = 30, fill = "#0000ff", hidden = true })
+    ellipse("дымка", { x = 110, y = 90, rx = 25, ry = 12, fill = "#ffffff", opacity = 0.3 })
+    rect("пол", { x = 0, y = 110, w = 160, h = 10, fill = "#405060" }))";
+    load(s, files, R"(    part("плита").rot(30)
+    camera().x(10)
+    camera().zoom(1.25)
+    camera().rot(8)
+    wait(1))",
+         stage);
+    record(s);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    ui::SvgPlaces places;
+    std::string why;
+    REQUIRE(places.load("/сцена/stage.svg", *gift_file(gift, "stage.svg"), why));
+    REQUIRE(s.frame(0.5));
+    const vector::ScenePose pose = vector::scene_pose(m, 0.5);
+    const std::vector<std::string> ids = {"плита", "кольцо", "тайник", "дымка"};
+    places.place(stage_pose(pose), ids);
+    const vector::MotionMatrix cam = vector::scene_camera_matrix(pose.camera, m.file.width, m.file.height);
+    constexpr u32 w = 320, h = 240;
+    const vector::MotionMatrix screen = vector::MotionMatrix{2, 0, 0, 2, 0, 0} * cam;
+    for (const std::string& id : ids) {
+        CAPTURE(id);
+        const std::vector<u8> tab = s.rig().area(s.rig().part(id), w, h, Affine{2, 0, 0, 2, 0, 0} * s.camera_matrix());
+        std::vector<u8> game;
+        REQUIRE(places.area(id, screen, w, h, game));
+        REQUIRE(tab.size() == game.size());
+        // Where the tab's is solid (a pixel and its eight neighbours all in or all out) the game's is the same; elsewhere
+        // (the edges) within a pixel's smoothing.
+        int inside = 0, outside = 0, off = 0, edge_off = 0;
+        for (u32 y = 1; y + 1 < h; ++y)
+            for (u32 x = 1; x + 1 < w; ++x) {
+                const int v = tab[y * w + x];
+                bool solid = v == 0 || v == 255;
+                for (int dy = -1; dy <= 1 && solid; ++dy)
+                    for (int dx = -1; dx <= 1 && solid; ++dx) solid = tab[(y + dy) * w + x + dx] == v;
+                const int d = std::abs(int(game[y * w + x]) - v);
+                if (solid) {
+                    (v ? inside : outside) += 1;
+                    if (d > 2) ++off;
+                } else if (d > 160) ++edge_off;
+            }
+        CHECK(inside > 150);
+        CHECK(outside > 150);
+        CHECK(off == 0);
+        CHECK(edge_off == 0);
+        // Its box holds all of it, in the stage's units.
+        f64 bx = 0, by = 0, bw = 0, bh = 0;
+        REQUIRE(places.area_box(id, bx, by, bw, bh));
+        const vector::MotionMatrix back = vector::inverse(screen);
+        for (u32 y = 0; y < h; ++y)
+            for (u32 x = 0; x < w; ++x) {
+                if (game[y * w + x] < 8) continue;
+                const vector::Point q = back.apply({x + 0.5, y + 0.5});
+                CHECK((q.x > bx - 1 && q.x < bx + bw + 1 && q.y > by - 1 && q.y < by + bh + 1));
+                if (!(q.x > bx - 1 && q.x < bx + bw + 1 && q.y > by - 1 && q.y < by + bh + 1)) {
+                    x = w, y = h; // once is enough
+                }
+            }
+    }
+    // The outline's area is the ring alone: its middle is empty.
+    std::vector<u8> ring;
+    REQUIRE(places.area("кольцо", vector::MotionMatrix{}, 160, 120, ring));
+    CHECK(ring[40 * 160 + 110] == 0);
+    CHECK(ring[40 * 160 + 130] == 255);
+    // A part not asked for at place, or none such: no area.
+    std::vector<u8> none;
+    CHECK_FALSE(places.area("пол", screen, w, h, none));
+    CHECK(places.area_shapes("пол").empty());
+    CHECK_FALSE(places.area("нет", screen, w, h, none));
+    f64 x = 1, y = 1, bw = 1, bh = 1;
+    CHECK_FALSE(places.area_box("нет", x, y, bw, bh));
+    CHECK(bw == 0);
+}
+
+namespace {
+
+// The game's screen for scenes (part 6г4): the game's UI over a world of one grey on the GPU (software Vulkan on CI),
+// a frame drawn as the shell draws it (the world in a texture of its own when a scene's transition shows the game's
+// frame). The grey is the tab's «то, что было».
+struct SceneScreen {
+    u32 w = 0, h = 0;
+    SDL_GPUDevice* device = nullptr;
+    SDL_GPUTexture* world = nullptr;
+    SDL_GPUTexture* target = nullptr;
+    ui::Ui ui;
+    Rml::Context* context = nullptr;
+
+    SceneScreen(u32 width, u32 height) : w(width), h(height) {
+        device = render::create_offscreen_device();
+        REQUIRE(device);
+        world = render::create_render_target(device, w, h);
+        target = render::create_render_target(device, w, h);
+        REQUIRE(world);
+        REQUIRE(target);
+        ui::UiConfig config;
+        config.root = fs::path(FORGE_SOURCE_DIR) / "ui";
+        config.hot_reload = false;
+        config.debugger = false;
+        config.display_scale = 1;
+        REQUIRE(ui.init(device, nullptr, config));
+        context = ui.create_context("scene", static_cast<int>(w), static_cast<int>(h));
+        REQUIRE(context);
+    }
+    ~SceneScreen() {
+        ui.shutdown();
+        SDL_ReleaseGPUTexture(device, world);
+        SDL_ReleaseGPUTexture(device, target);
+        render::destroy_offscreen_device(device);
+    }
+
+    static void fill(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture, Rgba8 c) {
+        SDL_GPUColorTargetInfo color{};
+        color.texture = texture;
+        color.load_op = SDL_GPU_LOADOP_CLEAR;
+        color.store_op = SDL_GPU_STOREOP_STORE;
+        color.clear_color = {c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1};
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &color, 1, nullptr));
+    }
+
+    // The scene's time goes dt, then the frame is drawn: its pixels.
+    std::vector<u8> frame(game::GameScene& scene, f64 dt) {
+        scene.update(dt, static_cast<int>(w), static_cast<int>(h));
+        for (Rml::ElementDocument* d : scene.documents()) d->PullToFront();
+        SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
+        REQUIRE(cmd);
+        fill(cmd, target, kOutsideScene);
+        const bool backdrop = scene.wants_backdrop();
+        if (backdrop) {
+            fill(cmd, world, kOutsideScene);
+            ui.set_world(world);
+        }
+        ui.update();
+        ui.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
+        ui.set_world(nullptr);
+        REQUIRE(SDL_SubmitGPUCommandBuffer(cmd));
+        std::vector<u8> rgba;
+        REQUIRE(render::read_pixels(device, target, w, h, rgba));
+        return rgba;
+    }
+};
+
+Rgba8 rgba_at(const std::vector<u8>& rgba, u32 w, u32 x, u32 y) {
+    const u8* p = &rgba[(static_cast<usize>(y) * w + x) * 4];
+    return {p[0], p[1], p[2], p[3]};
+}
+
+// The game's frame against the tab's draw_frame on a screen of the canvas's size: where the tab's is solid (a pixel and
+// its eight neighbours one colour), the game's within 6 of it over black (under a transition's frames); empty when they
+// agree, else where not. `said`: how many were compared.
+std::string frame_differs(const std::vector<u8>& game, const assets::CookedTexture& tab, std::string& said) {
+    const u32 w = tab.width, h = tab.height;
+    if (game.size() != tab.rgba8.size()) return "размеры кадров разные";
+    int solid = 0, off = 0, worst = 0;
+    std::string why;
+    for (u32 y = 1; y + 1 < h; ++y)
+        for (u32 x = 1; x + 1 < w; ++x) {
+            const Rgba8 t = pixel_at(tab, x, y);
+            bool one = true;
+            for (int dy = -1; dy <= 1 && one; ++dy)
+                for (int dx = -1; dx <= 1 && one; ++dx) {
+                    const Rgba8 n = pixel_at(tab, x + dx, y + dy);
+                    one = std::abs(n.r - t.r) <= 1 && std::abs(n.g - t.g) <= 1 && std::abs(n.b - t.b) <= 1 && std::abs(n.a - t.a) <= 1;
+                }
+            if (!one) continue;
+            ++solid;
+            const Rgba8 g = rgba_at(game, w, x, y);
+            auto over_black = [&](u8 c) { return static_cast<int>(std::lround(c * t.a / 255.0)); };
+            const int d = std::max({std::abs(g.r - over_black(t.r)), std::abs(g.g - over_black(t.g)), std::abs(g.b - over_black(t.b))});
+            worst = std::max(worst, d);
+            if (d > 6 && off++ == 0)
+                why = "в " + std::to_string(x) + ", " + std::to_string(y) + " игра " + std::to_string(g.r) + " " + std::to_string(g.g) + " " +
+                      std::to_string(g.b) + ", вкладка " + std::to_string(t.r) + " " + std::to_string(t.g) + " " + std::to_string(t.b) + " " +
+                      std::to_string(t.a);
+        }
+    said = std::to_string(solid) + " сплошных из " + std::to_string(w * h) + ", расхождение до " + std::to_string(worst);
+    if (off == 0 && solid >= static_cast<int>(w * h) / 2) return {};
+    return off ? std::to_string(off) + " расходятся (" + why + ")" : "сплошных только " + std::to_string(solid);
+}
+
+// A scene of the tab given to a game, played on the screen from its start: the game's frame at each moment against the
+// tab's (moments in order, the first 0).
+void game_frames_as_tab(Files& files, std::string_view stage, std::string_view code, const std::vector<f64>& moments, const char* name) {
+    INFO("сцена «", name, "»");
+    Scene s;
+    load(s, files, code, stage);
+    record(s);
+    const SceneGift gift = gift_of(s, files, name);
+    const fs::path game_dir = empty_dir("forge_tests_переходы_в_игре");
+    give(gift, game_dir, name);
+    {
+        SceneScreen screen(160, 120);
+        game::GameScene scene;
+        scene.set_ui(&screen.ui);
+        std::string why;
+        REQUIRE(scene.play(screen.context, game_dir, name, {}, why));
+        f64 at = 0;
+        for (usize i = 0; i < moments.size(); ++i) {
+            const f64 t = moments[i];
+            CAPTURE(t);
+            const std::vector<u8> game = screen.frame(scene, i == 0 ? 0 : t - at);
+            at = t;
+            CHECK(scene.time() == doctest::Approx(t));
+            const bool ok = s.frame(t);
+            INFO(s.error());
+            REQUIRE(ok);
+            std::string said;
+            const std::string differs = frame_differs(game, s.draw_frame(160, 120, Affine{}), said);
+            INFO(said);
+            CHECK_MESSAGE(differs.empty(), differs);
+        }
+        scene.drop();
+    }
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+} // namespace
+
+TEST_CASE("Сцена в игре: кадры входа и ухода — как кадр вкладки, у которой «то, что было» — кадр игры") {
+    Files files;
+    project(files);
+    // «растворение» in, then «сдвиг» out to the game from the right.
+    game_frames_as_tab(files, kStage, R"(    transition("растворение", 1)
+    wait(1)
+    leave("сдвиг", 1))",
+                       {0, 0.25, 0.5, 1, 1.25, 1.5, 1.75, 2}, "Растворение");
+    // «сдвиг» in from above (the game's frame black where it has gone), «приближение» in.
+    game_frames_as_tab(files, kStage, "    transition(\"сдвиг\", 1, { from = \"верх\" })\n    wait(1)", {0, 0.3, 0.5, 0.8, 1}, "Сдвиг");
+    game_frames_as_tab(files, kStage, "    transition(\"приближение\", 1)\n    wait(1)", {0, 0.25, 0.5, 0.75, 1}, "Приближение");
+    // One of its own: the new frame seen only in the circle as the camera sees it, the old one faded, through a camera
+    // that moves and zooms; and the new one outside the circle, turned and smaller, over the old going left.
+    game_frames_as_tab(files, kStageB, R"(    camera().x(8)
+    camera().zoom(1.25)
+    transition(function(old, new)
+      new:mask("круг")
+      old.opacity(0.5)
+      wait(1)
+    end)
+    wait(1))",
+                       {0, 0.5, 0.99, 1}, "Своя");
+    game_frames_as_tab(files, kStageB, R"(    transition(function(old, new)
+      new:mask("круг", { invert = true })
+      new.rot(6)
+      new.scale(0.9)
+      old.opacity(0.75)
+      old.x(-40, 1, "linear")
+    end)
+    wait(1))",
+                       {0, 0.5, 0.99, 1}, "Наоборот");
+    // A leave of its own: the game's frame from below, masked by the circle.
+    game_frames_as_tab(files, kStageB, R"(    wait(0.5)
+    leave(function(old, new)
+      new:mask("круг")
+      new.y(120)
+      new.y(0, 1, "linear")
+    end))",
+                       {0, 0.5, 0.75, 1.25, 1.5}, "Уход");
+}
+
+TEST_CASE("Сцена в игре: маска картинки и актёра по фигуре сцены — как во вкладке") {
+    Files files;
+    project(files);
+    const char* stage = R"(    canvas(160, 120)
+    background("#203040")
+    picture("лес", "картинки/лес.png", { x = 8, y = 6 })
+    actor("ёжик", "персонажи/Ёжик", { x = 40, y = 100, pivot = { 32, 60 } })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
+    circle("окно", { x = 30, y = 20, r = 14, fill = "#ffffff", hidden = true })
+    rect("щель", { x = 20, y = 60, w = 40, h = 12, fill = "#ffffff", hidden = true })
+    circle("дыра", { x = 120, y = 85, r = 6, fill = "#ffffff", hidden = true }))";
+    // The picture inside a circle, the hedgehog in a slit that moves, the beetle outside a hole; the camera zoomed and
+    // turned (its view inside the canvas).
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
+    part("ёжик"):mask("щель")
+    part("жук"):mask("дыра", { invert = true })
+    camera().x(6)
+    camera().zoom(1.2)
+    camera().rot(4)
+    part("щель").y(20, 1, "linear"))",
+                       {0, 0.3, 0.6, 0.9}, "Маски");
+    // Unmasked again: whole, as 6г2 draws it.
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
+    wait(0.5)
+    part("лес"):mask()
+    wait(0.5))",
+                       {0, 0.25, 0.75}, "Без маски");
+}
+
+TEST_CASE("Сцена в игре: сцена за сценой — прежняя стоит старым кадром до конца входа новой, последний кадр — до хода логики") {
+    Files files;
+    project(files);
+    const char* kOne = "    canvas(160, 120)\n    background(\"#203040\")";
+    const char* kTwo = "    canvas(160, 120)\n    background(\"#a04020\")";
+    const fs::path game_dir = empty_dir("forge_tests_сцены_подряд");
+    // «А» and «В» without a transition, «Б» coming in by «растворение», «Г» going out to the game by «сдвиг».
+    Scene a, b, c, d;
+    auto give_one = [&](Scene& s, const char* name, const char* stage, const char* code) {
+        load(s, files, code, stage);
+        record(s);
+        give(gift_of(s, files, name), game_dir, name);
+    };
+    give_one(a, "А", kOne, "    wait(1)");
+    give_one(b, "Б", kTwo, "    transition(\"растворение\", 1)\n    wait(1)");
+    give_one(c, "В", kOne, "    wait(1)");
+    give_one(d, "Г", kOne, "    wait(0.5)\n    leave(\"сдвиг\", 0.5)");
+    const Rgba8 one{0x20, 0x30, 0x40, 255}, two{0xa0, 0x40, 0x20, 255};
+    // How far «Б» has come in at t, by its tab (whose old frame is the grey).
+    auto come = [&](f64 t) {
+        const bool ok = b.frame(t);
+        INFO(b.error());
+        REQUIRE(ok);
+        const Rgba8 p = pixel_at(b.draw_frame(160, 120, Affine{}), 80, 60);
+        return (p.r - kOutsideScene.r) / static_cast<f64>(two.r - kOutsideScene.r);
+    };
+    // x and y mixed by k, within 3 of each channel.
+    auto mix = [](Rgba8 p, Rgba8 x, Rgba8 y, f64 k) {
+        auto near_by = [&](u8 got, u8 from, u8 to) { return std::abs(got - (from + (to - from) * k)) <= 3; };
+        return near_by(p.r, x.r, y.r) && near_by(p.g, x.g, y.g) && near_by(p.b, x.b, y.b);
+    };
+
+    SceneScreen screen(160, 120);
+    game::GameScene scene;
+    scene.set_ui(&screen.ui);
+    u64 runs = 0;
+    scene.logic_ran(runs);
+    std::vector<std::string> ends;
+    scene.on_end = [&](const std::string& name, bool skipped, u64) { ends.push_back(name + (skipped ? " пропущена" : "")); };
+    auto middle = [&](f64 dt) { return rgba_at(screen.frame(scene, dt), 160, 80, 60); };
+    std::string why;
+
+    // «А» ends; in the frames of a screen of 144 Hz in which the logic does not run, its last frame stays.
+    REQUIRE(scene.play(screen.context, game_dir, "А", {}, why));
+    CHECK(mix(middle(0), one, one, 0));
+    CHECK(mix(middle(0.5), one, one, 0));
+    CHECK(mix(middle(0.5), one, one, 0));
+    CHECK_FALSE(scene.going());
+    CHECK(ends == std::vector<std::string>{"А"});
+    for (int k = 0; k < 2; ++k) {
+        CHECK(mix(middle(1.0 / 144), one, one, 0));
+        CHECK(scene.documents().size() == 1);
+    }
+    // The logic runs, hears it and begins «Б»: it comes in over the last frame of «А», no frame of the game between.
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 2);
+    CHECK_FALSE(scene.wants_backdrop());
+    CHECK(mix(middle(0), one, two, come(0)));
+    for (const f64 t : {0.25, 0.5, 0.75}) {
+        CAPTURE(t);
+        scene.logic_ran(++runs);
+        CHECK(mix(middle(0.25), one, two, come(t)));
+        CHECK(scene.documents().size() == 2);
+        CHECK_FALSE(scene.wants_backdrop());
+    }
+    // Come in, it stands alone: the one before goes.
+    CHECK(mix(middle(0.25), two, two, 0));
+    CHECK(scene.documents().size() == 1);
+
+    // «Б» ends, «В» begins without a transition: «Б» goes at once.
+    CHECK(mix(middle(1), two, two, 0));
+    CHECK_FALSE(scene.going());
+    REQUIRE(scene.documents().size() == 1);
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "В", {}, why));
+    CHECK(scene.documents().size() == 1);
+    CHECK(mix(middle(0), one, one, 0));
+
+    // «В» skipped between frames is the one before too: its last frame, the moment of the skip, under «Б» coming in.
+    CHECK(mix(middle(0.5), one, one, 0));
+    scene.skip();
+    CHECK(ends.back() == "В пропущена");
+    CHECK(mix(middle(1.0 / 144), one, one, 0));
+    CHECK(scene.documents().size() == 1);
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 2);
+    middle(0);
+    CHECK(mix(middle(0.5), one, two, come(0.5)));
+
+    // «Б» ends and nothing comes after it: once the logic has run, its last frame goes and the game is seen.
+    CHECK(mix(middle(0.5), two, two, 0));
+    CHECK(mix(middle(1), two, two, 0));
+    CHECK_FALSE(scene.going());
+    CHECK(mix(middle(1.0 / 144), two, two, 0));
+    scene.logic_ran(++runs);
+    CHECK(mix(middle(1.0 / 144), kOutsideScene, kOutsideScene, 0));
+    CHECK(scene.documents().empty());
+
+    // «Г» goes out to the game: «Б» after it comes in over the game, not over its last frame.
+    REQUIRE(scene.play(screen.context, game_dir, "Г", {}, why));
+    CHECK(mix(middle(0), one, one, 0));
+    middle(0.5);
+    middle(0.5);
+    CHECK_FALSE(scene.going());
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 1);
+    middle(0);
+    CHECK(scene.wants_backdrop());
+    CHECK(mix(middle(0.5), kOutsideScene, two, come(0.5)));
+
+    // Dropped (a load, a new game, the main menu): all of it goes at once.
+    scene.drop();
+    CHECK(scene.documents().empty());
+    CHECK_FALSE(scene.wants_backdrop());
+    CHECK(mix(middle(1.0 / 60), kOutsideScene, kOutsideScene, 0));
     std::error_code ec;
     fs::remove_all(game_dir, ec);
 }

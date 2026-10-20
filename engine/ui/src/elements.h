@@ -1,6 +1,6 @@
 #pragma once
 
-// Custom elements: <icon>, <virtual-list>, <lines> and <shape>.
+// Custom elements: <icon>, <virtual-list>, <lines>, <shape> and <backdrop>.
 
 #include "forge/core/types.h"
 
@@ -113,6 +113,17 @@ private:
     Rml::Geometry geometry_;
     bool dirty_ = true;
     bool filled_ = false;
+};
+
+// <backdrop name="…"/> (part 6г4 of docs/models/сцены-модель.md): where it is drawn, the frame so far (the world and
+// what the UI drew under it) goes into /gpu/<name> for the elements after it, as GpuRenderer::backdrop says. It draws
+// nothing itself. A scene's transition shows the game so.
+class ElementBackdrop final : public Rml::Element {
+public:
+    explicit ElementBackdrop(const Rml::String& tag_name);
+
+protected:
+    void OnRender() override;
 };
 
 } // namespace forge::ui

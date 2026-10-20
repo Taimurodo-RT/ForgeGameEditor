@@ -9415,7 +9415,8 @@ private:
                 check(st->at != 0 && !st->f5, "быстрое сохранение проверено во время сцены");
                 check(st->next_frame == e.sg_frames.size(), "все кадры сцены сравнены: " + std::to_string(st->next_frame));
                 check(std::fabs(sc.time() - e.sg_length) < 1e-9, "сцена прошла до конца: " + std::to_string(sc.time()) + " с");
-                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() == nullptr, "сцена кончилась, не пропущена, её документа нет");
+                // Its last frame is held a frame of the game more (part 6г4): nothing came in over it, it goes in the next.
+                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() != nullptr, "сцена кончилась, не пропущена, её последний кадр держится");
                 const std::string why = heard_differs(st->heard, st->want, true);
                 check(why.empty(), "сообщения и звуки сцены — как у вкладки: " + why);
                 for (const std::string& p : sc.problems())
@@ -9431,6 +9432,7 @@ private:
                 return false;
             }
             const u32 after = f - st->ended;
+            if (after == 1) check(sc.document() == nullptr, "кадр спустя документа сцены нет");
             if (after == 1) {
                 // The logic heard it in the game's frame after it: «Сцена кончилась» and the node waiting on it.
                 check(s.vars().get(e.sg_name).text() == e.sg_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0 &&
@@ -9920,7 +9922,7 @@ private:
                 st->at = f;
                 f64 lived = e.sw_length;
                 for (const f64 h : e.sw_holds) lived += h;
-                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() == nullptr, "сцена кончилась, не пропущена, её документа нет");
+                check(sc.over(st->serial) && !sc.skipped(st->serial) && sc.document() != nullptr, "сцена кончилась, не пропущена, её последний кадр держится");
                 const std::string why = heard_differs(st->heard, st->want, true);
                 check(why.empty(), "сообщения и звуки сцены по прожитому времени — как у вкладки: " + why);
                 check(std::fabs(sc.time() - e.sw_length) < 1e-9 && std::fabs(sc.lived() - lived) < 1e-6,
@@ -9936,6 +9938,7 @@ private:
                 return false;
             }
             default: {
+                if (f - st->at == 1) check(sc.document() == nullptr, "кадр спустя документа сцены нет");
                 if (f - st->at < 2) return false;
                 check(s.vars().get(e.sg_name).text() == e.sw_scene && var(e.sg_skipped) == 0 && var(e.sg_ends) == 1 && var(e.sg_after) == 0,
                       "«Сцена кончилась»: «" + s.vars().get(e.sg_name).text() + "», пропущена " + std::to_string(var(e.sg_skipped)) + ", концов " +
