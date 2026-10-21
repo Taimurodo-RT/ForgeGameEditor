@@ -30759,6 +30759,13 @@ return {
         case 19:
             if (hold(element_text("ue-scene-note") == note_ok3, "back: how it plays")) return true;
             check(!ed_.find_element("ue-scene-note")->IsClassSet("ue-warn"), "no warning");
+            { // A path, or a folder that is no folder, is no scene of the game's: the screen keeps its own, no step.
+                const std::string step = label();
+                ue().select({ue().screen().root.id});
+                for (const char* bad : {"../Сцена 2", "Сцена 3/../Сцена 2", "scenes\\Сцена 2", "C:Сцена 2", "..", "."})
+                    check(!ue().set_property("screen.scene_behind", bad), std::string("«") + bad + "» is refused");
+                check(ue().screen().scene_behind == "Сцена 3" && label() == step, "the screen keeps «Сцена 3»: «" + ue().screen().scene_behind + "», " + label());
+            }
             check(ue().open(si_menu_) && ue().opened() == si_menu_, "the menu again");
             check(click("ue-check") && ue().checking(), "«Проверить»");
             break;

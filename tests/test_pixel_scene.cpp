@@ -5095,9 +5095,11 @@ TEST_CASE("Сцена позади (6г5б): по кругу с начала —
             CHECK(heard == now);
             heard.clear();
         }
-        // A frame of 5 s (the game stood): the end of one round and the start of the next, not of every round.
-        scene.update(5, 160, 120);
-        at = std::fmod(at + 5, 2.0);
+        // A frame of 4.25 s (the game stood): on from where it is to where it comes in its third round; the end of one
+        // round and the start of the next heard, not of every round.
+        scene.update(4.25, 160, 120);
+        at = std::fmod(at + 4.25, 2.0);
+        CHECK(at == doctest::Approx(1.25));
         as_it_should(at);
         CHECK(heard == std::vector<std::string>{"звук тишина.ogg", "звук бум.ogg"});
         // Dropped: nothing of it; played again, from its start.
@@ -5230,7 +5232,11 @@ TEST_CASE("Сцена позади (6г5б): под экраном, пока о�
         CHECK(window_root->GetLocalProperty(Rml::PropertyId::Opacity)->Get<float>() == doctest::Approx(1 - 0.75 * 0.75 * 0.75).epsilon(1e-4));
         CHECK(look_opacity(*screens.scene_behind("меню")) == 1);
         tunes_since(8 / 64.0);
+        // The window's scene sent to the back, under the menu's: back right under the window, the menu's under the menu.
+        screens.scene_behind("окно")->documents()[0]->PushToBack();
         to(175); // in
+        CHECK(right_under(context, screens, "окно"));
+        CHECK(right_under(context, screens, "меню"));
         CHECK(look_opacity(*screens.scene_behind("окно")) == 1);
         CHECK(screens.scene_behind("окно")->documents()[0]->GetElementById("look-wrap")->GetLocalProperty(Rml::PropertyId::Filter) == nullptr);
         // A window with music of its own over it, its scene's music under it: its own music; the scenes' stops. The menu
@@ -5321,6 +5327,9 @@ TEST_CASE("Сцена позади (6г5б): под экраном, пока о�
         to(frames + 1);
         CHECK(time_of("меню") == 0);
         CHECK(right_under(context, screens, "меню"));
+        // Of the scenes behind only the missing one was said: each of the others began once a showing, none of them taken
+        // for a scene already going.
+        CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) { return l.find("сцена позади не идёт") != std::string::npos; }) == 1);
     }
     log_set_sink(nullptr, nullptr);
     Rml::Shutdown();
