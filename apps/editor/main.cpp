@@ -27664,6 +27664,8 @@ return {
         for (const One& o : ones) {
             pixel::SceneCharacter c;
             if (!pixel::load_character(sc_files(), o.file, c, why)) return false;
+            // Whole, not cut at its canvas: a scene's actor, as the game draws it (part 6г2, rule 5; part 6г5а).
+            c.rig.uncut();
             pixel::PoseScript code;
             code.set_module_reader(pixel::animations_reader(pjw().config().root / "game"));
             if (!code.load(c.code)) return why = code.error(), false;
