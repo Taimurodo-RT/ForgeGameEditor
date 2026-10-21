@@ -35,6 +35,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -58,6 +59,8 @@ struct SceneHow {
     // Part 6г5б: a scene behind a screen, not a cut-scene: round and round, its frame all its time, waits and talks
     // passing at once, no messages to the logic, never ending (drop stops it).
     bool behind = false;
+    // Part 6г6: the values of its parameters, by name (vector::scene_with_params); one not given: the file's.
+    std::map<std::string, f64> params;
 };
 
 // A tune of the scene's music now (vector::scene_music_at): the file of the game's sounds it plays, by the call
@@ -74,6 +77,9 @@ struct SceneTune {
 bool read_scene_folder(const std::filesystem::path& dir, vector::SceneMotion& out, std::string& why);
 // The scenes a game has: the folders of game_dir/scenes with a scene.json, by name.
 std::vector<std::string> scene_names(const std::filesystem::path& game_dir);
+// Part 6г6: the parameters of a scene a game has, by name, at the values it was given at (its scene.json's); empty for
+// none, or a scene that is not there or does not read.
+std::vector<vector::MotionParam> scene_params(const std::filesystem::path& game_dir, std::string_view name);
 // A sound's file in the game's sounds folder as «Векторная» finds it: name, else name.wav, else name.ogg; empty when
 // none is there or the name is no file of the folder.
 std::string scene_sound_file(const std::filesystem::path& sounds, std::string_view name);

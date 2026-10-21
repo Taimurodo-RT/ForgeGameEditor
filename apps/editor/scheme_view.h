@@ -39,6 +39,7 @@
 #include "forge/logic/logic.h"
 #include "forge/script/nodes.h"
 #include "forge/ui/drawing.h"
+#include "forge/vector/motion_file.h"
 
 #include <RmlUi/Core.h>
 #include <SDL3/SDL.h>
@@ -227,6 +228,8 @@ private:
     std::string option_name(const std::string& list, const std::string& id) const;
     // «Где появиться» of «Перейти на уровень»: the level's spawn point and its areas.
     std::vector<OptionView> arrivals(const std::string& level) const;
+    // Part 6г6: the parameters of a scene given to the game, as its folder has them (read once a rebuild).
+    const std::vector<vector::MotionParam>& scene_params(const std::string& scene) const;
     NodeBox box_of(u32 link, const script::Graph& g, const script::GraphNode& n,
                    const std::set<std::pair<u32, std::string>>& wired_in) const;
     static std::set<std::pair<u32, std::string>> wired_inputs(const script::Graph& g);
@@ -250,6 +253,7 @@ private:
     std::map<u32, Place> places_;
     std::map<u32, std::map<u32, Look>> looks_; // per frame, per node
     std::map<std::pair<u32, u32>, std::pair<std::string, bool>> node_problems_; // (link, node) -> text, warning
+    mutable std::map<std::string, std::vector<vector::MotionParam>> scene_params_;
 
     u32 sel_link_node_ = 0, sel_node_ = 0;
     u32 sel_wire_link_ = 0;

@@ -12,6 +12,7 @@
 #include "forge/pixel/svg.h"
 #include "forge/vector/path.h"
 
+#include <array>
 #include <map>
 #include <memory>
 #include <span>
@@ -250,6 +251,9 @@ public:
     // pixels picture units go to by `px`: every shape shown with a fill or a stroke, its stroke's width all round, of the
     // pictures the pose shows (in a swap the two). False when it draws nothing.
     bool reach(const Affine& px, f64 out[4]);
+    // Part 6г6: the same of each shape of the pictures, in their order (this one's, then each drawing's by name): its x0,
+    // y0, x1, y1, or x0 > x1 for one the pose does not draw.
+    void reach_each(const Affine& px, std::vector<std::array<f64, 4>>& out);
     // How the last pose() carries a part's pivot, in picture units (identity at rest): by the parts it is inside and by
     // its own move, not by its own turn and scale, which are round the pivot. The pivot stands at
     // carried(part).apply(pivot(part)); a point p of the pose is the pivot inverse(carried(part)).apply(p) (dragged).

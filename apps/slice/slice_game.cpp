@@ -418,8 +418,8 @@ public:
     }
     bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }
     // The game's scenes (part 6г2 of docs/models/сцены-модель.md): the shell shows them.
-    bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) override {
-        if (!s_.play_scene(name, {pause, skip}, why)) return false;
+    bool scene_play(std::string_view name, bool pause, bool skip, const std::map<std::string, f64>& params, u64& serial, std::string& why) override {
+        if (!s_.play_scene(name, {pause, skip, false, params}, why)) return false;
         serial = s_.scene().serial();
         return true;
     }

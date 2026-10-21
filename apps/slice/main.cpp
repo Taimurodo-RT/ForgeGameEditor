@@ -10622,7 +10622,8 @@ private:
     // the frame after its end. On 1920 × 1080 (st_wide): «сдвиг» out begins past the screen's edge, where the frame's x of
     // the canvas puts it, the bars of the scene going under it, the world at the bottom of its frames (the grey stops
     // short there) the game's as it stands after. The time of a frame in the log. Part 6г5а (st_blend_*, the self-test
-    // pixel-scene-h): st_scene's clips changing smoothly after its waits, its frames the tab's there.
+    // pixel-scene-h): st_scene's clips changing smoothly after its waits, its frames the tab's there. Part 6г6 (st_param,
+    // the self-test pixel-scene-j): st_scene shown with the value of its parameter its node gives, here and in the new game.
     void build_scene_transitions(Shell& s) {
         struct Seen {
             std::vector<assets::CookedTexture> first, in, frames, out, blend;
@@ -10780,6 +10781,9 @@ private:
                     return st->between >= 10;
                 }
                 check(sc.name() == e.st_scene && sc.time() == 0 && g_.logic_runs() != st->runs, "логика услышала конец и начала «" + sc.name() + "»");
+                if (!e.st_param.empty())
+                    check(sc.how().params == std::map<std::string, f64>{{e.st_param, e.st_param_value}}, "«" + e.st_scene + "» с параметром " + e.st_param + " = " +
+                                                                                                              std::to_string(e.st_param_value) + " из ноды");
                 FORGE_INFO("self-test: последний кадр «%s» стоял %u кадр(ов), пока логика не прошла", e.st_first.c_str(), st->between);
                 st->serial = sc.serial();
                 st->next = 0;
@@ -10949,6 +10953,8 @@ private:
                     return f - st->at >= 20;
                 }
                 check(sc.name() == e.st_scene && sc.time() == 0 && sc.documents().size() == 2, "«" + e.st_scene + "» входит, пропущенная под ней");
+                if (!e.st_param.empty())
+                    check(sc.how().params == std::map<std::string, f64>{{e.st_param, e.st_param_value}}, "и в новой игре «" + e.st_scene + "» с параметром из ноды");
                 st->serial = sc.serial();
                 st->stage = 4;
                 return false;

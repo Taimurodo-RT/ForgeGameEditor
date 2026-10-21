@@ -37,6 +37,15 @@ bool screen_clip(PoseScript& script, const Rig& rig, const PixelDoc& doc, std::s
 vector::MotionShown screen_shown(const Pose& pose);
 bool screen_same_shown(const vector::MotionShown& a, const vector::MotionShown& b);
 
+// Part 5ж, shared by a scene's gift (part 6г6): the first way clip `o` (recorded at another value of a parameter) is
+// another clip than `z`, not in its numbers, in the words the tab says it with («длина клипа», «число переходов»,
+// «метки», «цвет», …); null when they differ only there. The curves are each one's file's.
+const char* screen_clip_other(const vector::MotionFile& fz, const vector::MotionClip& z, const vector::MotionFile& fo, const vector::MotionClip& o);
+// Each piece's change per unit of parameter `name` of clip `base`, from the same clip recorded at one less (`m`) and one
+// more (`p`) of it (screen_clip_other null for both): each number moving by as much either way. `base`'s pieces get their
+// changes (`by`) only when all do; false when one does not («не прямо»).
+bool screen_clip_by(vector::MotionClip& base, const vector::MotionClip& m, const vector::MotionClip& p, const std::string& name);
+
 struct ScreenGift {
     struct File {
         std::string name, text; // "Ёжик.angry.svg"

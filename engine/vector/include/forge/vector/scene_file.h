@@ -13,6 +13,8 @@
 
 #include "forge/vector/motion_file.h"
 
+#include <array>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,7 +40,8 @@ struct SceneBox {
 // its size there (the stage's group of it stands so that they fall where the actor is). An actor that plays no clip has
 // no file of clips: the parts of it the scene moves stand by the stage's records (stage.motion.json), in its main
 // drawing. Part 6г2: where its drawing reaches in the scene beyond that box, when it does (the game draws it in this
-// box, not cut at its own); w 0: within its box.
+// box, not cut at its own); w 0: within its box. Part 6г6: how far each edge of that reach (left, top, right, bottom)
+// goes out per unit of a parameter of the scene, away from the file's value either way; 0: not at all.
 struct SceneActor {
     std::string id;
     std::string character; // its file in «Ресурсы», for messages: "персонажи/Ёжик"
@@ -47,6 +50,7 @@ struct SceneActor {
     Point origin;
     f64 w = 0, h = 0;
     SceneBox reach;
+    std::map<std::string, std::array<f64, 4>> reach_by;
     bool operator==(const SceneActor&) const = default;
 };
 
@@ -105,14 +109,19 @@ struct SceneFile {
     std::vector<SceneStop> stops;       // by time
     std::vector<SceneTransition> transitions;
     std::vector<std::string> not_drawn; // kMotionNotDrawn's words, and "mask_by_item"
+    // Part 6г6: the parameters of the scene's code, by name, at the values the tab gave it at (each of its motion files
+    // has them too); a parameter a game does not change, with why («длина сцены»).
+    std::vector<MotionParam> params;
+    std::map<std::string, std::string> fixed;
     bool operator==(const SceneFile&) const = default;
 
     const SceneActor* actor(std::string_view id) const;
+    const MotionParam* param(std::string_view name) const;
 };
 
-// The newest version a game reads. A file with a blend (part 6г5а) is version 2, one without 1, so a game made before
-// reads it.
-inline constexpr u32 kSceneFileVersion = 2;
+// The newest version a game reads. A file with parameters (part 6г6) is version 3, one with a blend (part 6г5а) 2, one
+// with neither 1, so a game made before reads what it can.
+inline constexpr u32 kSceneFileVersion = 3;
 // The parts of the stage's tracks that are the camera and the transitions' frames, not shapes of its picture.
 inline constexpr const char* kSceneCamera = "camera";
 inline constexpr const char* kSceneFrames[4] = {"camera/in-old", "camera/in-new", "camera/out-old", "camera/out-new"};
@@ -130,9 +139,17 @@ struct SceneMotion {
     MotionFile stage; // its clip "scene"
     std::vector<MotionFile> actors;
 };
-// Whether they fit together: the stage's clip "scene", a file for each actor, each play's clip in its actor's. False with
-// why.
+// Whether they fit together: the stage's clip "scene", a file for each actor, each play's clip in its actor's, each motion
+// file with the scene's parameters (part 6г6). False with why.
 bool check_scene(const SceneMotion& scene, std::string& why);
+
+// Part 6г6: the scene at the values given of its parameters, by name: each clip of the stage's and the actors' files with
+// its numbers at them (motion_clip_with), each actor's reach wider by its reach_by × |value − the file's|, outward to
+// whole units (its box when it had no reach). A name the scene has not, or a value that is no number: false with why («в
+// сцене «Вступление» нет параметра «heigth»: есть h, n», «у сцены «Вступление» нет параметров»), the scene as it was. A
+// parameter a game does not change (`fixed`) given another value than the file's: a line in `notes` («параметр n из
+// игры не меняется: длина сцены») and the file's numbers.
+bool scene_with_params(SceneMotion& scene, const std::map<std::string, f64>& values, std::vector<std::string>& notes, std::string& why);
 
 // One clip of what an actor shows in a blend (part 6г5а): play (an index of file.plays; -1: the character at rest) at its
 // moment `time`, coming in by k over what the steps before it show.

@@ -253,14 +253,25 @@ bool clip_by(PoseScript& script, const Rig& rig, const PixelDoc& doc, const Moti
     }
     for (int k = 0; k < 2; ++k)
         if (const char* w = how_other(file, base, curves[k], side[k])) return reason = w, false;
+    if (!screen_clip_by(base, side[0], side[1], prm.name)) return reason = "не прямо", false;
+    return true;
+}
+
+} // namespace
+
+const char* screen_clip_other(const MotionFile& fz, const MotionClip& z, const MotionFile& fo, const MotionClip& o) {
+    return how_other(fz, z, fo, o);
+}
+
+bool screen_clip_by(MotionClip& base, const MotionClip& lo, const MotionClip& hi, const std::string& name) {
     // Each number's change, the piece's in the order of the file's parameters.
     std::vector<std::vector<vector::MotionBy>> by(base.tracks.size());
     for (usize t = 0; t < base.tracks.size(); ++t) {
         const MotionProp p = base.tracks[t].prop;
         for (usize k = 0; k < base.tracks[t].pieces.size(); ++k) {
-            const MotionPiece &z = base.tracks[t].pieces[k], &m = side[0].tracks[t].pieces[k], &q = side[1].tracks[t].pieces[k];
+            const MotionPiece &z = base.tracks[t].pieces[k], &m = lo.tracks[t].pieces[k], &q = hi.tracks[t].pieces[k];
             vector::MotionBy b;
-            b.param = prm.name;
+            b.param = name;
             bool ok = true;
             switch (z.kind) {
             case MotionPiece::Kind::Hold: ok = change_of(p, z.value, m.value, q.value, b.value); break;
@@ -271,7 +282,7 @@ bool clip_by(PoseScript& script, const Rig& rig, const PixelDoc& doc, const Moti
                 if (std::all_of(b.frames.begin(), b.frames.end(), [](const vector::MotionDelta& d) { return d.zero(); })) b.frames.clear();
                 break;
             }
-            if (!ok) return reason = "не прямо", false;
+            if (!ok) return false;
             by[t].push_back(std::move(b));
         }
     }
@@ -282,8 +293,6 @@ bool clip_by(PoseScript& script, const Rig& rig, const PixelDoc& doc, const Moti
         }
     return true;
 }
-
-} // namespace
 
 vector::MotionShown screen_shown(const Pose& pose) {
     vector::MotionShown out;

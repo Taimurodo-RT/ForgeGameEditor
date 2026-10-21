@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <set>
 #include <string>
@@ -110,6 +111,17 @@ std::string tone_of(const script::NodeDef* d) {
 }
 
 bool hidden_pin(const script::PinDef& p) { return !p.id.empty() && p.id[0] == '_'; }
+
+// «Показать сцену» and its pairs of a scene's parameter and its value (part 6г6 of docs/models/сцены-модель.md).
+constexpr const char* kScenePlay = "api.scene.play";
+constexpr usize kSceneParamPairs = 3;
+
+// A number as a node's field shows it: its shortest text that reads back as it.
+std::string number_text(f64 v) {
+    char buf[64];
+    const auto r = std::to_chars(buf, buf + sizeof buf, v);
+    return std::string(buf, r.ptr);
+}
 
 std::string node_id(u32 link, u32 uid) { return std::to_string(link) + "-" + std::to_string(uid); }
 
@@ -579,6 +591,24 @@ bool SchemeView::set_value(u32 link, u32 node, const std::string& pin, const std
             const logic::Thing* t = ed_.thing(*at);
             if (!t || t->level != value) n->set_value("arrive", "");
         }
+    // «Показать сцену» (part 6г6): a parameter picked takes the scene's value for it, unless a wire gives the value;
+    // another scene drops the parameters it has not.
+    if (n->def == kScenePlay) {
+        const std::string* scene = n->value("name");
+        const std::vector<vector::MotionParam>& params = scene_params(scene ? *scene : std::string());
+        auto has = [&](const std::string& name) {
+            return std::any_of(params.begin(), params.end(), [&](const vector::MotionParam& p) { return p.name == name; });
+        };
+        for (usize k = 1; k <= kSceneParamPairs; ++k) {
+            const std::string pk = "param" + std::to_string(k), vk = "value" + std::to_string(k);
+            const std::string* picked = n->value(pk);
+            if (pin == "name" && picked && !picked->empty() && !has(*picked)) n->set_value(pk, "");
+            if (pin != pk || value.empty()) continue;
+            const bool wired = std::any_of(g.links.begin(), g.links.end(), [&](const script::GraphLink& w) { return w.to_node == node && w.to_pin == vk; });
+            for (const vector::MotionParam& p : params)
+                if (p.name == value && !wired) n->set_value(vk, number_text(p.value));
+        }
+    }
     commit(link, g, "Значение ноды", "value-" + node_id(link, node) + "-" + pin);
     return true;
 }
@@ -657,6 +687,14 @@ void SchemeView::open_pick(u32 link, u32 node, const std::string& pin) {
         m_choices_.clear();
         if (!p->required) m_choices_.push_back(OptionView{"", "любая"});
         for (const std::string& name : game::scene_names(ed_.game_dir_)) m_choices_.push_back(OptionView{name, name});
+    } else if (p->enum_type == "scene_param") {
+        // The parameters of the node's scene (part 6г6), as given to the game now.
+        const script::GraphNode* n = g->find(node);
+        const std::string* scene = n ? n->value("name") : nullptr;
+        scene_params_.clear();
+        m_choices_ = {OptionView{"", "нет"}};
+        for (const vector::MotionParam& prm : scene_params(scene ? *scene : std::string()))
+            m_choices_.push_back(OptionView{prm.name, prm.name + " (" + number_text(prm.value) + ")"});
     } else {
         m_choices_ = p->enum_type == "thing" ? m_things_ : p->enum_type == "action" ? m_actions_ : p->enum_type == "level" ? m_levels_ : m_cues_;
     }
@@ -883,6 +921,7 @@ std::string SchemeView::option_name(const std::string& list, const std::string& 
         return t ? "зона «" + t->name + "»" : id;
     }
     if (list == "scene") return id.empty() ? "любая" : id;
+    if (list == "scene_param") return id.empty() ? "нет" : id;
     const std::vector<OptionView>& opts = list == "thing" ? m_things_ : list == "action" ? m_actions_ : list == "level" ? m_levels_ : m_cues_;
     for (const OptionView& o : opts)
         if (o.id == id) return o.name;
@@ -920,8 +959,24 @@ SchemeView::NodeBox SchemeView::box_of(u32 link, const script::Graph& g, const s
             p.on = true;
             b.left.push_back(p);
         }
+        // «Показать сцену» (part 6г6): the pairs past its scene's parameters are not shown while empty and unwired.
+        usize scene_pairs = kSceneParamPairs;
+        if (n.def == kScenePlay) {
+            const std::string* scene = n.value("name");
+            scene_pairs = scene_params(scene ? *scene : std::string()).size();
+        }
+        auto unused_pair = [&](const script::PinDef& pd) {
+            if (n.def != kScenePlay) return false;
+            for (usize k = scene_pairs + 1; k <= kSceneParamPairs; ++k) {
+                const std::string pk = "param" + std::to_string(k), vk = "value" + std::to_string(k);
+                if (pd.id != pk && pd.id != vk) continue;
+                const std::string* picked = n.value(pk);
+                return (!picked || picked->empty()) && !wired_in.contains({n.uid, pk}) && !wired_in.contains({n.uid, vk});
+            }
+            return false;
+        };
         for (const script::PinDef& pd : d->inputs) {
-            if (hidden_pin(pd)) continue;
+            if (hidden_pin(pd) || unused_pair(pd)) continue;
             PinView p;
             p.id = pd.id;
             p.title = pd.title.get().empty() ? pd.id : pd.title.get();
@@ -932,7 +987,7 @@ SchemeView::NodeBox SchemeView::box_of(u32 link, const script::Graph& g, const s
             p.value = val ? *val : pd.value;
             if (!p.wired) {
                 if (pd.enum_type == "thing" || pd.enum_type == "action" || pd.enum_type == "cue" || pd.enum_type == "level" ||
-                    pd.enum_type == "arrival" || pd.enum_type == "scene") {
+                    pd.enum_type == "arrival" || pd.enum_type == "scene" || pd.enum_type == "scene_param") {
                     p.field = "pick";
                     p.list = pd.enum_type;
                     p.title = (p.title.empty() ? "" : p.title + ": ") + option_name(pd.enum_type, p.value);
@@ -1178,7 +1233,15 @@ bool SchemeView::set_graph(u32 link, const script::Graph& g, const std::string& 
     return true;
 }
 
+const std::vector<vector::MotionParam>& SchemeView::scene_params(const std::string& scene) const {
+    auto it = scene_params_.find(scene);
+    if (it == scene_params_.end()) it = scene_params_.emplace(scene, game::scene_params(ed_.game_dir_, scene)).first;
+    return it->second;
+}
+
 void SchemeView::rebuild() {
+    // The scenes' parameters as their folders have them now.
+    scene_params_.clear();
     // Lists for the pick fields.
     m_things_.clear();
     for (const logic::Thing& t : ed_.things_) m_things_.push_back({t.id, t.name});

@@ -258,6 +258,10 @@ struct ProjectEdits {
     // waits, at st_blend_frames (its time, having waited st_holds) its frames are st_blend_files, the clips mixed.
     std::vector<double> st_blend_frames;
     std::vector<std::string> st_blend_files;
+    // Part 6г6 (the editor's self-test pixel-scene-j): the node «Показать сцену» of st_scene gives its parameter st_param
+    // the value st_param_value, not the file's; all of st_scene's references are the tab's at that value.
+    std::string st_param;
+    double st_param_value = 0;
     // Part 6г5б (the editor's self-test pixel-scene-i): the game's own main menu sb_menu with sb_scene behind it, its
     // button sb_button (the layer's element id, «Новая игра») of the colour sb_button_color over it; the scene's frames
     // at sb_frames (its time, round and round) sb_files as the tab draws it without its ways in and out, sb_length a

@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <set>
 #include <span>
 
@@ -212,7 +213,7 @@ bool measure_reach(Scene& scene, const Recording& rec, std::vector<vector::Scene
     return true;
 }
 
-bool build(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, SceneGift& out, std::string& why) {
+bool build(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, SceneGift& out, std::string& why, bool check) {
     if (!scene.loaded()) return why = scene.error().empty() ? "сцена не загружена" : scene.error(), false;
     if (!file_name_ok(name)) return why = "имя сцены «" + std::string(name) + "» не годится для имени папки", false;
     if (!scene.record()) return why = scene.error(), false;
@@ -503,14 +504,216 @@ bool build(Scene& scene, std::string_view name, std::string_view from, const Sce
             return why = a.motion + " не читается: " + err, false;
     }
     out.motion = std::move(back);
-    return check_scene_gift(scene, out.motion, why);
+    return !check || check_scene_gift(scene, out.motion, why);
+}
+
+// --- parameters from the game (part 6г6) --------------------------------------------------------
+
+// The scene built again at another value of one of its parameters: its code loaded at it, recorded, its folder's files
+// and what they say, not checked against the tab. False with why the game cannot change the parameter.
+struct Side {
+    std::unique_ptr<Scene> scene = std::make_unique<Scene>();
+    SceneGift gift;
+};
+bool side_of(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, const vector::MotionParam& prm, f64 step,
+             Side& out, std::string& reason) {
+    SceneDoc d = scene.doc();
+    const f64 v = prm.value + step;
+    d.params[prm.name] = v;
+    std::string why;
+    if (out.scene->load(scene.code(), d, files) && build(*out.scene, name, from, files, out.gift, why, false)) return true;
+    reason = "сцена не записывается при " + prm.name + " = " + seconds_words(v) + ": " + (why.empty() ? out.scene->error() : why);
+    return false;
+}
+
+const std::string* file_text(const SceneGift& g, std::string_view path) {
+    for (const SceneGift::File& f : g.files)
+        if (f.path == path) return &f.bytes;
+    return nullptr;
+}
+
+// The first way scene `o` (built at another value) is another scene than `z`, not in its clips' numbers, in the author's
+// words; null when it is the same but for them. Where each actor's drawing reaches is not looked at (reach_by).
+std::string scene_other(const SceneGift& z, const SceneGift& o) {
+    const vector::SceneFile &a = z.motion.file, &b = o.motion.file;
+    if (a.length != b.length) return "длина сцены";
+    if (a.plays != b.plays) return "клипы актёров";
+    if (a.music != b.music) return "музыка";
+    if (a.stops != b.stops) return "ожидания";
+    if (a.transitions != b.transitions) return "переходы сцены";
+    if (a.pictures != b.pictures) return "картинки";
+    if (a.width != b.width || a.height != b.height) return "размер сцены";
+    if (a.background != b.background) return "фон";
+    auto bare = [](std::vector<vector::SceneActor> actors) {
+        for (vector::SceneActor& x : actors) x.reach = {}, x.reach_by.clear();
+        return actors;
+    };
+    if (bare(a.actors) != bare(b.actors)) return "актёры";
+    if (a.not_drawn != b.not_drawn) return "что не рисуется";
+    auto same_file = [&](const std::string& path) {
+        const std::string *x = file_text(z, path), *y = file_text(o, path);
+        return x && y && *x == *y;
+    };
+    if (!same_file("stage.svg")) return "рисунок сцены";
+    for (usize i = 0; i < a.actors.size(); ++i) {
+        const MotionFile &fa = z.motion.actors[i], &fb = o.motion.actors[i];
+        bool same = same_file(a.actors[i].picture) && fa.drawings.size() == fb.drawings.size();
+        for (usize d = 0; same && d < fa.drawings.size(); ++d) same = fa.drawings[d].name == fb.drawings[d].name && same_file("actors/" + fa.drawings[d].picture);
+        if (!same) return "рисунок актёра «" + a.actors[i].id + "»";
+    }
+    if (const char* w = screen_clip_other(z.motion.stage, z.motion.stage.clips.front(), o.motion.stage, o.motion.stage.clips.front()))
+        return std::string("сцена: ") + w;
+    for (usize i = 0; i < a.actors.size(); ++i) {
+        const MotionFile &fa = z.motion.actors[i], &fb = o.motion.actors[i];
+        if (fa.clips.size() != fb.clips.size()) return "клипы актёров";
+        for (usize c = 0; c < fa.clips.size(); ++c) {
+            if (fa.clips[c].name != fb.clips[c].name) return "клипы актёров";
+            if (const char* w = screen_clip_other(fa, fa.clips[c], fb, fb.clips[c]))
+                return "клип «" + fa.clips[c].name + "» актёра «" + a.actors[i].id + "»: " + w;
+        }
+    }
+    return {};
+}
+
+// How far each actor's drawing reaches out per unit of a parameter (rule 6 of part 6г6): the scene and the same at one
+// less and one more of it posed at the moments where it was measured (measure_reach), each shape's edges going out either
+// way, the most of them, up to thousandths.
+bool measure_reach_by(Scene& scene, Scene& lo, Scene& hi, const Recording& rec, const std::string& name, std::vector<vector::SceneActor>& actors,
+                      std::string& why) {
+    std::set<i64> moments;
+    auto add = [&](f64 t) {
+        if (t >= 0 && t <= rec.length) moments.insert(ns_of(t));
+    };
+    for (i64 k = 0; static_cast<f64>(k) / kCheckRate <= rec.length; ++k) add(static_cast<f64>(k) / kCheckRate);
+    add(rec.length);
+    for (const ActorPlay& p : rec.plays) {
+        add(p.start);
+        add(p.start + p.length);
+    }
+    for (const SceneStop& s : rec.stops) add(s.time);
+    for (const SceneTransition& t : rec.transitions) {
+        add(t.start);
+        add(t.start + t.length);
+    }
+    std::vector<std::array<f64, 4>> out(actors.size(), std::array<f64, 4>{});
+    std::vector<std::array<f64, 4>> bz, bl, bh;
+    auto at = [&](f64 t, std::span<const f64> held) {
+        for (Scene* s : {&scene, &lo, &hi})
+            if (!s->frame(t, held)) return why = s->error(), false;
+        for (usize a = 0; a < actors.size(); ++a) {
+            if (!scene.actor_reach_each(actors[a].id, bz) || !lo.actor_reach_each(actors[a].id, bl) || !hi.actor_reach_each(actors[a].id, bh)) continue;
+            for (usize i = 0; i < bz.size() && i < bl.size() && i < bh.size(); ++i) {
+                const std::array<f64, 4> &z = bz[i], &m = bl[i], &p = bh[i];
+                if (z[0] > z[2] || m[0] > m[2] || p[0] > p[2]) continue;
+                std::array<f64, 4>& e = out[a];
+                e[0] = std::max({e[0], z[0] - m[0], z[0] - p[0]});
+                e[1] = std::max({e[1], z[1] - m[1], z[1] - p[1]});
+                e[2] = std::max({e[2], m[2] - z[2], p[2] - z[2]});
+                e[3] = std::max({e[3], m[3] - z[3], p[3] - z[3]});
+            }
+        }
+        return true;
+    };
+    const std::vector<f64> waited(rec.stops.size(), kCheckWait);
+    for (const i64 n : moments) {
+        const f64 t = static_cast<f64>(n) / 1e9;
+        if (!at(t, {})) return false;
+        if (!rec.stops.empty() && !at(t, waited)) return false;
+    }
+    for (usize a = 0; a < actors.size(); ++a) {
+        std::array<f64, 4> e = out[a];
+        for (f64& x : e) x = x <= 1e-9 ? 0 : std::ceil(x * 1000 - 1e-6) / 1000;
+        if (std::any_of(e.begin(), e.end(), [](f64 x) { return x > 0; })) actors[a].reach_by[name] = e;
+    }
+    return true;
+}
+
+// The code's parameters (part 6г6), at the values the tab gives the scene: each one whose scenes at one less and one
+// more are the scene but for its clips' numbers, each moving by as much either way, changes them (`by` in every clip of
+// the folder) and how far the actors reach (reach_by); any other is fixed for the whole scene, with why. The files are
+// written again with them.
+bool give_params(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, SceneGift& out, std::string& why) {
+    std::vector<vector::MotionParam> params;
+    for (const ScriptParam& sp : scene.script().params()) {
+        const auto it = scene.doc().params.find(sp.name);
+        params.push_back({sp.name, it != scene.doc().params.end() ? it->second : sp.value});
+    }
+    if (params.empty()) return true;
+    vector::SceneMotion& m = out.motion;
+    const Recording& rec = *scene.recording();
+    std::string changing, fixed;
+    for (const vector::MotionParam& prm : params) {
+        Side lo, hi;
+        std::string reason;
+        if (side_of(scene, name, from, files, prm, -1, lo, reason) && side_of(scene, name, from, files, prm, 1, hi, reason)) {
+            reason = scene_other(out, lo.gift);
+            if (reason.empty()) reason = scene_other(out, hi.gift);
+        }
+        // Every clip's changes, or none.
+        std::vector<MotionClip> stage = m.stage.clips;
+        std::vector<std::vector<MotionClip>> actors(m.actors.size());
+        if (reason.empty() && !screen_clip_by(stage.front(), lo.gift.motion.stage.clips.front(), hi.gift.motion.stage.clips.front(), prm.name))
+            reason = "сцена: не прямо";
+        for (usize a = 0; reason.empty() && a < m.actors.size(); ++a) {
+            actors[a] = m.actors[a].clips;
+            for (usize c = 0; reason.empty() && c < actors[a].size(); ++c)
+                if (!screen_clip_by(actors[a][c], lo.gift.motion.actors[a].clips[c], hi.gift.motion.actors[a].clips[c], prm.name))
+                    reason = "клип «" + actors[a][c].name + "» актёра «" + m.file.actors[a].id + "»: не прямо";
+        }
+        if (!reason.empty()) {
+            m.file.fixed[prm.name] = reason;
+            fixed += (fixed.empty() ? "" : ", ") + prm.name + " (" + reason + ")";
+            continue;
+        }
+        m.stage.clips = std::move(stage);
+        for (usize a = 0; a < m.actors.size(); ++a) m.actors[a].clips = std::move(actors[a]);
+        if (!measure_reach_by(scene, *lo.scene, *hi.scene, rec, prm.name, m.file.actors, why)) return false;
+        auto any_by = [&](const MotionFile& f) {
+            for (const MotionClip& c : f.clips)
+                for (const MotionTrack& t : c.tracks)
+                    for (const MotionPiece& pc : t.pieces)
+                        if (std::any_of(pc.by.begin(), pc.by.end(), [&](const vector::MotionBy& b) { return b.param == prm.name; })) return true;
+            return false;
+        };
+        if (any_by(m.stage) || std::any_of(m.actors.begin(), m.actors.end(), any_by)) changing += (changing.empty() ? "" : ", ") + prm.name;
+    }
+    // The files again, with the parameters, as a game reads them.
+    m.file.params = params;
+    m.stage.params = params;
+    for (usize a = 0; a < m.actors.size(); ++a)
+        if (!m.file.actors[a].motion.empty()) m.actors[a].params = params;
+    auto put = [&](const std::string& path, std::string bytes) {
+        for (SceneGift::File& f : out.files)
+            if (f.path == path) f.bytes = std::move(bytes);
+    };
+    put("scene.json", vector::write_scene_file(m.file));
+    put("stage.motion.json", vector::write_motion_file(m.stage));
+    for (usize a = 0; a < m.actors.size(); ++a)
+        if (!m.file.actors[a].motion.empty()) put(m.file.actors[a].motion, vector::write_motion_file(m.actors[a]));
+    vector::SceneMotion back;
+    std::string err;
+    if (!vector::read_scene_file(*file_text(out, "scene.json"), back.file, err)) return why = "scene.json не читается: " + err, false;
+    if (!vector::read_motion_file(*file_text(out, "stage.motion.json"), back.stage, err)) return why = "stage.motion.json не читается: " + err, false;
+    for (const vector::SceneActor& a : back.file.actors) {
+        back.actors.emplace_back();
+        if (!a.motion.empty() && !vector::read_motion_file(*file_text(out, a.motion), back.actors.back(), err))
+            return why = a.motion + " не читается: " + err, false;
+    }
+    if (!vector::check_scene(back, err)) return why = err, false;
+    m = std::move(back);
+    if (!changing.empty() || !fixed.empty())
+        out.notes.push_back((changing.empty() ? std::string() : "Из игры меняются: " + changing) + (!changing.empty() && !fixed.empty() ? ". " : "") +
+                            (fixed.empty() ? std::string() : "Не меняются: " + fixed));
+    return true;
 }
 
 } // namespace
 
 bool build_scene_gift(Scene& scene, std::string_view name, std::string_view from, const SceneFiles& files, SceneGift& out, std::string& why) {
     out = {};
-    if (build(scene, name, from, files, out, why)) return true;
+    if (build(scene, name, from, files, out, why, false) && give_params(scene, name, from, files, out, why) &&
+        check_scene_gift(scene, out.motion, why))
+        return true;
     out = {};
     return false;
 }
