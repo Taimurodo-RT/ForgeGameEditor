@@ -10411,15 +10411,20 @@ private:
                 check(sc.has_menu(), "у игры своё главное меню «" + e.sb_menu + "»");
                 sc.set_clock(clock);
                 st->ends = s.vars().get(e.sg_ends).number();
+                // The game autosaves on its way to the menu; its message «Автосохранение» goes with the game's messages when
+                // the menu is asked for again (the game over by now: no second save), so the frames are the scene's and the menu's.
                 s.to_main_menu();
+                s.to_main_menu();
+                st->at = f;
                 return false;
             }
             const GameScene* behind = sc.scene_behind(e.sb_menu);
             if (st->stage == 0) { // the menu up: its scene from its start, right under it, its music the menu's
                 if (!behind) {
-                    check(f < 30, "под меню нет сцены позади");
-                    return f >= 30;
+                    check(f - st->at < 30, "под меню нет сцены позади");
+                    return f - st->at >= 30;
                 }
+                check(toasts(s).empty(), "над меню нет сообщений");
                 check(s.screen() == Screen::Main && sc.shown(e.sb_menu), "главное меню игры — «" + e.sb_menu + "»");
                 check(behind->how().behind && behind->time() == 0, "под меню с начала идёт «" + e.sb_scene + "»");
                 check(behind->name() == e.sb_scene && !s.scene().going(), "это «" + behind->name() + "»; кат-сцены нет");

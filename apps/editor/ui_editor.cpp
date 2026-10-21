@@ -968,6 +968,16 @@ void UiEditor::scan_scenes() {
         dirty("ue_p");
     }
     if (rows == m_scenes_) return;
+    // The options change under the drop-downs: one still holding the focus from the author's last pick would take the
+    // option that comes into its place (a scene the game has under another name now) as a new pick. They let go of the
+    // focus first; their value is set back from the panel (sync_sound_selects).
+    if (context_)
+        for (const char* id : {"ue-screen-scene", "ue-s-scene"})
+            for (int i = 0; i < context_->GetNumDocuments(); ++i)
+                if (Rml::Element* e = context_->GetDocument(i)->GetElementById(id)) {
+                    if (e->IsPseudoClassSet("focus")) e->Blur();
+                    break;
+                }
     m_scenes_ = std::move(rows);
     dirty("ue_scenes");
 }

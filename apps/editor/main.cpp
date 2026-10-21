@@ -30548,7 +30548,7 @@ return {
     // Part 6г5б: «Сцена 2» behind the main menu, the moments of its frames the game compares (its time, round and round:
     // coming in, itself, going out, just before a round's end and in the next round), on a screen of 144 Hz.
     static constexpr f64 kSiFrames[5] = {36 / 144.0, 1, 2.5, 431 / 144.0, 36 / 144.0};
-    static constexpr const char* kSiButton = "#ff00ff";
+    static constexpr const char* kSiButton = "#20e080"; // a colour «Сцена 2» has not
     std::string si_menu_, si_window_, si_json_, si_html_, si_after_json_, si_after_html_;
     std::vector<std::string> si_files_;
     u32 si_button_ = 0;
@@ -30636,12 +30636,16 @@ return {
             si_menu_ = ue().opened();
             check(ue().screens().size() == si_n_ + 1 && !si_menu_.empty() && ue().screen().root.fills.empty(), "a new screen «" + si_menu_ + "», nothing filled");
             if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
-            check(ue_sd_open("ue-s-show"), "a click opens how it shows");
+            ue().select({ue().screen().root.id});
             break;
         case 3:
-            check(ue_option("ue-s-show", "menu") && ue().screen().show == d::ScreenShow::Menu, "«Главное меню игры»");
+            if (hold(shown("ue-s-show"), "«Когда видно» is laid out")) return true;
+            check(ue_sd_open("ue-s-show"), "a click opens how it shows");
             break;
         case 4:
+            check(ue_option("ue-s-show", "menu") && ue().screen().show == d::ScreenShow::Menu, "«Главное меню игры»");
+            break;
+        case 5:
             if (hold(ue_field("ue-s-scene").empty() && element_text("ue-s-scene-note").find("Сначала отдайте сцену игре") != std::string::npos,
                      "«Сцена позади»: «Нет», and what it does"))
                 return true;
@@ -30650,7 +30654,7 @@ return {
             check(si_json_.find("scene_behind") == std::string::npos && si_html_.find("forge-scene-behind") == std::string::npos, "no scene behind it yet");
             check(ue_sd_open("ue-s-scene"), "a click opens «Сцена позади»");
             break;
-        case 5: {
+        case 6: {
             const usize cursor = ue().history().cursor();
             check(ue_option("ue-s-scene", "Сцена 2") && ue().screen().scene_behind == "Сцена 2", "«Сцена 2» behind the menu");
             check(ue().history().cursor() == cursor + 1 && label() == "Изменено: Сцена позади", "one step: " + label());
@@ -30660,7 +30664,7 @@ return {
             check(si_after_html_.find("forge-scene-behind=\"Сцена 2\"") != std::string::npos, "its page says it");
             break;
         }
-        case 6:
+        case 7:
             if (hold(element_text("ue-s-scene-note") == note_ok2, "the line under the field: how it plays")) return true;
             check(!ed_.find_element("ue-s-scene-note")->IsClassSet("ue-warn"), "not a warning");
             key(SDLK_Z, SDL_KMOD_CTRL);
@@ -30673,35 +30677,39 @@ return {
             si_button_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
             check(ue_node(si_button_) && d::block_of(*ue_node(si_button_)) == d::Block::Button, "a button");
             break;
-        case 7:
+        case 8:
             check(ue_type("ue-s-color", kSiButton) && ue_node(si_button_)->fills.size() == 1 &&
                       d::color_hex(ue_node(si_button_)->fills[0].color) == kSiButton,
                   std::string("its colour ") + kSiButton);
             check(ue_sd_open("ue-s-action"), "a click opens what it does");
             break;
-        case 8:
+        case 9:
             check(ue_option("ue-s-action", "new"), "«Новая игра»");
             check(ue_file(".html", si_menu_).find("id=\"n" + std::to_string(si_button_) + "\"") != std::string::npos, "the button on its page");
             si_n_ = ue().screens().size();
             check(click("ue-new-screen"), "«Новый экран»");
             break;
         // A window that stops the world, «Сцена 3» behind it in «Полный».
-        case 9:
+        case 10:
             si_window_ = ue().opened();
             check(ue().screens().size() == si_n_ + 1 && si_window_ != si_menu_ && ue().screen().show == d::ScreenShow::Command, "a new window «" + si_window_ + "»");
+            ue().select({ue().screen().root.id});
+            break;
+        case 11:
+            if (hold(shown("ue-s-pauses"), "«Пока открыто, игра стоит» is laid out")) return true;
             if (!ue().screen().pauses) check(click("ue-s-pauses") && ue().screen().pauses, "«Пока открыто, игра стоит»");
             check(click("ue-mode-full") && !ue().simple(), "«Полный»");
             break;
-        case 10:
+        case 12:
             check(click("ue-tab-game"), "the screen's «В игре»");
             break;
-        case 11:
+        case 13:
             if (hold(shown("ue-screen-scene") && ue_field("ue-screen-scene").empty(), "«Сцена позади» in «В игре»")) return true;
             si_json_ = ue_file(".json", si_window_);
             si_html_ = ue_file(".html", si_window_);
             check(ue_sd_open("ue-screen-scene"), "a click opens «Сцена позади»");
             break;
-        case 12:
+        case 14:
             check(ue_option("ue-screen-scene", "Сцена 3") && ue().screen().scene_behind == "Сцена 3" && label() == "Изменено: Сцена позади",
                   "«Сцена 3» behind the window, one step: " + label());
             si_after_json_ = ue_file(".json", si_window_);
@@ -30709,7 +30717,7 @@ return {
             check(si_after_html_.find("forge-scene-behind=\"Сцена 3\"") != std::string::npos && si_after_json_.find("\"scene_behind\": \"Сцена 3\"") != std::string::npos,
                   "its file and page say it");
             break;
-        case 13:
+        case 15:
             if (hold(element_text("ue-scene-note") == note_ok3, "the line under the field: how it plays")) return true;
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(ue_file(".json", si_window_) == si_json_ && ue_file(".html", si_window_) == si_html_, "Ctrl+Z: byte for byte as before");
@@ -30718,9 +30726,17 @@ return {
             // «Сцена 3» taken out of the game: the field warns, and lists it as not there.
             fs::rename(game / "scenes" / utf8_path("Сцена 3"), game / "scenes" / utf8_path("Сцена 3 убрана"), ec);
             check(!ec, "«Сцена 3» moved away " + ec.message());
+            check(click_tab(0), "away to «Уровень»");
             break;
-        case 14:
-            if (hold(element_text("ue-scene-note") == note_gone, "the field says the game has no «Сцена 3»")) return true;
+        case 16:
+            if (hold(ed_.tab() == "level", "«Уровень»")) return true;
+            check(click_tab(8), "back to «Интерфейс»: it looks at the game's scenes again");
+            break;
+        case 17:
+            // The panel sets the drop-down's value on the frame after its options change.
+            if (hold(element_text("ue-scene-note") == note_gone && ue_field("ue-screen-scene") == "Сцена 3",
+                     ("the field says the game has no «Сцена 3», and keeps it chosen: «" + ue_field("ue-screen-scene") + "»").c_str()))
+                return true;
             check(ed_.find_element("ue-scene-note")->IsClassSet("ue-warn"), "as a warning");
             {
                 auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element("ue-screen-scene"));
@@ -30728,20 +30744,26 @@ return {
                 for (int i = 0; select && i < select->GetNumOptions(); ++i)
                     listed |= select->GetOption(i)->GetAttribute<Rml::String>("value", "") == "Сцена 3" &&
                               select->GetOption(i)->GetInnerRML() == "Сцена 3 (нет в игре)";
-                check(listed && ue_field("ue-screen-scene") == "Сцена 3", "«Сцена 3 (нет в игре)» chosen in the list");
+                check(listed && ue_field("ue-screen-scene") == "Сцена 3", "«Сцена 3 (нет в игре)» chosen in the list: «" + ue_field("ue-screen-scene") + "»");
             }
-            check(ue().screen().scene_behind == "Сцена 3" && ue_file(".json", si_window_) == si_after_json_, "the screen keeps it");
+            check(ue().screen().scene_behind == "Сцена 3" && ue_file(".json", si_window_) == si_after_json_,
+                  "the screen keeps it: «" + ue().screen().scene_behind + "», " + label());
             fs::rename(game / "scenes" / utf8_path("Сцена 3 убрана"), game / "scenes" / utf8_path("Сцена 3"), ec);
             check(!ec, "«Сцена 3» back " + ec.message());
+            check(click_tab(0), "away to «Уровень»");
             break;
-        case 15:
+        case 18:
+            if (hold(ed_.tab() == "level", "«Уровень»")) return true;
+            check(click_tab(8), "back to «Интерфейс»");
+            break;
+        case 19:
             if (hold(element_text("ue-scene-note") == note_ok3, "back: how it plays")) return true;
             check(!ed_.find_element("ue-scene-note")->IsClassSet("ue-warn"), "no warning");
             check(ue().open(si_menu_) && ue().opened() == si_menu_, "the menu again");
             check(click("ue-check") && ue().checking(), "«Проверить»");
             break;
         // «Проверить»: the scene under the menu, going.
-        case 16: {
+        case 20: {
             const game::GameScreens* sc = ue().check_screens();
             const game::GameScene* behind = sc ? sc->scene_behind(si_menu_) : nullptr;
             if (hold(behind && behind->time() > 0.5, "«Сцена 2» under the menu in «Проверить»")) return true;
@@ -30757,15 +30779,15 @@ return {
             key(SDLK_ESCAPE, SDL_KMOD_NONE);
             break;
         }
-        case 17:
+        case 21:
             if (hold(!ue().checking(), "«Проверить» ends")) return true;
             check(click_tab(0) && ed_.tab() == "level", "«Уровень»");
             break;
-        case 18:
+        case 22:
             if (hold(lv().view_w() > 0 && shown("lv-levels"), "the level view is laid out")) return true;
             check(pj_click("lv-levels"), "the levels' menu");
             break;
-        case 19: {
+        case 23: {
             if (wait(2)) return true;
             check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
             const edits::ProjectEdits e = si_edits(false);
