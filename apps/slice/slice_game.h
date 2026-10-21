@@ -101,6 +101,7 @@ public:
     void render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width, u32 height) override;
     void handle_event(const SDL_Event& event) override;
     std::vector<forge::input::ActionDef> actions() const override { return slice::actions(); }
+    std::optional<u64> logic_runs() const override { return logic_runs_; }
     void shutdown() override;
 
     // --- for the self-test ---
@@ -466,6 +467,7 @@ private:
     std::vector<std::pair<f64, f64>> torches_;
     bool hero_light_ = true;
     f64 frame_dt_ = 0, frame_ms_avg_ = 0, sim_ms_ = 0, stress_log_ = 0;
+    u64 logic_runs_ = 0; // the ticks the schemes ran in, and the frames they will run in no more (logic_runs)
     std::vector<forge::world::Rect> stress_rects_;
 
     struct Hud;

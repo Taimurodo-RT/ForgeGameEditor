@@ -136,6 +136,26 @@ std::set<std::string>& said() {
     return s;
 }
 
+// Part 6г4: the parts whose areas SvgPlaces::place asks the pose for (null: none): each one's shapes as a mask draws them,
+// in the picture's units, and a box round them (their outlines' control points, their strokes' miters).
+struct AreaShapes {
+    std::string text;
+    f64 x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    bool any = false;
+};
+std::map<std::string, AreaShapes>* g_areas = nullptr;
+
+std::string attribute_text(std::string_view v) {
+    std::string out;
+    for (const char c : v) {
+        if (c == '&') out += "&amp;";
+        else if (c == '<') out += "&lt;";
+        else if (c == '"') out += "&quot;";
+        else out += c;
+    }
+    return out;
+}
+
 std::vector<std::string>& waiting() {
     static std::vector<std::string> v;
     return v;
@@ -1220,6 +1240,49 @@ Written apply_pose(File& f, const std::string& path, lunasvg::Document& doc, con
         }
     }
 
+    // Part 6г4: the areas asked for, of the drawing shown: each shape of the part as a mask's copy of it (above) in the
+    // picture's units, opaque white.
+    if (g_areas && (!side || !side->from))
+        for (auto& [id, area] : *g_areas) {
+            area = {};
+            const i32 by = part_element(f, id);
+            if (by < 0) continue;
+            for (const i32 leaf : leaves_of(f, by)) {
+                const std::string* d = w.get(leaf, "d");
+                vector::Path p;
+                std::string why;
+                if (d ? !vector::parse_path(*d, p) : !vector::shape_path(o, leaf, p, why)) continue;
+                const LeafLook& l = look(leaf);
+                bool fill = l.fill.other || l.fill.a > 0;
+                bool stroke = l.width > 0 && (l.stroke.other || l.stroke.a > 0);
+                if (vector::display_none(o, leaf)) fill = true, stroke = false;
+                const vector::MotionMatrix m = screen(f, now, leaf);
+                area.text += "<path d=\"" + (d ? *d : vector::to_d(p)) + "\" fill=\"" + (fill || !stroke ? "#ffffff" : "none") + "\" stroke=\"" +
+                             (stroke ? "#ffffff" : "none") + "\" stroke-width=\"" + num(l.width) + "\"";
+                for (const char* prop : {"fill-rule", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit", "stroke-dasharray", "stroke-dashoffset"}) {
+                    const std::string* given = w.get(leaf, prop);
+                    const std::string v = given ? *given : vector::inherited(o, leaf, prop);
+                    if (!v.empty()) area.text += std::string(" ") + prop + "=\"" + attribute_text(v) + "\"";
+                }
+                area.text += " transform=\"" + matrix_text(m) + "\"/>";
+                // The box: the outline's control points (the curves lie inside them), a stroke's half width to its miter.
+                const f64 grow = stroke ? l.width / 2 * std::max(vector::svg_number(vector::inherited(o, leaf, "stroke-miterlimit"), 4.0), 1.5) *
+                                              std::max(std::hypot(m.a, m.b), std::hypot(m.c, m.d))
+                                        : 0.0;
+                auto add = [&](vector::Point q) {
+                    const f64 x = m.a * q.x + m.c * q.y + m.e, y = m.b * q.x + m.d * q.y + m.f;
+                    if (!std::isfinite(x) || !std::isfinite(y)) return;
+                    if (!area.any) area.x0 = area.x1 = x, area.y0 = area.y1 = y, area.any = true;
+                    area.x0 = std::min(area.x0, x - grow), area.y0 = std::min(area.y0, y - grow);
+                    area.x1 = std::max(area.x1, x + grow), area.y1 = std::max(area.y1, y + grow);
+                };
+                for (const vector::Contour& c : p.contours) {
+                    add(c.start);
+                    for (const vector::Cubic& k : c.curves) add(k.c1), add(k.c2), add(k.to);
+                }
+            }
+        }
+
     // Part 6г2: a run of a scene's stage draws its own elements of the top level only; the box of the picture shown.
     if (!pose.only.empty())
         for (i32 i = 1; i < static_cast<i32>(o.elements.size()); ++i) {
@@ -1528,109 +1591,39 @@ std::vector<std::string> svg_problems() {
     return out;
 }
 
-SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings) {
-    const vector::MotionShown shown = vector::motion_shown(file, clip, at);
+namespace {
+
+vector::MotionClipPose motion_side(const SvgPose& p) {
+    return {p.parts, p.copies, p.order, {p.drawing, p.swap, p.swap_from, p.swap_k}, p.from_parts};
+}
+
+SvgPose svg_side(std::string picture, vector::MotionClipPose p, std::vector<SvgDrawing> drawings) {
     SvgPose pose;
     pose.picture = std::move(picture);
-    pose.parts = vector::motion_pose(file, clip, at, shown.drawing);
-    pose.order = vector::motion_order_at(clip, at);
-    for (const vector::MotionCopy& copy : clip.copies)
-        if (vector::motion_copy_drawn(copy, at)) pose.copies.push_back(copy);
+    pose.parts = std::move(p.parts);
+    pose.copies = std::move(p.copies);
+    pose.order = std::move(p.order);
     pose.drawings = std::move(drawings);
-    pose.drawing = shown.drawing;
-    if (shown.swap) {
-        pose.swap = true;
-        pose.swap_from = shown.from;
-        pose.swap_k = shown.k;
-        pose.from_parts = vector::motion_pose(file, clip, at, shown.from);
+    pose.drawing = std::move(p.shown.drawing);
+    pose.swap = p.shown.swap;
+    if (pose.swap) {
+        pose.swap_from = std::move(p.shown.from);
+        pose.swap_k = p.shown.k;
+        pose.from_parts = std::move(p.from_parts);
     }
     return pose;
 }
 
+} // namespace
+
+SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings) {
+    return svg_side(std::move(picture), vector::motion_clip_pose(file, clip, at), std::move(drawings));
+}
+
 SvgPose blend_pose(const vector::MotionFile& file, const SvgPose& from, const SvgPose& to, f64 k) {
-    using vector::MotionProp;
     if (!(k > 0)) return from;
     if (k >= 1) return to;
-    auto main = [](const std::string& d) { return d.empty() ? std::string(vector::kMotionMainDrawing) : d; };
-    // The drawings and their shares: a pose shows one, a swap two.
-    std::map<std::string, f64> weight;
-    auto weigh = [&](const SvgPose& p, f64 of) {
-        const std::string shown = main(p.drawing);
-        const std::string before = main(p.swap_from);
-        auto add = [&](const std::string& d, f64 w) {
-            if (w > 0 && (d == vector::kMotionMainDrawing || file.drawing(d))) weight[d] += w;
-        };
-        if (p.swap) {
-            add(before, of * (1 - p.swap_k));
-            add(shown, of * p.swap_k);
-        } else
-            add(shown, of);
-    };
-    weigh(from, 1 - k);
-    weigh(to, k);
-    const std::string top = main(to.drawing);
-    std::string under;
-    for (const auto& [d, w] : weight)
-        if (d != top && (under.empty() || w > weight[under])) under = d;
-
-    SvgPose out;
-    out.picture = to.picture;
-    out.drawings = to.drawings;
-    out.drawing = top;
-    out.order = from.order;
-    // The copies drawn on either side; one only one side draws comes in or goes out with its opacity.
-    std::set<std::string> from_copies, to_copies;
-    for (const vector::MotionCopy& c : from.copies) from_copies.insert(c.id);
-    for (const vector::MotionCopy& c : to.copies) to_copies.insert(c.id);
-    out.copies = to.copies;
-    for (const vector::MotionCopy& c : from.copies)
-        if (!to_copies.count(c.id)) out.copies.push_back(c);
-    std::map<std::string, const vector::MotionPartPose*> a, b;
-    for (const vector::MotionPartPose& p : from.parts) a.emplace(p.id, &p);
-    for (const vector::MotionPartPose& p : to.parts) b.emplace(p.id, &p);
-    std::vector<std::string> ids;
-    for (const vector::MotionPartPose& p : to.parts) ids.push_back(p.id);
-    for (const vector::MotionPartPose& p : from.parts)
-        if (!b.count(p.id)) ids.push_back(p.id);
-    for (const std::set<std::string>* copies : {&to_copies, &from_copies}) // a copy without tracks fades too
-        for (const std::string& id : *copies)
-            if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
-    constexpr usize kOpacity = static_cast<usize>(MotionProp::Opacity);
-    for (const std::string& id : ids) {
-        const auto ai = a.find(id), bi = b.find(id);
-        const vector::MotionPartPose* pa = ai == a.end() ? nullptr : ai->second;
-        const vector::MotionPartPose* pb = bi == b.end() ? nullptr : bi->second;
-        vector::MotionPartPose pp;
-        pp.id = id;
-        const bool going = from_copies.count(id) && !to_copies.count(id), coming = to_copies.count(id) && !from_copies.count(id);
-        if (going || coming) {
-            // A copy where the side that draws it has it.
-            if (const vector::MotionPartPose* side = going ? pa : pb) pp = *side;
-            else
-                for (usize i = 0; i < vector::kMotionPropCount; ++i) pp.values[i] = vector::motion_rest(static_cast<MotionProp>(i));
-            if (!pp.has[kOpacity]) pp.values[kOpacity] = vector::motion_rest(MotionProp::Opacity);
-            pp.has[kOpacity] = true;
-            pp.values[kOpacity].v *= going ? 1 - k : k;
-        } else
-            for (usize i = 0; i < vector::kMotionPropCount; ++i) {
-                const MotionProp prop = static_cast<MotionProp>(i);
-                pp.has[i] = (pa && pa->has[i]) || (pb && pb->has[i]);
-                const vector::MotionValue rest = vector::motion_rest(prop);
-                pp.values[i] = !pp.has[i] ? rest
-                                          : vector::motion_mix(prop, pa && pa->has[i] ? pa->values[i] : rest,
-                                                               pb && pb->has[i] ? pb->values[i] : rest, k);
-            }
-        vector::motion_part_pose(file, pp, top);
-        out.parts.push_back(std::move(pp));
-    }
-    if (!under.empty()) {
-        out.swap = true;
-        out.swap_from = under;
-        out.swap_k = weight[top] / (weight[top] + weight[under]);
-        out.from_parts = out.parts;
-        for (vector::MotionPartPose& pp : out.from_parts) vector::motion_part_pose(file, pp, under);
-    }
-    return out;
+    return svg_side(to.picture, vector::motion_blend(file, motion_side(from), motion_side(to), k), to.drawings);
 }
 
 void svg_pose(Rml::Element* element, SvgPose pose) {
@@ -1735,6 +1728,7 @@ struct SvgPlaces::Impl {
     Slot base, top;
     Rml::UniquePtr<lunasvg::Document> doc, over;
     std::vector<SvgPlace> places;
+    std::map<std::string, AreaShapes> areas; // the last place's, by part
 };
 
 SvgPlaces::SvgPlaces() : impl_(std::make_unique<Impl>()) {}
@@ -1758,15 +1752,19 @@ bool SvgPlaces::load(std::string path, std::string text, std::string& why) {
     return true;
 }
 
-const std::vector<SvgPlace>& SvgPlaces::place(const SvgPose& pose) {
+const std::vector<SvgPlace>& SvgPlaces::place(const SvgPose& pose, const std::vector<std::string>& areas) {
     Impl& im = *impl_;
     im.places.clear();
+    im.areas.clear();
     if (!im.loaded) return im.places;
     File& f = file(im.path, im.text);
     SvgPose all = pose;
     all.only.clear();
     all.view_w = all.view_h = 0;
+    for (const std::string& id : areas) im.areas[id];
+    g_areas = im.areas.empty() ? nullptr : &im.areas;
     compose(f, im.path, "\x05" + dir_of(im.path), stage_key(this), all, nullptr, im.base, im.top, im.doc, im.over);
+    g_areas = nullptr;
     const File* drawn = im.base.stage ? im.base.stage : im.base.source;
     if (!im.doc || !drawn) return im.places;
     const vector::SvgOutline& o = drawn->outline;
@@ -1796,6 +1794,41 @@ const std::vector<SvgPlace>& SvgPlaces::place(const SvgPose& pose) {
         im.places.push_back(std::move(p));
     }
     return im.places;
+}
+
+const std::string& SvgPlaces::area_shapes(std::string_view id) const {
+    static const std::string none;
+    const auto it = impl_->areas.find(std::string(id));
+    return it != impl_->areas.end() ? it->second.text : none;
+}
+
+bool SvgPlaces::area_box(std::string_view id, f64& x, f64& y, f64& w, f64& h) const {
+    const auto it = impl_->areas.find(std::string(id));
+    if (it == impl_->areas.end() || !it->second.any) return x = y = w = h = 0, false;
+    const AreaShapes& a = it->second;
+    x = a.x0, y = a.y0, w = a.x1 - a.x0, h = a.y1 - a.y0;
+    return true;
+}
+
+bool SvgPlaces::area(std::string_view id, const vector::MotionMatrix& m, u32 w, u32 h, std::vector<u8>& cover) const {
+    cover.clear();
+    const std::string& shapes = area_shapes(id);
+    if (shapes.empty() || w == 0 || h == 0) return false;
+    const std::string text = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" + std::to_string(w) + "\" height=\"" + std::to_string(h) +
+                             "\" viewBox=\"0 0 " + std::to_string(w) + " " + std::to_string(h) + "\"><g transform=\"" + matrix_text(m) + "\">" +
+                             shapes + "</g></svg>";
+    const std::unique_ptr<lunasvg::Document> doc = lunasvg::Document::loadFromData(text.data(), text.size());
+    if (!doc) return false;
+    lunasvg::Bitmap bitmap(static_cast<int>(w), static_cast<int>(h));
+    if (bitmap.isNull()) return false;
+    bitmap.clear(0);
+    doc->render(bitmap);
+    cover.resize(static_cast<usize>(w) * h);
+    for (u32 y = 0; y < h; ++y) {
+        const u8* row = bitmap.data() + static_cast<usize>(y) * static_cast<usize>(bitmap.stride());
+        for (u32 x = 0; x < w; ++x) cover[static_cast<usize>(y) * w + x] = row[x * 4 + 3];
+    }
+    return true;
 }
 
 SvgPose SvgPlaces::run_pose(const SvgPose& pose, std::vector<std::string> keys) {

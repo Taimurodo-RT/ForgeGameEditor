@@ -201,11 +201,14 @@ public:
 
     // Part 6а of docs/models/сцены-модель.md: another picture drawn in a group part of this one (a scene's), above its
     // paints. An actor: its main picture and its drawings, in its own units as the group's children, the one its last
-    // pose() shows (in a swap the two, the old under the new); from then on it is drawn only through this rig and stays
-    // where it is (no move) while this one is alive. Pixels: straight RGBA drawn over 0, 0 … w, h of the group's units.
+    // pose() shows (in a swap the two, the old under the new), uncut (as a game draws it in its reach, part 6г2); from
+    // then on it is drawn only through this rig and stays where it is (no move) while this one is alive. Pixels:
+    // straight RGBA drawn over 0, 0 … w, h of the group's units.
     // False with why: no such group, a part hosting already, an actor drawn on its own before or hosted elsewhere.
     bool host(std::string_view part, Rig& actor, std::string& why);
     bool host(std::string_view part, const assets::CookedTexture& pixels, f64 w, f64 h, std::string& why);
+    // From now on the picture and its drawings are drawn whole, not cut at their canvas as loaded: a scene's actor.
+    void uncut();
     // The actor hosted in a part; null for none.
     Rig* hosted(std::string_view part);
     const Rig* hosted(std::string_view part) const;

@@ -1564,6 +1564,15 @@ tvg::Scene* host_scene(std::string_view id, tvg::Paint* paint, std::string& why)
 
 } // namespace
 
+void Rig::uncut() {
+    // ThorVG puts the SVG in a scene cut at its viewport (the picture, its scene, the viewport's clip, the SVG).
+    auto off = [](Impl& m) {
+        if (tvg::Paint* view = m.doc ? const_cast<tvg::Paint*>(m.doc->parent()) : nullptr) view->clip(nullptr);
+    };
+    off(*impl_);
+    for (auto& [name, d] : impl_->drawings) off(*d.impl_);
+}
+
 bool Rig::host(std::string_view id, Rig& actor, std::string& why) {
     Impl& m = *impl_;
     const i32 pi = part(id);
@@ -1577,7 +1586,9 @@ bool Rig::host(std::string_view id, Rig& actor, std::string& why) {
     bool drawn = alone(a);
     for (const auto& [name, d] : a.drawings) drawn = drawn || alone(*d.impl_);
     if (drawn) return why = "рисунок актёра «" + std::string(id) + "» уже рисовался сам или в другой сцене", false;
-    // Each picture in the actor's units: ThorVG's viewport back to them.
+    // Each picture in the actor's units: ThorVG's viewport back to them, and not cut at it (part 6г2 of the scenes model:
+    // an actor's drawing is not held to its canvas in a scene; the game draws it in its reach).
+    actor.uncut();
     auto put = [&](Rig& r) {
         r.impl_->hosted = true;
         r.impl_->pic->transform(to_tvg(inverse(r.impl_->doc_matrix)));

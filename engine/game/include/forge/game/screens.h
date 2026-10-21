@@ -20,6 +20,11 @@
 //                                    when a level of it is passed: "level"
 //                     forge-button-sound
 //                                    its buttons' sound when pressed
+//                     forge-scene-behind
+//                                    a scene of the game (game/scenes) that
+//                                    plays under it while it is up, round
+//                                    and round (part 6г5б of
+//                                    docs/models/сцены-модель.md)
 //   on any layer:     forge-text     a text with {variables} put in
 //                     forge-show-if  shown only while this holds
 //                     forge-bar-value, -max, -from
@@ -54,10 +59,13 @@
 // without music lets the one under it play; none up with music and no
 // place's: silence. on_music
 // says when that changes (a page loaded again with the same music changes
-// nothing). A button's sound goes to on_sound once per press, with its
+// nothing). A screen without music of its own whose scene behind has music
+// plays that, by the same choice: on_scene_music says its tunes (and
+// on_music ""). A button's sound goes to on_sound once per press, with its
 // actions: a click or Enter / Space on a button with the keyboard's focus.
 
 #include "forge/game/quests.h"
+#include "forge/game/scenes.h"
 #include "forge/game/vars.h"
 
 #include <filesystem>
@@ -222,8 +230,12 @@ public:
     const std::string& place_music() const;
     // Says the music changed (update(); "" when none is wanted).
     std::function<void(const std::string& name)> on_music;
-    // Leaving (the editor's «Проверить», the game): on_music(""), and the
-    // next update() starts the music again.
+    // Part 6г5б: the music of a scene behind a screen, when that screen's is the music wanted (its tunes now; none:
+    // empty), each time it changes; and what it was told last.
+    std::function<void(const std::vector<SceneTune>& tunes)> on_scene_music;
+    const std::vector<SceneTune>& scene_music() const;
+    // Leaving (the editor's «Проверить», the game): on_music("") (and
+    // on_scene_music with none), and the next update() starts the music again.
     void stop_music();
     // A button's sound, once per press.
     std::function<void(const std::string& name)> on_sound;
@@ -234,6 +246,16 @@ public:
     std::vector<std::string> variables(std::string_view name) const;
 
     Rml::ElementDocument* document(std::string_view name) const;
+
+    // Part 6г5б: scenes behind pages. Where they come from (game_dir/scenes: load() sets it; the editor's «Проверить»
+    // says it), the UI their masks go to (none: not drawn). A page drawn plays its scene from its start, under itself, by
+    // the screens' clock, fading with its coming and going; hidden, it stops it. One that is not in the game is said
+    // once in the log, and the page shows without it.
+    void set_game_dir(const std::filesystem::path& game_dir);
+    void set_ui(ui::Ui* ui);
+    // The scene playing behind a page now (null: none), and the name it asks for ("": none).
+    const GameScene* scene_behind(std::string_view name) const;
+    std::string scene_behind_name(std::string_view name) const;
 
     // The layers of a page with this name (as «Интерфейс» names them) or this id: every cell of a list, too.
     std::vector<Rml::Element*> layers(std::string_view screen, std::string_view layer) const;

@@ -430,6 +430,9 @@ struct Screen {
     // Its sound: the music while it is up and its buttons' sound when
     // pressed, files of the game's sounds folder ("": none).
     std::string music, button_sound;
+    // Part 6г5б of docs/models/сцены-модель.md: a scene of the game (game/scenes) that plays under it while it is up
+    // ("": none).
+    std::string scene_behind;
     bool library = false;     // the game's components (ui/components.json), not a screen the game shows
     // The library's game styles: named colours and text styles that layers on
     // every screen can use (Paint::style, TextStyle::style); changing one

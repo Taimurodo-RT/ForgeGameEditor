@@ -240,6 +240,34 @@ struct ProjectEdits {
     double sw_at = 0, sw_length = 0;
     std::vector<double> sw_holds, sw_frames;
     std::vector<std::string> sw_frame_files, sw_heard;
+    // Part 6г4 (the editor's self-test pixel-scene-g): the same scheme shows st_first at the start and st_scene after it
+    // (sg_scene and sw_scene empty, the other sg_* as above). st_first comes in over the game by «растворение» over
+    // st_first_in s, its frames at st_first_frames (its time) st_first_files; it lasts st_first_length, its last frame
+    // st_last_file. st_scene comes in over that frame by a mask growing over st_in s: its frames at st_in_frames
+    // st_in_files are the tab's, whose old frame is the grey (the game's has st_last_file's there); at st_frames,
+    // st_files (its picture masked); its waits held st_holds (E, a click, the space ending its talk); it leaves to the
+    // game by «сдвиг» over st_out s at its end st_length, its frames at st_out_frames st_out_files (having waited
+    // st_holds), the game's frame st_out_x units of the canvas across. All on a screen of the scene's shape; st_wide: on
+    // one of 1920 × 1080, where the game's frame begins on its middle row as it leaves.
+    std::string st_first, st_scene, st_last_file;
+    double st_first_in = 0, st_first_length = 0, st_in = 0, st_length = 0, st_out = 0;
+    std::vector<double> st_first_frames, st_in_frames, st_frames, st_holds, st_out_frames, st_out_x;
+    std::vector<std::string> st_first_files, st_in_files, st_files, st_out_files;
+    bool st_wide = false;
+    // Part 6г5а (the editor's self-test pixel-scene-h): st_scene's clips change smoothly (its file has blends); after its
+    // waits, at st_blend_frames (its time, having waited st_holds) its frames are st_blend_files, the clips mixed.
+    std::vector<double> st_blend_frames;
+    std::vector<std::string> st_blend_files;
+    // Part 6г5б (the editor's self-test pixel-scene-i): the game's own main menu sb_menu with sb_scene behind it, its
+    // button sb_button (the layer's element id, «Новая игра») of the colour sb_button_color over it; the scene's frames
+    // at sb_frames (its time, round and round) sb_files as the tab draws it without its ways in and out, sb_length a
+    // round, its music sb_music. The window sb_window stops the world, sb_window_scene behind it (sb_window_length a
+    // round). sb_wide: on 1920 × 1080, the time of a frame with the scene behind the menu.
+    std::string sb_menu, sb_scene, sb_button, sb_button_color, sb_music, sb_window, sb_window_scene;
+    double sb_length = 0, sb_window_length = 0;
+    std::vector<double> sb_frames;
+    std::vector<std::string> sb_files;
+    bool sb_wide = false;
 };
 
 // False (error says why) when the file cannot be read.
