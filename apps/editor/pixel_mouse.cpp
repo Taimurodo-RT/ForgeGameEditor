@@ -529,6 +529,7 @@ bool PixelEditor::edge_press(f32 x, f32 y, Rml::Element* over, bool again) {
         }
     }
     play(false);
+    set_side("anim"); // part 7а: a block's, a pause's or an actor's clip's edge taken
     tl_drag_ = what;
     drag_block_ = what == Drag::PauseEnd ? -1 : index;
     drag_pause_ = what == Drag::PauseEnd ? static_cast<usize>(index) : 0;

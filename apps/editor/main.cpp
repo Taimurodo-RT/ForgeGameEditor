@@ -15,6 +15,9 @@
 //   forge_editor --bench-scheme [N]   offscreen: a scheme of N nodes (5 000) panned and a node dragged
 //   forge_editor --bench-story   offscreen: a big talk scrolled with the mouse wheel
 //   forge_editor --screenshot X.png --talk NAME   the «Сюжет» tab with that talk open (cast:STORY, novel:STORY)
+//   forge_editor --screenshot X.png --pixel FILE [--look design|code|animation]   «Векторная» with that character or
+//                scene of «Ресурсы» open (its path there, a scene by its .scene.json), in that look
+//   forge_editor --screenshot X.png --size WxH   offscreen: a window of that many units of the interface (1600x900)
 //   forge_editor --screenshot X.png --templates WHAT   «Интерфейс»'s template library: construction, screen, a template's
 //                file, new:FILE (a new screen from it), insert:FILE (it on the open screen), check:FILE (a new screen
 //                from it in «Проверить»), save (the form «Сохранить как шаблон» for the open screen), save:LAYER
@@ -103,6 +106,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -408,6 +412,9 @@ public:
     std::function<void()> on_quit;
     bool quit_asked = false;
     f32 display_scale = 0.0f; // the UI's, standing for the window's display's (Options::display_scale)
+    // Offscreen: the self-test's narrower window inside the picture drawn, in its pixels (part 7а, «Узкое окно»); 0:
+    // the whole picture.
+    u32 narrow_w = 0, narrow_h = 0;
 
     bool init(SDL_GPUDevice* device, SDL_Window* window, SDL_GPUTextureFormat format, u32 width, u32 height,
               const std::filesystem::path& ui_dir, const std::string& theme, u32 objects, const LevelConfig& level_config,
@@ -2051,6 +2058,8 @@ struct Options {
     std::string theme = "dark";
     u32 objects = 50'000;
     std::string talk; // offscreen: the «Сюжет» tab with this talk open ("story/name"; "cast:story", "novel:story")
+    std::string pixel; // offscreen: «Векторная» with this character or scene of «Ресурсы» open (its path there)
+    std::string look;  // offscreen, with pixel: its look ("design", "code", "animation"; part 7а)
     // offscreen: the «Интерфейс» tab's template library open on a section ("construction", "screen") or a template
     // (its file name); "new:FILE" a new screen from it, "insert:FILE" it on the open screen (the window closed).
     std::string templates;
@@ -2123,7 +2132,9 @@ struct Options {
     // warning of a scene the game has not, «Проверить» with the scene under the menu, played by the scene project at 144 Hz
     // and on 1920 × 1080, by "pixel-scene-i"; part 6г6, a scene's parameters from the game: typed, a field, given with
     // what the game changes, «Показать сцену» giving h from its list, played by the scene project at h = 20, by
-    // "pixel-scene-j"); "input"
+    // "pixel-scene-j"; step 7, part 7а, the layout: «Файлы», «Слои», the three views, each as its table has it, a part
+    // dragged in each, what a change of view keeps, the bottom panel's height and the code's share dragged, «Проблемы»,
+    // «Экспорт», narrow windows and «Сцена 2», by "pixel-look-a", and at --ui-scale 1.5 in 1600 × 900 pixels); "input"
     // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
@@ -2152,6 +2163,8 @@ struct Options {
     // --ui-scale: the display's scale the UI is drawn at, standing for the system's (0: the window's). A self-test and a
     // screenshot are drawn at 1 unless it says.
     f32 display_scale = 0.0f;
+    // --size: offscreen, the window's size in units of the interface (its pixels are that many times the scale).
+    u32 size_w = 1600, size_h = 900;
 };
 
 // Tells the editor that started this one (--ready-file) how the opening went.
@@ -2430,6 +2443,7 @@ public:
         if (part == "pixel-scene-h") return frame < 3 || pixel_scene_h_step();
         if (part == "pixel-scene-i") return frame < 3 || pixel_scene_i_step();
         if (part == "pixel-scene-j") return frame < 3 || pixel_scene_j_step();
+        if (part == "pixel-look-a") return frame < 3 || pixel_look_a_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -2559,6 +2573,7 @@ private:
         return 0;
     }
     bool element_center(const char* id, f32& x, f32& y) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || !e->IsVisible(true)) return false;
         const Rml::Vector2f p = e->GetAbsoluteOffset(Rml::BoxArea::Border) + e->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
@@ -2858,7 +2873,46 @@ private:
         ed_.handle_event(e);
     }
     // The shown element of an id (the field rows are in two sections of the panel), else the first.
+    // Part 7а of the motion model: what a check of «Векторная» reads, clicks or types into may be in another view, another
+    // tab of a panel or the folded «Пиксели». The self-test first clicks the switch that shows it with the mouse, as the
+    // author would; an element the page has not made (data-if) or one outside the tab is left alone. A check that
+    // something is not shown (`!shown`) clicks too: there «not shown» is of the element itself, not of its panel.
+    void px_reveal(const char* id) {
+        for (int round = 0; round < 4; ++round) {
+            Rml::Element* e = ed_.find_element(id);
+            if (!e || e->IsVisible(true)) return;
+            Rml::Element* body = nullptr;
+            for (Rml::Element* a = e; a && !body; a = a->GetParentNode())
+                if (a->GetId() == "px-body") body = a;
+            if (!body || !body->IsVisible(true)) return;
+            const char* sw = nullptr;
+            for (Rml::Element* a = e; a && a != body && !sw; a = a->GetParentNode()) {
+                if (!a->IsClassSet("px-off")) continue;
+                const Rml::String& at = a->GetId();
+                bool in_pixels = false;
+                for (Rml::Element* p = a; p && p != body && !in_pixels; p = p->GetParentNode()) in_pixels = p->GetId() == "px-pixel-col";
+                if (in_pixels) sw = "px-pixel-fold";
+                else if (at == "px-files") sw = "px-left-files";
+                else if (at == "px-layers") sw = "px-left-layers";
+                else if (at == "px-code" || at == "px-code-split") sw = "px-look-code";
+                else if (at == "px-tl-pane") sw = "px-bottom-timeline";
+                else if (at == "px-problems") sw = "px-bottom-problems";
+                else if (at == "px-console-pane") sw = "px-bottom-console";
+                else if (at == "px-props") sw = px().export_open() ? "px-export" : "px-side-props";
+                else if (at == "px-anim") sw = px().export_open() ? "px-export" : "px-side-anim";
+                else if (at == "px-export-panel") sw = "px-export";
+            }
+            Rml::Element* s = sw ? ed_.find_element(sw) : nullptr;
+            if (!s || !s->IsVisible(true)) return;
+            const Rml::Vector2f p = s->GetAbsoluteOffset(Rml::BoxArea::Border) + s->GetBox().GetSize(Rml::BoxArea::Border) * 0.5f;
+            left_click(p.x, p.y);
+            ed_.context()->Update();
+            px().update(0, ed_.context());
+            ed_.context()->Update();
+        }
+    }
     Rml::Element* visible(const char* id) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || e->IsVisible(true) || !e->GetOwnerDocument()) return e;
         Rml::ElementList all;
@@ -7227,6 +7281,7 @@ private:
     }
     // A point of an element at fractions of its box, window pixels (false when it is not shown).
     bool ue_point(const char* id, f32 fx, f32 fy, f32& x, f32& y) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || !e->IsVisible(true)) return false;
         const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
@@ -7236,6 +7291,7 @@ private:
     }
     // A click with the mouse in the middle of an element, scrolled into its panel's view first (as the author would).
     bool ue_press(const std::string& id) {
+        px_reveal(id.c_str());
         if (Rml::Element* e = ed_.find_element(id.c_str()); e && e->IsVisible(true)) {
             e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
             ed_.context()->Update();
@@ -7260,6 +7316,7 @@ private:
     }
     // Typed into a field without Enter (the text stays in it).
     bool ue_keys(const char* id, const std::string& text) {
+        px_reveal(id);
         auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
         if (!e) return false;
         e->Focus();
@@ -7300,6 +7357,7 @@ private:
     // Typed into a field as from the keyboard: focus, End and Backspace over the old text, the text, Enter, then away.
     // (Ctrl+A is not used: RmlUi reads the modifiers from the real keyboard, not from the event.)
     bool ue_type(const char* id, const std::string& text) {
+        px_reveal(id);
         auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
         if (!e) return false;
         e->Focus();
@@ -7318,6 +7376,7 @@ private:
     }
     // Typed with Enter, the field kept (no blur after it).
     bool ue_type_enter(const char* id, const std::string& text) {
+        px_reveal(id);
         auto* e = rmlui_dynamic_cast<Rml::ElementFormControl*>(ed_.find_element(id));
         if (!e) return false;
         e->Focus();
@@ -17275,6 +17334,21 @@ return {
     struct PxRef {
         assets::CookedTexture px, vec;
     };
+    // The vector's frame (#px-vector's content box) in the window's pixels: the size the tab draws the vector at (part
+    // 7а: the vector fills its frame).
+    bool px_frame(u32& w, u32& h) {
+        px_reveal("px-vector");
+        Rml::Element* e = ed_.find_element("px-vector");
+        if (!e || !e->IsVisible(true)) return false;
+        const Rml::Vector2f size = e->GetBox().GetSize(Rml::BoxArea::Content);
+        w = static_cast<u32>(std::lround(size.x));
+        h = static_cast<u32>(std::lround(size.y));
+        return w > 0 && h > 0;
+    }
+    bool px_fills_frame() {
+        u32 w = 0, h = 0;
+        return px_frame(w, h) && px().vector_view().width == w && px().vector_view().height == h;
+    }
     bool px_ref(const std::string& state, u32 k, PxRef& out, std::string& why, const std::vector<pixel::Rgba8>& colors = {}) {
         namespace fs = std::filesystem;
         const fs::path doc_file = as().abs(px().opened());
@@ -17296,7 +17370,7 @@ return {
         if (!pixel::bake_frame(rig, script, doc, *c, k, pixel::bake_options(doc, colors), out.px, why)) return false;
         pixel::Pose pose;
         if (!pixel::frame_pose(script, rig, doc, *c, k, pose, why) || !rig.pose(pose, why)) return false;
-        out.vec = rig.draw(288, 288);
+        out.vec = rig.draw(px().view_texels_w(), px().view_texels_h()); // the vector's frame, its picture fitted (part 7а)
         return true;
     }
 
@@ -17424,12 +17498,12 @@ return {
             break;
         }
         case 4: {
-            if (hold(shown("px-vector-img") && shown("px-pixel-img") && shown("px-part-leg_l") && px().vector_view().width == 288 &&
+            if (hold(shown("px-vector-img") && shown("px-pixel-img") && shown("px-part-leg_l") && px_fills_frame() &&
                          px().pixel_frame().width == 32,
                      "the views shown"))
                 return true;
-            check(px().pixel_frame().height == 32 && px().vector_view().height == 288 && element_text("px-total") == "в картинке 4 кадра из 64",
-                  "the vector 288 × 288, the pixel frame 32 × 32; «" + element_text("px-total") + "»");
+            check(px().pixel_frame().height == 32 && px_fills_frame() && element_text("px-total") == "в картинке 4 кадра из 64",
+                  "the vector as big as its frame, the pixel frame 32 × 32; «" + element_text("px-total") + "»");
             check(put(lua, kPxWalk), "the author's «Ёжик.luau»: standing and walking");
             const bool typed = ue_type("px-fh", "64");
             check(typed && d.frame_w == 32 && d.frame_h == 64 && step_label() == "«Ёжик»: кадр 32 × 64", "«Кадр» 32 × 64 typed: " + step_label());
@@ -19369,6 +19443,21 @@ return {
                                  "the game changes h and not n, version 3, undone and done again; «Показать сцену» gives h 20 picked from "
                                  "its list; the game shows «Сцена 2» at h = 20 as the tab's frames at 20, at 144 Hz (pixel-scene-j: exit " +
                                      std::to_string(params_scene) + ")");
+        // Part 7а: the layout, in a window of 1600 × 900 and narrower, and at --ui-scale 1.5.
+        const fs::path thirty_nine = mo_root() / utf8_path("тридцать девятая папка"), forty = mo_root() / utf8_path("сороковая папка");
+        fs::create_directories(thirty_nine, ec);
+        fs::create_directories(forty, ec);
+        const int look = pj_run({exe, "--project", project, "--self-test", "pixel-look-a"}, thirty_nine);
+        check(look == 0, "nothing open: «Файлы»; «Ёжик» from them in «Слои»; «Код», «Дизайн» and «Анимация» each with its panels, its vector "
+                         "filling its frame as the library draws the files, the grid, the point under the mouse, a part dragged in one step and "
+                         "undone byte for byte; a change of view keeping the frame, the part, the zoom, the middle, the history and the files; "
+                         "the bottom panel's height and the code's share dragged within their limits; «Проблемы» as the console's errors, a "
+                         "click on one in «Код»; «Экспорт» baking and snapping as the library does; windows of 1400 × 850, 1100 × 700 and "
+                         "960 × 640 laid out; «Сцена 2» from «Файлы» given as the library builds it; the files as before (pixel-look-a: exit " +
+                             std::to_string(look) + ")");
+        const int scaled = pj_run({exe, "--project", project, "--ui-scale", "1.5", "--self-test", "pixel-look-a"}, forty);
+        check(scaled == 0, "at --ui-scale 1.5 in 1600 × 900 pixels: «Ёжик» and «Сцена 2» in each view and with «Экспорт» laid out, the files "
+                           "as before (pixel-look-a: exit " + std::to_string(scaled) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -20205,6 +20294,11 @@ return {
     // pixel-motion-b-again, from another working folder, sees the same and the files as left.
     int mb_step_ = 0;
     i32 mb_k_ = -1;           // the frame mb_look reads next
+    // Part 7а: mb_look reads in «Дизайн» with «Пиксели» open (0: not yet there, 1: «Дизайн», 2: «Пиксели» open too), and
+    // gives back the view it found and «Дизайн»'s «Пиксели» as they were.
+    int mb_laid_ = 0;
+    PixelEditor::Look mb_was_ = PixelEditor::Look::Code;
+    bool mb_was_folded_ = false;
     u32 mb_frames_ = 11;      // «В воздухе»'s frames as the last step left them
     f32 mb_x_ = 0, mb_y_ = 0; // where the mouse is held
     vector::Point mb_to_;     // where a dragged point of a part is to stand
@@ -20252,6 +20346,7 @@ return {
     }
     // An element scrolled into sight and laid out.
     void mb_into_view(const std::string& id) {
+        px_reveal(id.c_str());
         if (Rml::Element* e = ed_.find_element(id.c_str()); e && e->IsVisible(true)) {
             e->ScrollIntoView(Rml::ScrollAlignment::Nearest);
             ed_.context()->Update();
@@ -20259,6 +20354,7 @@ return {
     }
     // An element's box across the window: its left and right edges.
     bool mb_box(const std::string& id, f32& left, f32& right) {
+        px_reveal(id.c_str());
         Rml::Element* e = ed_.find_element(id.c_str());
         if (!e || !e->IsVisible(true)) return false;
         left = e->GetAbsoluteOffset(Rml::BoxArea::Border).x;
@@ -20329,10 +20425,32 @@ return {
         return out;
     }
     // Each frame of the selected clip as both views show it, one a call: the first clicks frame 1, each next reads the
-    // frame clicked and clicks the next. False when all are read.
+    // frame clicked and clicks the next. False when all are read. Part 7а: the vector's frame is as big as the view
+    // makes it, so the frames are read in one layout, whatever view the part left: «Дизайн» (Ctrl+1) with «Пиксели»
+    // open (its switch), the view found given back after.
     bool mb_look(std::string& out) {
         const u32 n = px().whole().frames;
+        if (mb_laid_ == 3) {
+            if (wait(2)) return true;
+            mb_laid_ = 0;
+            return false;
+        }
+        if (mb_k_ < 0 && mb_laid_ == 0) {
+            mb_was_ = px().look();
+            key(SDLK_1, SDL_KMOD_CTRL);
+            mb_was_folded_ = px().pixels_folded();
+            check(px().look() == PixelEditor::Look::Design, "Ctrl+1: «Дизайн», the layout the frames are read in");
+            mb_laid_ = 1;
+            return true;
+        }
+        if (mb_k_ < 0 && mb_laid_ == 1) {
+            if (wait(2)) return true;
+            if (px().pixels_folded()) check(pj_click("px-pixel-fold") && !px().pixels_folded(), "«Пиксели» opened");
+            mb_laid_ = 2;
+            return true;
+        }
         if (mb_k_ < 0) {
+            if (wait(2)) return true;
             out = mb_recorded();
             mb_k_ = 0;
             check(px_click("px-frame-0"), "frame 1 of the ruler");
@@ -20341,7 +20459,14 @@ return {
         if (wait(2)) return true;
         check(px().frame() == static_cast<u32>(mb_k_), "frame " + std::to_string(mb_k_ + 1) + " shown");
         out += "кадр " + std::to_string(mb_k_ + 1) + " " + tg_sha256(px().pixel_frame().rgba8) + " " + tg_sha256(px().vector_view().rgba8) + "\n";
-        if (static_cast<u32>(++mb_k_) >= n) return false;
+        if (static_cast<u32>(++mb_k_) >= n) {
+            // «Дизайн»'s «Пиксели» folded again if they were, the view found given back, laid out before the part goes on.
+            if (mb_was_folded_) check(pj_click("px-pixel-fold") && px().pixels_folded(), "«Пиксели» of «Дизайн» folded again");
+            if (mb_was_ != PixelEditor::Look::Design) key(static_cast<SDL_Keycode>(SDLK_1 + static_cast<int>(mb_was_)), SDL_KMOD_CTRL);
+            check(px().look() == mb_was_, "the view the part left given back");
+            mb_laid_ = 3;
+            return true;
+        }
         check(px_click("px-frame-" + std::to_string(mb_k_)), "frame " + std::to_string(mb_k_ + 1) + " of the ruler");
         return true;
     }
@@ -20907,7 +21032,8 @@ return {
             pixel::Pose rest;
             check(r.load(kPxHedgehog, why) && r.pose(rest, why), "the picture at rest " + why);
             f64 box[4];
-            r.bounds(r.part("leg_r"), 288, 288, box);
+            // The vector as big as its frame, the picture fitted in it (part 7а).
+            r.bounds(r.part("leg_r"), r.fit_in(px().vector_shown().width, px().vector_shown().height), box);
             std::set<std::pair<i64, i64>> dashed;
             const i64 x0 = std::lround(box[0]) - 2, y0 = std::lround(box[1]) - 2, x1 = std::lround(box[2]) + 2, y1 = std::lround(box[3]) + 2;
             for (i64 x = x0; x <= x1; ++x)
@@ -20923,7 +21049,7 @@ return {
                     lit += hover;
                     wrong += hover != (dashed.count({static_cast<i64>(x), static_cast<i64>(y)}) > 0);
                 }
-            check(v.width == 288 && lit == dashed.size() && wrong == 0,
+            check(px_fills_frame() && lit == dashed.size() && wrong == 0,
                   "«leg_r» outlined: " + std::to_string(lit) + " of " + std::to_string(dashed.size()) + " dashes' pixels, " + std::to_string(wrong) + " wrong");
             f32 x = 0, y = 0;
             check(element_center("px-time", x, y), "the player's time");
@@ -21207,7 +21333,7 @@ return {
         for (const pixel::Mark& m : rec->marks)
             if (m.kind == pixel::Mark::Kind::Sound && m.name == "шаг") ats.push_back(m.time);
         const usize cols = rows[0].columns.size();
-        const u32 high = static_cast<u32>(std::lround(24.0 * px().vector_view().width / 288.0));
+        const u32 high = static_cast<u32>(std::lround(24.0 * ed_.ui().dp_ratio())); // 24 points of the interface
         if (cols == 0 || img->width != cols || img->height != high)
             return "столбцов " + std::to_string(cols) + ", картинка " + std::to_string(img->width) + " × " + std::to_string(img->height);
         const f64 t0 = px().view().t(0), dt = 1 / px().view().per_second();
@@ -21238,9 +21364,10 @@ return {
         pixel::Pose pose;
         if (c == doc.clips.end()) return why = "нет «Покоя»", false;
         if (!pixel::frame_pose(script, rig, doc, *c, k, pose, why) || !rig.pose(pose, why)) return false;
-        const u32 side = px().vector_view().width;
-        const f64 s = side / 288.0, z = pixel::zoom_of(step);
-        out = rig.draw(side, side, pixel::Affine{z, 0, 0, z, ox * s, oy * s} * rig.to_pixels(side, side));
+        // The vector's frame in texels and points (part 7а: the frame is the vector's, the picture fitted in it).
+        const u32 tw = px().view_texels_w(), th = px().view_texels_h();
+        const f64 kx = tw / px().view_points_w(), ky = th / px().view_points_h(), z = pixel::zoom_of(step);
+        out = rig.draw(tw, th, pixel::Affine{z, 0, 0, z, ox * kx, oy * ky} * rig.fit_in(tw, th));
         return true;
     }
     bool mc_vector_is(u32 k, i32 step, f64 ox, f64 oy) {
@@ -21253,6 +21380,34 @@ return {
         const pixel::PictureView& v = px().picture_view();
         return v.step == step && std::fabs(v.ox - ox) <= within && std::fabs(v.oy - oy) <= within;
     }
+    // Part 7а: the vector fills its frame, as big as the layout makes it, the picture fitted in it and centred, so the
+    // view's numbers are counted from the frame. The picture's box at ×1 in the frame's points: x0, y0, x1, y1.
+    void mc_box(f64 b[4]) {
+        const f64 pw = px().view_points_w(), ph = px().view_points_h(), w = px().rig().width(), h = px().rig().height();
+        const f64 s = std::min(pw / w, ph / h);
+        b[0] = (pw - w * s) / 2, b[1] = (ph - h * s) / 2, b[2] = (pw + w * s) / 2, b[3] = (ph + h * s) / 2;
+    }
+    // Points of the frame a unit of the picture at ×1.
+    f64 mc_unit() {
+        f64 b[4];
+        mc_box(b);
+        return (b[2] - b[0]) / px().rig().width();
+    }
+    // The pan after a step of the wheel from step `from` to `to` round the frame's point `a` (part 3в): along a side
+    // where the picture at `to` is wider than the frame, the point under the mouse stays, as far as the picture's edges
+    // let it; along another, the picture stands in the middle (part 7а: a frame not square makes those sides differ).
+    void mc_wheel_pan(i32 from, i32 to, const f64 a[2], f64 o[2]) {
+        f64 b[4];
+        mc_box(b);
+        const f64 z0 = pixel::zoom_of(from), z1 = pixel::zoom_of(to), w[2] = {px().view_points_w(), px().view_points_h()};
+        for (int i = 0; i < 2; ++i) {
+            const f64 lo = z1 * b[i], hi = z1 * b[i + 2], n = a[i] - (a[i] - o[i]) * z1 / z0;
+            o[i] = hi - lo > w[i] ? std::clamp(n, w[i] - hi, -lo) : (w[i] - lo - hi) / 2;
+        }
+    }
+    // The pan of zooming to step `step` round the frame's middle from ×1.
+    f64 mc_mid_x(i32 step) { return px().view_points_w() / 2 * (1 - pixel::zoom_of(step)); }
+    f64 mc_mid_y(i32 step) { return px().view_points_h() / 2 * (1 - pixel::zoom_of(step)); }
     std::string mc_view_words() {
         const pixel::PictureView& v = px().picture_view();
         char buf[96];
@@ -21261,6 +21416,7 @@ return {
     }
     // A point of an element's content box shown w × h: its point (x, y) of that picture on the screen.
     bool mc_on(const char* id, f64 w, f64 h, f64 x, f64 y, f32& sx, f32& sy) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || !e->IsVisible(true)) return false;
         const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Content), size = e->GetBox().GetSize(Rml::BoxArea::Content);
@@ -21447,29 +21603,51 @@ return {
         }
         case 12:
             if (wait(3)) return true;
-            check(mc_view_is(0, 0, 0) && !shown("px-zoom") && mc_vector_is(6, 0, 0, 0),
-                  "×1, fitted, no zoom said: the vector as the library draws frame 7 (" + mc_view_words() + ")");
+            check(mc_view_is(0, 0, 0) && element_text("px-zoom") == "×1" && mc_vector_is(6, 0, 0, 0),
+                  "×1, fitted, «×1» between − and +: the vector as the library draws frame 7 (" + mc_view_words() + ")");
             key(SDLK_EQUALS, SDL_KMOD_NONE);
-            check(mc_view_is(1, -36, -36), "=: ×1,25 round the view's middle: " + mc_view_words());
+            check(mc_view_is(1, mc_mid_x(1), mc_mid_y(1)), "=: ×1,25 round the view's middle: " + mc_view_words());
             break;
         case 13:
             if (wait(2)) return true;
-            check(element_text("px-zoom") == "×1,25" && mc_vector_is(6, 1, -36, -36), "«×1,25» said; the vector as the library draws it there");
+            check(element_text("px-zoom") == "×1,25" && mc_vector_is(6, 1, mc_mid_x(1), mc_mid_y(1)), "«×1,25» said; the vector as the library draws it there");
             key(SDLK_MINUS, SDL_KMOD_NONE);
             check(mc_view_is(0, 0, 0), "−: ×1 again: " + mc_view_words());
             break;
         // The wheel round the mouse, the middle button.
         case 14: {
             if (wait(2)) return true;
-            check(!shown("px-zoom") && px().screen_of({100, 60}, mc_x_, mc_y_), "×1 not said; the point 100, 60 of the picture on the screen");
-            for (int i = 0; i < 3; ++i) mo_wheel(mc_x_, mc_y_, 1);
-            // The point stays where it was: 1,125 points of the view a unit at ×1, 1,953125 times that now.
-            const f64 ox = 112.5 * (1 - 1.953125), oy = 67.5 * (1 - 1.953125);
-            check(mc_view_is(3, ox, oy, 1e-3), "the wheel three notches up over it: ×1,95, pan " + std::to_string(ox) + "; " + std::to_string(oy) + ": " + mc_view_words());
+            check(element_text("px-zoom") == "×1" && px().screen_of({100, 60}, mc_x_, mc_y_), "«×1» said; the point 100, 60 of the picture on the screen");
+            // At ×1,95 the picture is wider and taller than this frame (else along that side it would stand in the middle).
+            f64 b[4];
+            mc_box(b);
+            const f64 z3 = pixel::zoom_of(3);
+            check(z3 * (b[2] - b[0]) > px().view_points_w() && z3 * (b[3] - b[1]) > px().view_points_h(),
+                  "at ×1,95 the picture outgrows the frame both ways: " + std::to_string(px().view_points_w()) + " × " +
+                      std::to_string(px().view_points_h()));
+            // The point 100, 60 in the frame's points, the mouse over it.
+            const f64 pw = px().view_points_w(), ph = px().view_points_h();
+            const vector::Point p = px().rig().fit_in(pw, ph).apply({100, 60});
+            const f64 at[2] = {p.x, p.y};
+            f64 o[2] = {0, 0};
             f32 x = 0, y = 0;
-            check(px().screen_of({100, 60}, x, y) && std::fabs(x - mc_x_) < 0.01f && std::fabs(y - mc_y_) < 0.01f, "the point under the mouse stays under it");
+            for (i32 k = 1; k <= 3; ++k) {
+                // The point of the picture under the mouse before the notch.
+                const vector::Point under = pixel::inverse(px().picture_view().affine() * px().rig().fit_in(pw, ph)).apply(p);
+                mo_wheel(mc_x_, mc_y_, 1);
+                mc_wheel_pan(k - 1, k, at, o);
+                check(mc_view_is(k, o[0], o[1], 1e-3),
+                      "the wheel a notch up over it: " + pixel::zoom_words(k) + ", pan " + std::to_string(o[0]) + "; " + std::to_string(o[1]) + ": " + mc_view_words());
+                // Along a side the picture outgrows now that point stays under the mouse.
+                const f64 z = pixel::zoom_of(k);
+                const bool wide = z * (b[2] - b[0]) > pw, tall = z * (b[3] - b[1]) > ph;
+                check(px().screen_of(under, x, y) && (!wide || std::fabs(x - mc_x_) < 0.01f) && (!tall || std::fabs(y - mc_y_) < 0.01f),
+                      "the point under the mouse stays under it where the picture outgrows the frame:" + std::string(wide ? " across" : "") + (tall ? " down" : ""));
+            }
+            f32 x0 = 0, y0 = 0;
+            check(px().screen_of({100, 60}, x0, y0), "the point 100, 60 on the screen at ×1,95");
             mc_pan(mc_x_, mc_y_, 40, 30);
-            check(px().screen_of({100, 60}, x, y) && std::fabs(x - mc_x_ - 40) < 0.01f && std::fabs(y - mc_y_ - 30) < 0.01f,
+            check(px().screen_of({100, 60}, x, y) && std::fabs(x - x0 - 40) < 0.01f && std::fabs(y - y0 - 30) < 0.01f,
                   "the middle button dragged by 40; 30: the picture with it: " + mc_view_words());
             break;
         }
@@ -21479,18 +21657,26 @@ return {
             check(mc_vector_is(6, v.step, v.ox, v.oy), "the vector as the library draws it at that zoom and pan");
             f32 cx = 0, cy = 0;
             check(element_center("px-vector", cx, cy), "the vector's middle");
+            f64 b[4];
+            mc_box(b);
+            const f64 z3 = pixel::zoom_of(3);
             mc_pan(cx, cy, 400, 400);
-            check(mc_view_is(3, 0, 0), "dragged far right and down: the picture's corner at the view's, no further: " + mc_view_words());
+            check(mc_view_is(3, -z3 * b[0], -z3 * b[1], 1e-9), "dragged far right and down: the picture's corner at the view's, no further: " + mc_view_words());
             mc_pan(cx, cy, -3000, -3000);
-            check(mc_view_is(3, -274.5, -274.5), "far left and up: its other corner at the view's (288 − 562,5): " + mc_view_words());
+            check(mc_view_is(3, px().view_points_w() - z3 * b[2], px().view_points_h() - z3 * b[3], 1e-9),
+                  "far left and up: its other corner at the view's: " + mc_view_words());
             break;
         }
-        case 16:
+        case 16: {
             if (wait(2)) return true;
-            check(mc_vector_is(6, 3, -274.5, -274.5), "the vector drawn so");
+            f64 b[4];
+            mc_box(b);
+            const f64 z3 = pixel::zoom_of(3);
+            check(mc_vector_is(6, 3, px().view_points_w() - z3 * b[2], px().view_points_h() - z3 * b[3]), "the vector drawn so");
             for (int i = 0; i < 12; ++i) key(SDLK_EQUALS, SDL_KMOD_NONE);
             check(px().picture_view().step == pixel::kZoomTop, "= twelve times: ×16 the top: " + mc_view_words());
             break;
+        }
         case 17:
             if (wait(2)) return true;
             check(element_text("px-zoom") == "×16", "«×16» said");
@@ -21499,7 +21685,7 @@ return {
             break;
         case 18: {
             if (wait(2)) return true;
-            check(!shown("px-zoom") && mc_vector_is(6, 0, 0, 0), "×1 not said; the vector as at first");
+            check(element_text("px-zoom") == "×1" && mc_vector_is(6, 0, 0, 0), "«×1» said; the vector as at first");
             key(SDLK_MINUS, SDL_KMOD_NONE);
             check(mc_view_is(0, 0, 0), "− at ×1: ×1 the floor: " + mc_view_words());
             f32 cx = 0, cy = 0;
@@ -21507,7 +21693,7 @@ return {
             mc_pan(cx, cy, 50, 50);
             check(mc_view_is(0, 0, 0), "the middle button at ×1: no pan: " + mc_view_words());
             for (int i = 0; i < 6; ++i) key(SDLK_EQUALS, SDL_KMOD_NONE);
-            check(mc_view_is(6, 144 * (1 - pixel::zoom_of(6)), 144 * (1 - pixel::zoom_of(6))), "= six times: ×3,81 round the middle: " + mc_view_words());
+            check(mc_view_is(6, mc_mid_x(6), mc_mid_y(6)), "= six times: ×3,81 round the middle: " + mc_view_words());
             key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
             check(px().grid(), "': the grid at ×3,81");
             break;
@@ -21517,13 +21703,13 @@ return {
             if (wait(2)) return true;
             const pixel::PictureView& v = px().picture_view();
             check(element_text("px-zoom") == "×3,81" && mc_vector_is(6, v.step, v.ox, v.oy), "«×3,81» said; the vector drawn so");
-            // The grid at ×3,81: 4,29 points a unit, a line every 2 units.
-            const u32 side = px().vector_view().width;
-            const f64 s = side / 288.0, z = pixel::zoom_of(6);
-            const pixel::Affine texels = pixel::Affine{z, 0, 0, z, v.ox * s, v.oy * s} * px().rig().to_pixels(side, side);
-            check(pixel::grid_step(texels.a / s) == 2, "4,29 points a unit: a line every 2 units");
+            // The grid at ×3,81: 3,81 · mc_unit() points a unit, 4 … 8 in this frame, so a line every 2 units.
+            const u32 tw = px().view_texels_w(), th = px().view_texels_h();
+            const f64 kx = tw / px().view_points_w(), ky = th / px().view_points_h(), z = pixel::zoom_of(6), unit = z * mc_unit();
+            const pixel::Affine texels = pixel::Affine{z, 0, 0, z, v.ox * kx, v.oy * ky} * px().rig().fit_in(tw, th);
+            check(unit >= 4 && unit < 8 && pixel::grid_step(texels.a / kx) == 2, std::to_string(unit) + " points a unit: a line every 2 units");
             assets::CookedTexture grid = px().vector_view();
-            pixel::draw_grid(grid, texels, 2, static_cast<u32>(std::max<i64>(1, std::lround(s))));
+            pixel::draw_grid(grid, texels, 2, static_cast<u32>(std::max<i64>(1, std::lround(kx))));
             check(px_same(px().vector_shown(), grid), "the vector shown: the picture and the grid over it as counted at ×3,81");
             key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
             check(!px().grid(), "' again: no grid");
@@ -21586,16 +21772,19 @@ return {
         }
         case 25: {
             if (wait(2)) return true;
-            const u32 side = px().vector_view().width;
+            const u32 tw = px().view_texels_w(), th = px().view_texels_h();
+            const f64 kx = tw / px().view_points_w(), unit = mc_unit();
             assets::CookedTexture want = px().vector_view();
-            const pixel::Affine texels = px().rig().to_pixels(side, side);
-            check(pixel::grid_step(texels.a * 288 / side) == 10, "1,125 points a unit: a line every 10 units");
-            pixel::draw_grid(want, texels, 10, static_cast<u32>(std::max<i64>(1, std::lround(side / 288.0))));
+            const pixel::Affine texels = px().rig().fit_in(tw, th);
+            check(unit >= 0.8 && unit < 1.6 && pixel::grid_step(texels.a / kx) == 10, std::to_string(unit) + " points a unit: a line every 10 units");
+            pixel::draw_grid(want, texels, 10, static_cast<u32>(std::max<i64>(1, std::lround(kx))));
             check(pj_class("px-grid", "selected") && px_same(px().vector_shown(), want), "the vector shown: the picture and the grid over it as counted");
-            // A line at x = 10 in column 11 (11,25), at y = 10 in row 11; between them the picture; x = 0 stronger.
-            const auto r = [&](u32 x, u32 y) { return static_cast<int>(px().vector_shown().rgba8[(static_cast<usize>(y) * side + x) * 4]); };
-            const int plate = r(5, 108), line = r(11, 108), across = r(5, 11), axis = r(0, 108);
-            check(side == 288 && plate == 0xf0 && std::abs(line - 128) < std::abs(plate - 128) && across == line && std::abs(axis - 128) < std::abs(line - 128),
+            // The line at x = 10 in its column, at y = 10 in its row; between them the picture; x = 0 stronger.
+            const auto col = [&](f64 x) { return static_cast<u32>(std::floor(texels.apply({x, 0}).x)); };
+            const auto row = [&](f64 y) { return static_cast<u32>(std::floor(texels.apply({0, y}).y)); };
+            const auto r = [&](u32 x, u32 y) { return static_cast<int>(px().vector_shown().rgba8[(static_cast<usize>(y) * tw + x) * 4]); };
+            const int plate = r(col(4.5), row(96)), line = r(col(10), row(96)), across = r(col(4.5), row(10)), axis = r(col(0), row(96));
+            check(px_fills_frame() && plate == 0xf0 && std::abs(line - 128) < std::abs(plate - 128) && across == line && std::abs(axis - 128) < std::abs(line - 128),
                   "the plate " + std::to_string(plate) + " between the lines, " + std::to_string(line) + " on them, " + std::to_string(axis) + " on x = 0");
             key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
             check(!px().grid(), "' again: no grid");
@@ -21636,16 +21825,20 @@ return {
             check(px().grid() && px().screen_of({40.5, 50}, mc_x_, mc_y_), "the grid on; c0 where the lines x = 40 and y = 50 cross it");
             mouse(SDL_EVENT_MOUSE_MOTION, mc_x_, mc_y_);
             break;
-        case 30:
+        case 30: {
             if (wait(2)) return true;
             check(px().picked() == "#f0e8d0" && element_text("px-picked") == "#f0e8d0" && px().coords() == "40.5, 50",
                   "over c0 in the vector: «#f0e8d0» of the picture, not of the grid: «" + px().picked() + "», at «" + px().coords() + "»");
-            check(px().vector_shown().width == 288 && px().vector_shown().rgba8[(56 * 288 + 45) * 4] != 0xf0, "the grid's lines there in the vector shown");
+            const u32 tw = px().view_texels_w(), th = px().view_texels_h();
+            const pixel::Affine t = px().rig().fit_in(tw, th);
+            const usize at = static_cast<usize>(std::floor(t.apply({0, 50}).y)) * tw + static_cast<usize>(std::floor(t.apply({40, 0}).x));
+            check(px_fills_frame() && px().vector_shown().rgba8[at * 4] != 0xf0, "the grid's lines there in the vector shown");
             key(SDLK_APOSTROPHE, SDL_KMOD_NONE);
             check(!px().grid(), "the grid off");
             check(px().screen_of({128, 50}, mc_x_, mc_y_), "c1 on the screen");
             mouse(SDL_EVENT_MOUSE_MOTION, mc_x_, mc_y_);
             break;
+        }
         // The pixel view, scrolled into sight first (the column of views scrolls).
         case 31:
             if (wait(2)) return true;
@@ -23558,7 +23751,7 @@ return {
             check(mo_load(dd, r, script, why) && dd.clips.size() == 1 && pixel::frame_pose(script, r, dd, dd.clips[0], 2, pose, why) && r.pose(pose, why) &&
                       r.copy("spark[3]") >= 0,
                   "frame 3 posed apart from the tab " + why);
-            r.bounds(r.copy("spark[3]"), 288, 288, box);
+            r.bounds(r.copy("spark[3]"), r.fit_in(px().vector_shown().width, px().vector_shown().height), box);
             std::set<std::pair<i64, i64>> dashed;
             const i64 x0 = std::lround(box[0]) - 2, y0 = std::lround(box[1]) - 2, x1 = std::lround(box[2]) + 2, y1 = std::lround(box[3]) + 2;
             for (i64 x = x0; x <= x1; ++x)
@@ -23574,7 +23767,7 @@ return {
                     lit += hover;
                     wrong += hover != (dashed.count({static_cast<i64>(x), static_cast<i64>(y)}) > 0);
                 }
-            check(v.width == 288 && px().frame() == 2 && lit == dashed.size() && wrong == 0,
+            check(px_fills_frame() && px().frame() == 2 && lit == dashed.size() && wrong == 0,
                   "«spark[3]» outlined: " + std::to_string(lit) + " of " + std::to_string(dashed.size()) + " dashes' pixels, " + std::to_string(wrong) + " wrong");
             check(ue_type("px-block-length", "1,5"), "1,5 typed into «Длина»");
             // The fan 1,5 s, the spark's way up 1,25 s: the clip 2,5 s, ten frames four a second.
@@ -26408,8 +26601,7 @@ return {
         if (!rig.pose(pose, why, scale > 0 ? 1 / scale : 0)) return false;
         out.px = rig.bake(doc.frame_w, doc.frame_h, pixel::bake_options(doc, {}));
         if (!rig.pose(pose, why)) return false;
-        const u32 side = px().vector_view().width;
-        out.vec = rig.draw(side, side, rig.to_pixels(side, side));
+        out.vec = rig.draw(px().view_texels_w(), px().view_texels_h()); // the vector's frame (part 7а)
         return true;
     }
     // The flag of the row «Начало»: its words and its title.
@@ -26847,6 +27039,7 @@ return {
         return mm_replaced(c, "copies(\"dust\", 2,", "copies(\"dust\", p.count,");
     }
     f32 mm_width(const char* id) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         return e && e->IsVisible(true) ? e->GetBox().GetSize(Rml::BoxArea::Border).x : 0;
     }
@@ -27628,8 +27821,8 @@ return {
     bool sc_view(f64 t, assets::CookedTexture& out, std::string& why, std::span<const f64> held = {}, i32 waiting = -1) {
         pixel::Scene s;
         if (!sc_apart(s, t, why, held, waiting)) return false;
-        const u32 side = px().vector_view().width;
-        out = s.draw(side, side, s.rig().to_pixels(side, side));
+        const u32 tw = px().view_texels_w(), th = px().view_texels_h(); // the vector's frame (part 7а)
+        out = s.draw(tw, th, s.rig().fit_in(tw, th));
         return true;
     }
     static void sc_over(assets::CookedTexture& dst, const assets::CookedTexture& src, u32 x0 = 0, u32 y0 = 0) {
@@ -28620,6 +28813,7 @@ return {
     }
     // A double click 10 points in from an element's left edge, half way down it (a flag runs on past the row's end).
     bool sv_double_left(const char* id) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || !e->IsVisible(true)) return false;
         const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
@@ -31438,6 +31632,811 @@ return {
         const std::vector<u8> air = tg_bytes(mo_root() / utf8_path("скакун.air.svg"));
         e.ms_drawing_svg.assign(air.begin(), air.end());
         return e;
+    }
+
+    // --- «Векторная», step 7, part 7а «Раскладка» (docs/models/движение-модель.md) ----------------------------------
+    // In an editor for «Движение А» after pixel-scene-j (--self-test pixel-look-a), with the mouse and the keys: nothing
+    // open shows «Файлы»; «Ёжик» opened from them shows «Слои», in «Код», the run's first view. In each view: its panels
+    // shown and the others' not, its vector filling its frame, fitted as the library draws the frame from the files,
+    // the grid, the point under the mouse, a part dragged (under the mouse while held, one step, undone byte for byte).
+    // A change of view keeps the frame, the part chosen, the zoom's step, the picture's point in the view's middle, the
+    // history and the files; back in «Дизайн» its vector byte for byte. The right panel's tab set by what is chosen; a
+    // block's call in «Код» by a double click; «Рука» (H) pans as the middle button; «Пиксели» as big as their column
+    // makes them, the frame in its real size only where it fits; the bottom panel's height dragged in «Дизайн» (120 …
+    // the height − 160, kept
+    // by its view), the code's share in «Код» (30 … 70 %). A warning in the script, then an error: «Проблемы N» as many
+    // as the console's errors and warnings, the bottom tab as it was, a click on one its line in «Код», Ctrl+1 from the
+    // code. «Экспорт»
+    // in place of the right's tabs: «Запечь» as the library bakes each frame, «Снимок кадра» as it bakes the frame; Esc,
+    // its cross and its button close it. Windows of 1400 × 850, 1100 × 700 and 960 × 640: each view, and «Экспорт»,
+    // laid out, the panels as wide as the window makes them, the code over the vector under 1200. «Сцена 2» from
+    // «Файлы» in the last view: no shapes, «Рука», an actor's clip in «Анимация», no frame in its real size, its
+    // «Экспорт» with «Снимок кадра» and «Отдать игре», given as the library builds it. The game's files byte for byte
+    // as at the start.
+    // Again with --ui-scale 1.5 in a window of 1600 × 900 pixels (1067 × 600 of the interface): «Ёжик» zoomed and
+    // panned as the library draws it; «Ёжик» and «Сцена 2», each opened from «Файлы» while the other is open («Слои»),
+    // in each view and with «Экспорт» laid out, the panels and the buttons inside the window and their panels, none
+    // over another.
+    int lk_step_ = 0, lk_sub_ = 0, lk_look_ = 0;
+    std::map<std::string, std::vector<u8>> lk_tree_;
+    std::vector<u8> lk_doc_, lk_lua_, lk_vec_;
+    pixel::PictureView lk_view_;
+    vector::Point lk_mid_;
+    u32 lk_frame_ = 0;
+    usize lk_cursor_ = 0;
+    std::string lk_part_, lk_label_;
+    f64 lk_height_ = 0, lk_want_ = 0;
+    static constexpr const char* kLkDoc = "персонажи/Ёжик.pixel.json";
+    static constexpr const char* kLkLua = "персонажи/Ёжик.luau";
+    // The views in the order they are first looked at: «Код» (the run's first), «Дизайн», «Анимация».
+    static constexpr PixelEditor::Look kLkLooks[3] = {PixelEditor::Look::Code, PixelEditor::Look::Design, PixelEditor::Look::Animation};
+    // A point of «torso» at rest in its rectangle only (under the head, over the legs).
+    static inline const vector::Point kLkTorso{16, 35};
+    // The windows of the narrow tiers, in the window's pixels (at scale 1: px of the interface).
+    static inline const std::vector<std::array<u32, 2>> kLkNarrow = {{1400, 850}, {1100, 700}, {960, 640}};
+    static inline const std::vector<std::array<u32, 2>> kLkScaled = {{1600, 900}};
+
+    f64 lk_dp() { return ed_.context()->GetDensityIndependentPixelRatio(); }
+    // The window's width in px of the interface.
+    f64 lk_units_w() { return ed_.context()->GetDimensions().x / lk_dp(); }
+    bool lk_scaled() { return lk_dp() > 1.01; }
+    static const char* lk_name(PixelEditor::Look l) {
+        return l == PixelEditor::Look::Design ? "«Дизайн»" : l == PixelEditor::Look::Code ? "«Код»" : "«Анимация»";
+    }
+    void lk_key(PixelEditor::Look l) { key(static_cast<SDL_Keycode>(SDLK_1 + static_cast<int>(l)), SDL_KMOD_CTRL); }
+    // Shown as the tab is now: no switch clicked first (px_reveal is for what a check reads or clicks).
+    bool lk_on(const char* id) {
+        Rml::Element* e = ed_.find_element(id);
+        return e && e->IsVisible(true);
+    }
+    // An element's border box in the window's pixels: x0, y0, x1, y1.
+    static std::array<f32, 4> lk_box(Rml::Element* e) {
+        const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
+        return {at.x, at.y, at.x + size.x, at.y + size.y};
+    }
+    bool lk_box(const char* id, std::array<f32, 4>& b) {
+        Rml::Element* e = ed_.find_element(id);
+        if (!e || !e->IsVisible(true)) return false;
+        b = lk_box(e);
+        return true;
+    }
+    static std::string lk_words(const std::array<f32, 4>& b) {
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "%.1f, %.1f – %.1f, %.1f", b[0], b[1], b[2], b[3]);
+        return buf;
+    }
+    // Pressed in the middle of an element, moved by dx, dy in four moves and let go (the grips).
+    bool lk_drag(const char* id, f32 dx, f32 dy) {
+        f32 x = 0, y = 0;
+        if (!element_center(id, x, y)) return false;
+        mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+        mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+        for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x + dx * static_cast<f32>(i) / 4, y + dy * static_cast<f32>(i) / 4);
+        mouse(SDL_EVENT_MOUSE_BUTTON_UP, x + dx, y + dy);
+        return true;
+    }
+    // The picture's point in the middle of the vector's frame.
+    vector::Point lk_middle() {
+        const f64 pw = px().view_points_w(), ph = px().view_points_h();
+        return pixel::inverse(px().picture_view().affine() * px().rig().fit_in(pw, ph)).apply({pw / 2, ph / 2});
+    }
+    // The picture to the vector's texels at the view's zoom and pan, the picture fitted in the frame (the model's rule).
+    pixel::Affine lk_texels(const pixel::Rig& rig) {
+        const pixel::PictureView& v = px().picture_view();
+        const u32 tw = px().view_texels_w(), th = px().view_texels_h();
+        const f64 kx = tw / px().view_points_w(), ky = th / px().view_points_h();
+        return pixel::Affine{v.zoom(), 0, 0, v.zoom(), v.ox * kx, v.oy * ky} * rig.fit_in(tw, th);
+    }
+    // The frame shown of the open character as the files on disk have it, drawn apart from the tab (mo_load) at the
+    // view's zoom and pan, as big as the vector's frame.
+    bool lk_library(assets::CookedTexture& out, std::string& why) {
+        pixel::PixelDoc doc;
+        pixel::Rig rig;
+        pixel::PoseScript script;
+        if (!mo_load(doc, rig, script, why)) return false;
+        const auto c = std::find_if(doc.clips.begin(), doc.clips.end(), [&](const pixel::ClipSpec& x) { return x.state == px().clip(); });
+        if (c == doc.clips.end()) return why = "нет клипа «" + px().clip() + "»", false;
+        pixel::ClipSpec spec = *c;
+        spec.ranged = false, spec.from = spec.to = 0;
+        pixel::Pose pose;
+        if (!pixel::frame_pose(script, rig, doc, spec, px().frame(), pose, why) || !rig.pose(pose, why)) return false;
+        out = rig.draw(px().view_texels_w(), px().view_texels_h(), lk_texels(rig));
+        return true;
+    }
+    bool lk_drawn(std::string& why) {
+        assets::CookedTexture want;
+        return lk_library(want, why) && px_same(px().vector_view(), want);
+    }
+    // The vector with the grid over it, as counted: a line every grid_step of the points a unit, as thick as the
+    // interface's pixel.
+    assets::CookedTexture lk_gridded() {
+        assets::CookedTexture want = px().vector_view();
+        const f64 points = px().picture_view().zoom() * px().rig().fit_in(px().view_points_w(), px().view_points_h()).a;
+        pixel::draw_grid(want, lk_texels(px().rig()), pixel::grid_step(points), static_cast<u32>(std::max<i64>(1, std::lround(lk_dp()))));
+        return want;
+    }
+    // What the view shows and hides (the model's table «Три вида»), the panels' tabs as they are, the vector filling its
+    // frame; with `shares`, the bottom panel's share and the code's while not dragged (in the window of 1600 × 900).
+    // "" when so, else what is not.
+    std::string lk_view(PixelEditor::Look l, bool shares) {
+        using L = PixelEditor::Look;
+        std::string bad;
+        auto want = [&](const char* id, bool on) {
+            if (lk_on(id) != on) bad += std::string(on ? " нет #" : " виден #") + id;
+        };
+        for (const char* id : {"px-bar", "px-rail", "px-left", "px-center", "px-canvas-head", "px-vector", "px-view-line", "px-pixel-col",
+                               "px-tl-grip", "px-tl-panel", "px-side", "px-tool-select", "px-tool-hand"})
+            want(id, true);
+        want("px-code", l == L::Code);
+        want("px-code-split", l == L::Code);
+        want("px-pixel", !px().pixels_folded());
+        want("px-layers", px().left() == "layers");
+        want("px-files", px().left() == "files");
+        want("px-props", !px().export_open() && px().side() == "props");
+        want("px-anim", !px().export_open() && px().side() == "anim");
+        want("px-side-props", !px().export_open());
+        want("px-export-panel", px().export_open());
+        want("px-tl-pane", px().bottom() == "timeline");
+        want("px-problems", px().bottom() == "problems");
+        want("px-console-pane", px().bottom() == "console");
+        want("px-tools", !px().in_scene());
+        const char* looks[3] = {"px-look-design", "px-look-code", "px-look-animation"}; // by the Look's order
+        for (usize i = 0; i < 3; ++i)
+            if (pj_class(looks[i], "selected") != (static_cast<usize>(l) == i)) bad += std::string(" ") + looks[i] + (static_cast<usize>(l) == i ? " не нажат" : " нажат");
+        if (pj_class("px-export", "filled") != px().export_open()) bad += " «Экспорт» не по панели";
+        if (px().look() != l) bad += " вид другой";
+        if (!px_fills_frame()) bad += " вектор не во всю рамку";
+        std::array<f32, 4> up{}, tl{}, code{}, in{};
+        if (shares && px().bottom_height() <= 0 && lk_box("px-upper", up) && lk_box("px-tl-panel", tl)) {
+            const f64 share = (tl[3] - tl[1]) / ((up[3] - up[1]) + (tl[3] - tl[1])), wanted = l == L::Animation ? 0.58 : 0.34;
+            if (std::fabs(share - wanted) > 0.005) bad += " нижняя панель " + std::to_string(share) + " высоты";
+        }
+        if (shares && l == L::Code && px().code_share() <= 0 && lk_box("px-code", code) && lk_box("px-center-in", in)) {
+            const f64 share = (code[2] - code[0]) / (in[2] - in[0]);
+            if (std::fabs(share - 0.48) > 0.005) bad += " код " + std::to_string(share) + " ширины";
+        }
+        return bad + lk_pixels();
+    }
+    // «Пиксели» as their column makes them: the frame as many whole times bigger as fit in its box (smaller to fit when
+    // it is bigger), in its real size under it only while that fits in the column too, the frame's height left above it.
+    // "" when so (or folded, or a scene's «Через камеру»).
+    std::string lk_pixels() {
+        if (px().pixels_folded() || px().in_scene()) return "";
+        const assets::CookedTexture& f = px().pixel_frame();
+        Rml::Element* col = ed_.find_element("px-pixel-col");
+        Rml::Element* pix = ed_.find_element("px-pixel");
+        Rml::Element* img = ed_.find_element("px-pixel-img");
+        std::array<f32, 4> head{};
+        if (f.width == 0 || !col || !pix || !img || !img->IsVisible(true) || !lk_box("px-pixel-head", head)) return " «Пиксели» не показаны";
+        const Rml::Vector2f c = col->GetBox().GetSize(Rml::BoxArea::Content), b = pix->GetBox().GetSize(Rml::BoxArea::Content),
+                            i = img->GetBox().GetSize(Rml::BoxArea::Border);
+        const f32 gap = 4 * static_cast<f32>(lk_dp()), room_w = std::floor(c.x), room_h = std::floor(std::max(0.0f, c.y - (head[3] - head[1]) - gap));
+        const bool one = static_cast<f32>(f.width) <= room_w && 2.0f * static_cast<f32>(f.height) + gap <= room_h;
+        const f32 fit = std::min(std::floor(b.x) / static_cast<f32>(f.width), std::floor(b.y) / static_cast<f32>(f.height));
+        const f32 w = fit >= 1 ? static_cast<f32>(f.width * static_cast<u32>(fit)) : std::max(1.0f, std::floor(static_cast<f32>(f.width) * fit)),
+                  h = fit >= 1 ? static_cast<f32>(f.height * static_cast<u32>(fit)) : std::max(1.0f, std::floor(static_cast<f32>(f.height) * fit));
+        std::string bad;
+        if (std::fabs(i.x - w) > 0.5f || std::fabs(i.y - h) > 0.5f)
+            bad += " кадр «Пикселей» " + std::to_string(i.x) + " × " + std::to_string(i.y) + " вместо " + std::to_string(w) + " × " + std::to_string(h);
+        if (lk_on("px-one") != one) bad += one ? " нет кадра в настоящем размере" : " кадр в настоящем размере не влезает";
+        return bad;
+    }
+    // The panels as wide as the window's width makes them (the model's «Узкое окно»), the path without its kind and the
+    // code over the vector under 1200; "" when so.
+    std::string lk_widths() {
+        const f64 w = lk_units_w();
+        const f64 want[3] = {w >= 1550 ? 50.0 : 42.0 + (w >= 1200 ? 4 : 0), w >= 1550 ? 236.0 : w >= 1200 ? 216 : w >= 980 ? 184 : 164,
+                             w >= 1550 ? 296.0 : w >= 1200 ? 270 : w >= 980 ? 238 : 218};
+        std::string bad;
+        const char* ids[3] = {"px-rail", "px-left", "px-side"};
+        for (usize i = 0; i < 3; ++i) {
+            std::array<f32, 4> b{};
+            const f64 got = lk_box(ids[i], b) ? (b[2] - b[0]) / lk_dp() : -1;
+            if (std::fabs(got - want[i]) > 0.5) bad += std::string(" #") + ids[i] + " " + std::to_string(got) + " вместо " + std::to_string(want[i]);
+        }
+        Rml::Element* path = ed_.find_element("px-path");
+        if (!path || path->GetNumChildren() < 2 || path->GetChild(0)->IsVisible(true) != (w >= 1200)) bad += " путь не по ширине";
+        std::array<f32, 4> code{}, stage{};
+        if (px().look() == PixelEditor::Look::Code && lk_box("px-code", code) && lk_box("px-stage", stage) &&
+            (code[3] <= stage[1] + 0.5f) != (w < 1200))
+            bad += w < 1200 ? " код не над вектором" : " код над вектором";
+        return bad;
+    }
+    // The panels inside the window and not over each other; every button shown inside the window and its panel and
+    // over no other; a button in a pane that scrolls is kept to its pane's width, the pane scrolling it up and down,
+    // and is only not over another of its pane. "" when so, else what is not.
+    std::string lk_laid_out() {
+        std::string bad;
+        Rml::Element* body = ed_.find_element("px-body");
+        if (!body || !body->IsVisible(true)) return " нет вкладки";
+        const Rml::Vector2i size = ed_.context()->GetDimensions();
+        using Box = std::array<f32, 4>;
+        auto inside = [](const Box& a, const Box& b) { return a[0] >= b[0] - 0.5f && a[1] >= b[1] - 0.5f && a[2] <= b[2] + 0.5f && a[3] <= b[3] + 0.5f; };
+        auto across = [](const Box& a, const Box& b) { return a[0] >= b[0] - 0.5f && a[2] <= b[2] + 0.5f; };
+        auto over = [](const Box& a, const Box& b) {
+            return std::min(a[2], b[2]) - std::max(a[0], b[0]) > 0.5f && std::min(a[3], b[3]) - std::max(a[1], b[1]) > 0.5f;
+        };
+        const Box window{0, 0, static_cast<f32>(size.x), static_cast<f32>(size.y)};
+        std::vector<std::pair<Rml::Element*, Box>> panels;
+        for (const char* id : {"px-bar", "px-rail", "px-left", "px-center", "px-tl-panel", "px-side"}) {
+            Rml::Element* e = ed_.find_element(id);
+            if (!e || !e->IsVisible(true)) {
+                bad += std::string(" нет #") + id;
+                continue;
+            }
+            panels.push_back({e, lk_box(e)});
+            if (!inside(panels.back().second, window)) bad += std::string(" #") + id + " за окном (" + lk_words(panels.back().second) + ")";
+        }
+        for (usize i = 0; i < panels.size(); ++i)
+            for (usize j = i + 1; j < panels.size(); ++j)
+                if (over(panels[i].second, panels[j].second)) bad += " #" + panels[i].first->GetId() + " на #" + panels[j].first->GetId();
+        struct Button {
+            Rml::Element* e;
+            Box b;
+            Rml::Element* pane;
+            Rml::Element* panel;
+        };
+        std::vector<Button> buttons;
+        for (const char* cls : {"button", "icon-button", "an-chip", "an-check", "px-tab", "px-look", "px-tool"}) {
+            Rml::ElementList all;
+            body->GetElementsByClassName(all, cls);
+            for (Rml::Element* e : all) {
+                if (!e->IsVisible(true) || std::any_of(buttons.begin(), buttons.end(), [&](const Button& b) { return b.e == e; })) continue;
+                Button b{e, lk_box(e), nullptr, nullptr};
+                for (Rml::Element* a = e->GetParentNode(); a && a != body; a = a->GetParentNode()) {
+                    if (!b.pane && a->IsClassSet("px-pane")) b.pane = a;
+                    for (const auto& p : panels)
+                        if (a == p.first && !b.panel) b.panel = a;
+                }
+                buttons.push_back(b);
+            }
+        }
+        auto name = [](Rml::Element* e) {
+            if (!e->GetId().empty()) return "#" + e->GetId();
+            for (Rml::Element* a = e->GetParentNode(); a; a = a->GetParentNode())
+                if (!a->GetId().empty()) return "." + e->GetClassNames() + " в #" + a->GetId();
+            return "." + e->GetClassNames();
+        };
+        for (const Button& b : buttons) {
+            if (!b.panel) {
+                bad += " " + name(b.e) + " вне панелей";
+                continue;
+            }
+            const Box room = lk_box(b.pane ? b.pane : b.panel);
+            if (b.pane ? !across(b.b, room) : !inside(b.b, room) || !inside(b.b, window))
+                bad += " " + name(b.e) + " (" + lk_words(b.b) + ") вне " + (b.pane ? "ширины своей панели" : "своей панели") + " (" + lk_words(room) + ")";
+        }
+        for (usize i = 0; i < buttons.size(); ++i)
+            for (usize j = i + 1; j < buttons.size(); ++j)
+                if (buttons[i].pane == buttons[j].pane && over(buttons[i].b, buttons[j].b)) bad += " " + name(buttons[i].e) + " на " + name(buttons[j].e);
+        return bad;
+    }
+    // Each of the windows in «Код», «Дизайн», «Анимация» and «Дизайн» with «Экспорт» open, a combination every few
+    // frames: laid out, the panels as wide as the window makes them. True while it goes on; the window whole after.
+    bool lk_windows(const std::vector<std::array<u32, 2>>& sizes) {
+        const usize n = sizes.size() * 4;
+        auto look_of = [](usize k) { return k % 4 == 3 ? PixelEditor::Look::Design : kLkLooks[k % 4]; };
+        if (lk_sub_ == 0) {
+            ed_.narrow_w = sizes[0][0], ed_.narrow_h = sizes[0][1];
+            lk_key(look_of(0));
+            lk_sub_ = 1;
+            return true;
+        }
+        if (wait(4)) return true;
+        const usize k = static_cast<usize>(lk_sub_ - 1);
+        const std::string at = std::to_string(sizes[k / 4][0]) + " × " + std::to_string(sizes[k / 4][1]) + " " + lk_name(look_of(k)) +
+                               (k % 4 == 3 ? " с «Экспортом»" : "");
+        const std::string view = lk_view(look_of(k), false), widths = lk_widths(), laid = lk_laid_out();
+        check(px().export_open() == (k % 4 == 3) && view.empty() && widths.empty() && laid.empty(),
+              at + ": its panels, as wide as the window makes them, inside it and their panels, none over another;" + view + widths + laid);
+        if (k % 4 == 3) check(pj_click("px-export") && !px().export_open(), at + ": «Экспорт» closed");
+        if (static_cast<usize>(lk_sub_) == n) {
+            ed_.narrow_w = ed_.narrow_h = 0;
+            lk_sub_ = 0;
+            return false;
+        }
+        const usize next = static_cast<usize>(lk_sub_);
+        ed_.narrow_w = sizes[next / 4][0], ed_.narrow_h = sizes[next / 4][1];
+        if (next % 4 == 3) check(pj_click("px-export") && px().export_open(), at + ": «Экспорт» opened");
+        lk_key(look_of(next));
+        ++lk_sub_;
+        return true;
+    }
+    // What a change of view keeps: "" when so.
+    std::string lk_same() {
+        std::string bad;
+        const vector::Point mid = lk_middle();
+        if (px().frame() != lk_frame_) bad += " кадр " + std::to_string(px().frame() + 1);
+        if (px().part() != lk_part_) bad += " часть «" + px().part() + "»";
+        if (px().picture_view().step != lk_view_.step) bad += " шаг масштаба " + std::to_string(px().picture_view().step);
+        if (std::fabs(mid.x - lk_mid_.x) > 1e-6 || std::fabs(mid.y - lk_mid_.y) > 1e-6) bad += " середина вида " + pixel::coords_words(mid);
+        if (an().history().cursor() != lk_cursor_ || an().history().undo_label() != lk_label_) bad += " история «" + an().history().undo_label() + "»";
+        if (tg_bytes(as().abs(kLkDoc)) != lk_doc_ || tg_bytes(as().abs(kLkLua)) != lk_lua_) bad += " файлы";
+        if (!px_fills_frame()) bad += " вектор не во всю рамку";
+        return bad;
+    }
+
+    bool pixel_look_a_step() {
+        namespace fs = std::filesystem;
+        const fs::path a = pjw().config().root;
+        const bool idle = !as().busy() && !as().looking();
+        const pixel::Recording* rec = px().recording();
+        const PixelEditor::Look l = kLkLooks[lk_look_];
+        auto file = [&](const std::string& rel) { return tg_bytes(as().abs(rel)); };
+        auto step_label = [&] { return an().history().undo_label(); };
+        auto cursor = [&] { return an().history().cursor(); };
+        auto listed_at = [&](const std::string& rel) {
+            const std::vector<std::string>& v = px().listed();
+            const auto it = std::find(v.begin(), v.end(), rel);
+            return it == v.end() ? -1 : static_cast<int>(it - v.begin());
+        };
+        auto recorded = [&] { return rec && !px().stale() && lk_on("px-vector-img"); };
+        switch (lk_step_) {
+        case 0:
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            lk_tree_ = pj_tree(a);
+            check(!lk_tree_.empty() && click_tab(3) && ed_.tab() == "animation", "«Анимация»");
+            break;
+        case 1:
+            if (hold(shown("an-mode-pixel"), "the tab is laid out")) return true;
+            check(pj_click("an-mode-pixel") && an().mode() == "pixel", "«Векторная»");
+            break;
+        // Nothing open: «Файлы», no bar, rail, right or bottom panel.
+        case 2: {
+            if (hold(idle && listed_at(kLkDoc) >= 0 && lk_on(("px-doc-" + std::to_string(listed_at(kLkDoc))).c_str()), "«Ёжик» listed")) return true;
+            check(!px().has() && px().left() == "files" && lk_on("px-files") && !lk_on("px-layers") && !lk_on("px-bar") && !lk_on("px-rail") &&
+                      !lk_on("px-side") && !lk_on("px-tl-panel") && !lk_on("px-center") && px().look() == PixelEditor::Look::Code,
+                  "nothing open: «Файлы» shown, no bar, tools, middle, right or bottom panel; «Код», the run's first view");
+            check(pj_click(("px-doc-" + std::to_string(listed_at(kLkDoc))).c_str()) && px().opened() == kLkDoc, "a click on «Ёжик» in «Файлы»");
+            break;
+        }
+        case 3: {
+            if (hold(px().opened() == kLkDoc && recorded(), "«Ёжик» recorded")) return true;
+            const std::string path = element_text("px-path");
+            check(px().left() == "layers" && lk_on("px-layers") && !lk_on("px-files") && pj_class("px-left-layers", "selected"),
+                  "opened from «Файлы»: «Слои» shown");
+            check(px().look() == PixelEditor::Look::Code && px().pixels_folded() && px().side() == "props" && px().bottom() == "timeline" &&
+                      !px().export_open() && px().tool() == PixelEditor::Tool::Select,
+                  "in «Код»: «Пиксели» folded, «Свойства», «Таймлайн», no «Экспорт», «Выбор»");
+            check(path.find("Персонажи /") != std::string::npos && path.find("Ёжик") != std::string::npos && lk_on("px-saved") &&
+                      element_text("px-saved") == "сохранено" && !lk_on("px-code-save"),
+                  "the bar: «Персонажи / Ёжик», «сохранено»");
+            const std::string view = lk_view(PixelEditor::Look::Code, true);
+            check(view.empty(), "«Код»: the code at 48 % beside the vector, its panels;" + view);
+            check(px_click("px-state-air") && px().clip() == "air", "«В воздухе»");
+            break;
+        }
+        case 4:
+            if (hold(px().clip() == "air" && recorded() && lk_on("px-frame-6"), "«В воздухе» recorded")) return true;
+            check(px_click("px-frame-6") && px().frame() == 6, "frame 7");
+            lk_look_ = 0;
+            if (lk_scaled()) {
+                lk_step_ = 60;
+                return true;
+            }
+            break;
+        // Each view in turn: «Код», «Дизайн», «Анимация».
+        case 5:
+            lk_key(l);
+            check(px().look() == l, std::string("Ctrl+") + std::to_string(static_cast<int>(l) + 1) + ": " + lk_name(l));
+            break;
+        case 6: {
+            if (wait(3)) return true;
+            const std::string view = lk_view(l, true);
+            check(px().pixels_folded() == (l == PixelEditor::Look::Code) && px().side() == (l == PixelEditor::Look::Animation ? "anim" : "props") &&
+                      view.empty(),
+                  std::string(lk_name(l)) + ": «Пиксели» " + (px().pixels_folded() ? "folded" : "open") + ", the right panel «" + px().side() +
+                      "» as the view sets it, its panels shown, the others' not;" + view);
+            check(pj_click("px-fit"), "«Вписать»");
+            break;
+        }
+        case 7: {
+            if (wait(2)) return true;
+            u32 tw = 0, th = 0;
+            std::string why;
+            check(mc_view_is(0, 0, 0) && px_frame(tw, th) && std::fabs(px().view_points_w() * lk_dp() - tw) < 1e-6 &&
+                      std::fabs(px().view_points_h() * lk_dp() - th) < 1e-6 && lk_drawn(why),
+                  std::string(lk_name(l)) + ": ×1; the frame " + std::to_string(tw) + " × " + std::to_string(th) + " pixels, its points as many; the " +
+                      "vector the frame as the library draws it fitted in it " + why);
+            f32 x = 0, y = 0;
+            check(px().screen_of({-4, 32}, x, y), "a place of the frame left of the picture");
+            left_click(x, y);
+            check(px().part().empty(), "a click there: no part");
+            check(pj_click("px-grid") && px().grid(), "«Сетка»");
+            break;
+        }
+        case 8: {
+            if (wait(2)) return true;
+            check(pj_class("px-grid", "selected") && px_same(px().vector_shown(), lk_gridded()), std::string(lk_name(l)) + ": the grid over the vector as counted");
+            check(pj_click("px-grid") && !px().grid(), "«Сетка» off");
+            f32 x = 0, y = 0;
+            check(px().screen_of({12.5, 30}, x, y), "the point 12.5, 30 on the screen");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            break;
+        }
+        case 9:
+            if (wait(2)) return true;
+            check(px().coords() == "12.5, 30" && element_text("px-coords") == "12.5, 30", std::string(lk_name(l)) + ": the mouse over it: «" + px().coords() + "»");
+            lk_cursor_ = cursor();
+            lk_doc_ = file(kLkDoc), lk_lua_ = file(kLkLua);
+            check(!px().snapping() && mb_hold_part("torso", kLkTorso, 2, 1), "«torso» dragged by 2; 1 and held");
+            break;
+        case 10:
+            if (wait(2)) return true;
+            check(mb_stands("torso", kLkTorso) && cursor() == lk_cursor_ && file(kLkLua) == lk_lua_, std::string(lk_name(l)) + ": held, «torso» under the mouse, nothing written");
+            check(px().part() == "torso" && px().side() == "props", std::string(lk_name(l)) + ": a part pressed in the vector: «Свойства», «" + px().side() + "»");
+            mb_let_go();
+            break;
+        case 11:
+            if (hold(cursor() == lk_cursor_ + 1 && recorded(), "the drag written")) return true;
+            check(step_label() == "«Ёжик»: «torso» сдвинута на 2; 1" && file(kLkLua) != lk_lua_, "let go: one step, «" + step_label() + "»");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            break;
+        case 12: {
+            if (hold(cursor() == lk_cursor_ && file(kLkLua) == lk_lua_ && file(kLkDoc) == lk_doc_ && recorded() && px().code().find("x = 2") == std::string::npos,
+                     "Ctrl+Z"))
+                return true;
+            std::string why;
+            check(lk_drawn(why), std::string(lk_name(l)) + ": Ctrl+Z: the files byte for byte as before, the vector as the library draws them " + why);
+            if (lk_look_ < 2) {
+                ++lk_look_;
+                lk_step_ = 5;
+                return true;
+            }
+            break;
+        }
+        // A change of view keeps what it keeps; back in «Дизайн» the vector byte for byte.
+        case 13:
+            lk_key(PixelEditor::Look::Design);
+            break;
+        case 14: {
+            if (wait(3)) return true;
+            check(px_click("px-part-torso") && px().part() == "torso" && px().side() == "props", "«torso» chosen in «Слои»: «Свойства»");
+            for (int i = 0; i < 4; ++i) pj_click("px-zoom-in");
+            check(px().picture_view().step == 4 && element_text("px-zoom") == pixel::zoom_words(4), "«+» four times: «" + element_text("px-zoom") + "»");
+            f32 x = 0, y = 0;
+            check(element_center("px-vector", x, y), "the vector");
+            mc_pan(x, y, 30, 20);
+            break;
+        }
+        case 15:
+            if (wait(3)) return true;
+            lk_view_ = px().picture_view(), lk_mid_ = lk_middle(), lk_frame_ = px().frame(), lk_part_ = px().part(), lk_cursor_ = cursor(),
+            lk_label_ = step_label(), lk_doc_ = file(kLkDoc), lk_lua_ = file(kLkLua), lk_vec_ = px().vector_view().rgba8;
+            check(lk_view_.step == 4 && !lk_vec_.empty(), "«Дизайн» at " + pixel::zoom_words(4) + ", panned; the middle of the view " + pixel::coords_words(lk_mid_));
+            lk_key(PixelEditor::Look::Code);
+            break;
+        case 16:
+        case 17: {
+            if (wait(3)) return true;
+            const PixelEditor::Look now = lk_step_ == 16 ? PixelEditor::Look::Code : PixelEditor::Look::Animation;
+            const std::string same = lk_same();
+            check(px().look() == now && same.empty(), std::string(lk_name(now)) + ": the frame, the part, the zoom's step, the middle, the history and the files kept;" + same);
+            lk_key(lk_step_ == 16 ? PixelEditor::Look::Animation : PixelEditor::Look::Design);
+            break;
+        }
+        case 18: {
+            if (wait(3)) return true;
+            const std::string same = lk_same();
+            check(px().look() == PixelEditor::Look::Design && same.empty() && mc_view_is(lk_view_.step, lk_view_.ox, lk_view_.oy, 1e-9) &&
+                      px().vector_view().rgba8 == lk_vec_,
+                  "«Дизайн» again: all kept, the vector byte for byte as it was;" + same);
+            // The right panel's tab by what is chosen.
+            check(px_click("px-block-0") && px().side() == "anim", "a block on the timeline: «Анимация»");
+            break;
+        }
+        case 19: {
+            if (wait(2)) return true;
+            if (lk_sub_ == 0) {
+                check(lk_on("px-anim") && !lk_on("px-props"), "its block in «Анимация»");
+                // A double click on the block: its call in «Код».
+                f32 x = 0, y = 0;
+                u32 from = 0, to = 0;
+                check(element_center("px-block-0", x, y), "the block");
+                left_click(x, y);
+                left_click(x, y);
+                check(px().look() == PixelEditor::Look::Code && px().code_selection(from, to) && to > from, "a double click on the block: its call chosen in «Код»");
+                key(SDLK_1, SDL_KMOD_CTRL);
+                check(px().look() == PixelEditor::Look::Design, "Ctrl+1 from the code: «Дизайн»");
+                lk_sub_ = 1;
+                return true;
+            }
+            lk_sub_ = 0;
+            check(px_click("px-part-head") && px().part() == "head" && px().side() == "props", "«head» in «Слои»: «Свойства»");
+            key(SDLK_H, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Hand && pj_class("px-tool-hand", "selected"), "H: «Рука»");
+            pixel::PictureView v = px().picture_view();
+            v.pan(40 / lk_dp(), 30 / lk_dp());
+            f32 x = 0, y = 0;
+            check(element_center("px-vector", x, y), "the vector");
+            mouse(SDL_EVENT_MOUSE_MOTION, x, y);
+            mouse(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+            for (int i = 1; i <= 4; ++i) mouse(SDL_EVENT_MOUSE_MOTION, x + 10 * static_cast<f32>(i), y + 7.5f * static_cast<f32>(i));
+            mouse(SDL_EVENT_MOUSE_BUTTON_UP, x + 40, y + 30);
+            check(mc_view_is(v.step, v.ox, v.oy, 1e-9) && px().part() == "head" && cursor() == lk_cursor_,
+                  "the left button dragged by 40; 30 with «Рука»: the view panned as the middle button pans it, nothing chosen or written: " + mc_view_words());
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Select && pj_class("px-tool-select", "selected"), "V: «Выбор»");
+            break;
+        }
+        // The bottom panel's height in «Дизайн», 120 … the height − 160.
+        case 20:
+        case 21:
+        case 22:
+        case 23: {
+            if (wait(2)) return true;
+            std::array<f32, 4> tl{}, main{}, up{};
+            const bool boxed = lk_box("px-tl-panel", tl) && lk_box("px-main", main) && lk_box("px-upper", up);
+            Rml::Element* m = ed_.find_element("px-main");
+            const f64 whole = m ? m->GetBox().GetSize(Rml::BoxArea::Content).y / lk_dp() : 0, most = std::max(120.0, whole - 160),
+                      shown_h = (tl[3] - tl[1]) / lk_dp();
+            if (lk_step_ > 20)
+                check(boxed && std::fabs(px().bottom_height() - lk_want_) < 1e-6 && std::fabs(shown_h - lk_want_) <= 0.5 && (up[3] - up[1]) / lk_dp() >= 154 - 0.5,
+                      "the bottom panel " + std::to_string(shown_h) + " high, " + std::to_string(lk_want_) + " wanted, the part over it " +
+                          std::to_string((up[3] - up[1]) / lk_dp()));
+            const f32 by[4] = {-100, 2000, -2000, 0};
+            if (lk_step_ == 23) {
+                lk_height_ = px().bottom_height();
+                lk_key(PixelEditor::Look::Code);
+                break;
+            }
+            lk_want_ = lk_step_ == 20 ? std::clamp(shown_h + 100 / lk_dp(), 120.0, most) : lk_step_ == 21 ? 120 : most;
+            check(lk_drag("px-tl-grip", 0, by[lk_step_ - 20]), "its top edge dragged by " + std::to_string(by[lk_step_ - 20]));
+            break;
+        }
+        // In «Код» its own height; the code's share 30 … 70 %.
+        case 24:
+        case 25:
+        case 26: {
+            if (wait(lk_step_ == 24 ? 3 : 2)) return true;
+            std::array<f32, 4> code{}, in{};
+            const f64 share = lk_box("px-code", code) && lk_box("px-center-in", in) ? (code[2] - code[0]) / (in[2] - in[0]) : -1;
+            if (lk_step_ == 24) {
+                const std::string view = lk_view(PixelEditor::Look::Code, true);
+                check(px().bottom_height() == 0 && view.empty(), "«Код»: its bottom panel's own share, the code 48 %;" + view);
+            } else
+                check(std::fabs(px().code_share() - lk_want_) < 1e-9 && std::fabs(share - lk_want_) < 0.003,
+                      "the code " + std::to_string(share) + " of the middle, " + std::to_string(lk_want_) + " wanted");
+            if (lk_step_ == 26) {
+                lk_key(PixelEditor::Look::Design);
+                break;
+            }
+            lk_want_ = lk_step_ == 24 ? 0.7 : 0.3;
+            check(lk_drag("px-code-split", lk_step_ == 24 ? 2000 : -2000, 0), "the edge between the code and the vector dragged");
+            break;
+        }
+        // «Дизайн» keeps its height; a warning in the script, then a line that does not compile.
+        case 27: {
+            if (wait(3)) return true;
+            std::array<f32, 4> tl{};
+            check(lk_box("px-tl-panel", tl) && px().bottom_height() == lk_height_ && std::fabs((tl[3] - tl[1]) / lk_dp() - lk_height_) <= 0.5,
+                  "«Дизайн»: its bottom panel as dragged, " + std::to_string(lk_height_));
+            lk_lua_ = file(kLkLua);
+            std::string warned(lk_lua_.begin(), lk_lua_.end());
+            const std::string nod = "      m.nod(part(\"head\"), 0.1)\n";
+            const usize at = warned.find(nod);
+            if (at != std::string::npos) warned.insert(at, "      part(\"leg_r\").skew_x(95, 0.1)\n");
+            check(at != std::string::npos && px().problems().empty() && write_file_atomic(as().abs(kLkLua), std::vector<u8>(warned.begin(), warned.end())),
+                  "no problems; a skew past 89° written into «Ёжик.luau» («В воздухе»)");
+            break;
+        }
+        case 28: {
+            if (hold(!px().problems().empty() && recorded(), "the warning")) return true;
+            const usize n = static_cast<usize>(std::count_if(px().console().begin(), px().console().end(),
+                                                              [](const PixelEditor::ConsoleLine& c) { return c.error || c.warn; }));
+            check(n == 1 && px().problems().size() == n && element_text("px-problem-count") == "1" && px().problems()[0].warn &&
+                      !px().problems()[0].error && px().problems()[0].line > 0,
+                  "«Проблемы " + element_text("px-problem-count") + "»: the console's warning, " + std::to_string(n));
+            check(px().bottom() == "timeline" && px().look() == PixelEditor::Look::Design, "the bottom tab and the view as they were");
+            check(pj_click("px-bottom-problems") && px().bottom() == "problems", "«Проблемы»");
+            break;
+        }
+        case 29: {
+            if (lk_sub_ == 0) {
+                if (wait(2)) return true;
+                check(lk_on("px-problems") && lk_on("px-problem-0") && !lk_on("px-tl-pane"), "its rows in place of the timeline");
+                u32 from = 0, to = 0;
+                const u32 line = px().problems()[0].line;
+                check(pj_click("px-problem-0") && px().look() == PixelEditor::Look::Code && px().code_selection(from, to) &&
+                          from == pixel::line_char(px().code(), line) && from == to,
+                      "a click on it: «Код», the caret at line " + std::to_string(line));
+                key(SDLK_1, SDL_KMOD_CTRL);
+                check(px().look() == PixelEditor::Look::Design, "Ctrl+1 from the code: «Дизайн»");
+                std::vector<u8> broken = lk_lua_;
+                const std::string tail = "\nlocal = 1\n";
+                broken.insert(broken.end(), tail.begin(), tail.end());
+                check(write_file_atomic(as().abs(kLkLua), broken), "a line that does not compile written into «Ёжик.luau»");
+                lk_sub_ = 1;
+                return true;
+            }
+            const bool erred = std::any_of(px().problems().begin(), px().problems().end(), [](const PixelEditor::ConsoleLine& c) { return c.error; });
+            if (hold(erred, "the error")) return true;
+            const usize n = static_cast<usize>(std::count_if(px().console().begin(), px().console().end(),
+                                                              [](const PixelEditor::ConsoleLine& c) { return c.error || c.warn; }));
+            check(px().problems().size() == n && element_text("px-problem-count") == std::to_string(n) && lk_on("px-problem-0"),
+                  "«Проблемы " + element_text("px-problem-count") + "»: the console's errors and warnings, " + std::to_string(n));
+            check(write_file_atomic(as().abs(kLkLua), lk_lua_), "«Ёжик.luau» as it was");
+            lk_sub_ = 0;
+            break;
+        }
+        case 30:
+            if (hold(px().problems().empty() && file(kLkLua) == lk_lua_ && recorded(), "the script again")) return true;
+            check(element_text("px-problem-count") == "0" && pj_click("px-bottom-timeline") && px().bottom() == "timeline", "«Проблемы 0»; «Таймлайн»");
+            break;
+        // «Экспорт».
+        case 31:
+            if (hold(idle && recorded(), "«Ресурсы» looked at the files")) return true;
+            check(pj_click("px-export") && px().export_open(), "«Экспорт»");
+            break;
+        case 32: {
+            if (hold(idle && lk_on("px-bake"), "«Экспорт» laid out")) return true;
+            const std::string view = lk_view(PixelEditor::Look::Design, true);
+            check(view.empty() && !lk_on("px-side-anim") && lk_on("px-export-close"), "«Экспорт» in place of the right panel's tabs;" + view);
+            const std::string png = "персонажи/Ёжик.png";
+            lk_doc_ = file(kLkDoc);
+            lk_cursor_ = cursor();
+            const std::vector<u8> before = file(png);
+            const bool clicked = px_click("px-bake");
+            const bool same = px().note() == "Картинка «Ёжик.png» уже такая";
+            check(clicked && (same ? cursor() == lk_cursor_ : cursor() == lk_cursor_ + 1 && step_label().rfind("«Ёжик»: запечено в «Ёжик.png»", 0) == 0),
+                  "«Запечь»: " + px().note());
+            const pixel::PixelDoc& d = px().doc();
+            assets::CookedTexture strip;
+            std::string bad;
+            check(assets::decode_image(file(png), strip) && !d.strip.empty(), "«Ёжик.png»");
+            for (const pixel::StripClip& s : d.strip)
+                for (u32 k = 0; k < s.frames; ++k) {
+                    assets::CookedTexture ref;
+                    std::string why;
+                    if (!mo_ref(s.state, k, ref, why) || !px_same(px_cut(strip, d.frame_w, s.first + k), ref)) bad += " " + s.state + " " + std::to_string(k + 1) + why;
+                }
+            check(bad.empty(), "every frame of the strip as the library bakes it apart from the tab;" + bad);
+            if (!same) {
+                key(SDLK_Z, SDL_KMOD_CTRL);
+                check(file(png) == before && file(kLkDoc) == lk_doc_ && cursor() == lk_cursor_, "Ctrl+Z: the picture and the file as they were");
+            }
+            break;
+        }
+        case 33: {
+            if (hold(idle && recorded(), "«Ресурсы» looked at the files")) return true;
+            lk_cursor_ = cursor();
+            check(px_click("px-snapshot") && cursor() == lk_cursor_ + 1, "«Снимок кадра»: " + step_label());
+            const std::string label = step_label(), head = "«Ёжик»: снимок «";
+            const std::string name = label.rfind(head, 0) == 0 && label.size() > head.size() + 2 ? label.substr(head.size(), label.size() - head.size() - 2) : "";
+            const std::string shot = "персонажи/" + name;
+            assets::CookedTexture t, ref;
+            std::string why;
+            check(!name.empty() && assets::decode_image(file(shot), t) && mo_ref(px().clip(), px().frame(), ref, why, true) && px_same(t, ref),
+                  "«" + name + "»: frame 7 of «В воздухе» as the library bakes it " + why);
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(!name.empty() && file(shot).empty() && cursor() == lk_cursor_, "Ctrl+Z: no snapshot");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!px().export_open(), "Esc: «Экспорт» closed");
+            check(pj_click("px-export") && px().export_open(), "«Экспорт» again");
+            break;
+        }
+        case 34:
+            if (wait(2)) return true;
+            check(pj_click("px-export-close") && !px().export_open(), "its cross: closed");
+            break;
+        case 35:
+            if (wait(2)) return true;
+            check(pj_click("px-export") && px().export_open() && pj_click("px-export") && !px().export_open(), "«Экспорт» twice: opened and closed");
+            break;
+        case 36: {
+            if (wait(2)) return true;
+            const std::string view = lk_view(PixelEditor::Look::Design, true);
+            check(view.empty(), "«Свойства» back in place of «Экспорт»;" + view);
+            break;
+        }
+        // Narrow windows.
+        case 37:
+            if (lk_windows(kLkNarrow)) return true;
+            break;
+        // «Сцена 2» from «Файлы», in the view last used.
+        case 38: {
+            if (wait(4)) return true;
+            check(px().look() == PixelEditor::Look::Design && pj_click("px-left-files") && px().left() == "files", "the window whole again; «Файлы»");
+            break;
+        }
+        case 39: {
+            if (wait(2)) return true;
+            const auto& scenes = px().scenes();
+            const auto it = std::find(scenes.begin(), scenes.end(), kSeDoc);
+            const std::string row = "px-scene-" + std::to_string(it - scenes.begin());
+            check(it != scenes.end() && lk_on("px-files") && pj_click(row.c_str()) && px().opened() == kSeDoc && px().in_scene(), "«Сцена 2» from «Файлы»");
+            break;
+        }
+        case 40: {
+            if (hold(px().opened() == kSeDoc && recorded(), "«Сцена 2» recorded")) return true;
+            const std::string view = lk_view(PixelEditor::Look::Design, true), path = element_text("px-path");
+            check(px().look() == PixelEditor::Look::Design && px().left() == "layers" && view.empty() && !lk_on("px-tools") && !lk_on("px-one") &&
+                      path.find("Сцены /") != std::string::npos && path.find("Сцена 2") != std::string::npos,
+                  "«Сцена 2» in «Дизайн», the view last used: «Слои», «Выбор» and «Рука» only, no frame in its real size, «Сцены / Сцена 2»;" + view);
+            const std::string note = px().note();
+            key(SDLK_H, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Hand && px().note() == note, "H in the scene: «Рука», nothing refused: «" + px().note() + "»");
+            key(SDLK_V, SDL_KMOD_NONE);
+            check(px().tool() == PixelEditor::Tool::Select && px_click("px-play-0") && px().side() == "anim", "an actor's clip: «Анимация»");
+            check(pj_click("px-export") && px().export_open(), "«Экспорт»");
+            break;
+        }
+        case 41: {
+            if (hold(idle && lk_on("px-give-game"), "its «Экспорт»")) return true;
+            check(lk_on("px-scene-snapshot") && !lk_on("px-bake") && !lk_on("px-snapshot") && !lk_on("px-give-open"),
+                  "«Снимок кадра» and «Отдать игре» of the scene, nothing of a character's");
+            pixel::SceneGift gift;
+            SdFolder built;
+            std::string why;
+            lk_cursor_ = cursor();
+            check(se_gift(gift, built, why) && se_folder() == built, "game/scenes/Сцена 2 as the library builds the gift " + why);
+            check(px_click("px-give-game") && px().note() == "Уже отдано так" && cursor() == lk_cursor_,
+                  "«Отдать игре»: «" + px().note() + "», the gift byte for byte the folder's");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            check(!px().export_open(), "Esc: closed");
+            break;
+        }
+        case 42: {
+            if (wait(2)) return true;
+            const auto tree = pj_tree(a);
+            check(tree == lk_tree_ && px().problems().empty(), "the game's files byte for byte as at the start");
+            return false;
+        }
+        // --ui-scale 1.5: «Ёжик» zoomed and panned, then laid out in a window of 1600 × 900 pixels; «Сцена 2» and «Ёжик»
+        // again from «Файлы», each laid out.
+        case 60: {
+            for (int i = 0; i < 2; ++i) pj_click("px-zoom-in");
+            f32 x = 0, y = 0;
+            check(px().picture_view().step == 2 && element_center("px-vector", x, y), "«+» twice");
+            mc_pan(x, y, 30, 20);
+            break;
+        }
+        case 61: {
+            if (wait(3)) return true;
+            std::string why;
+            check(lk_drawn(why), "at 1,5, zoomed and panned: the vector as the library draws the files " + mc_view_words() + why);
+            check(pj_click("px-fit"), "«Вписать»");
+            break;
+        }
+        case 62:
+            if (lk_windows(kLkScaled)) return true;
+            check(pj_click("px-left-files") && px().left() == "files", "«Файлы»");
+            break;
+        case 63: {
+            if (wait(4)) return true;
+            const auto& scenes = px().scenes();
+            const auto it = std::find(scenes.begin(), scenes.end(), kSeDoc);
+            const std::string row = "px-scene-" + std::to_string(it - scenes.begin());
+            check(it != scenes.end() && pj_click(row.c_str()) && px().opened() == kSeDoc && px().in_scene() && px().left() == "layers",
+                  "«Сцена 2» from «Файлы» while «Ёжик» is open: «Слои»");
+            break;
+        }
+        case 64:
+            if (hold(px().opened() == kSeDoc && recorded(), "«Сцена 2» recorded")) return true;
+            break;
+        case 65:
+            if (lk_windows(kLkScaled)) return true;
+            check(pj_click("px-left-files") && px().left() == "files", "«Файлы»");
+            break;
+        case 66: {
+            if (wait(4)) return true;
+            const int at = listed_at(kLkDoc);
+            check(at >= 0 && pj_click(("px-doc-" + std::to_string(at)).c_str()) && px().opened() == kLkDoc && px().left() == "layers",
+                  "«Ёжик» from «Файлы» while «Сцена 2» is open: «Слои»");
+            break;
+        }
+        case 67:
+            if (hold(px().opened() == kLkDoc && recorded(), "«Ёжик» recorded")) return true;
+            break;
+        case 68: {
+            if (wait(4)) return true;
+            check(pj_tree(a) == lk_tree_, "the game's files byte for byte as at the start");
+            return false;
+        }
+        default: break;
+        }
+        ++lk_step_;
+        return true;
     }
 
     // --- «Ввод» (the tab after «Три в ряд» in the order) -----------------------------------------------------------
@@ -37959,6 +38958,7 @@ body { margin: 0; padding: 0; width: 100%; height: 100%; color: #33aa55; font-fa
     bool element_center(const std::string& id, f32& x, f32& y) { return element_center(id.c_str(), x, y); }
 
     bool shown(const char* id) {
+        px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (e && e->IsVisible(true)) return true;
         // Several elements may share an id while only one is shown.
@@ -38135,9 +39135,9 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
         jobs::shutdown();
         return 1;
     }
-    // A window of 1600 × 900 px on a screen of the scale given (--ui-scale): its pixels are that many times more.
+    // A window of 1600 × 900 px (--size) on a screen of the scale given (--ui-scale): its pixels are that many times more.
     const f32 scale = options.display_scale > 0 ? options.display_scale : 1.0f;
-    const u32 w = static_cast<u32>(std::lround(1600 * scale)), h = static_cast<u32>(std::lround(900 * scale));
+    const u32 w = static_cast<u32>(std::lround(options.size_w * scale)), h = static_cast<u32>(std::lround(options.size_h * scale));
     SDL_GPUTexture* target = render::create_render_target(device, w, h);
     int result = 1;
     {
@@ -38150,7 +39150,7 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                             (options.self_part.rfind("pixel-", 0) == 0 && options.self_part != "pixel-motion") ||
                             options.self_part.rfind("frame-limit-", 0) == 0 ||
                             options.self_part.rfind("ui-scale-", 0) == 0 ||
-                            options.self_part.rfind("vector-live-", 0) == 0;
+                            options.self_part.rfind("vector-live-", 0) == 0 || !options.pixel.empty();
         OpenGame game;
         bool ready = true;
         if (std::string error; opened && !open_game(options.project.empty() ? std::filesystem::current_path() : options.project, game, error)) {
@@ -38505,6 +39505,14 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 }
                 if (f == 1 && options.window == "game-menu") editor.projects.set_menu(true);
                 if (f == 1 && options.window == "new-game") editor.projects.show_new();
+                if (!options.pixel.empty() && editor.pixel_tab.opened() != options.pixel) {
+                    editor.open_tab("animation");
+                    editor.anim_tab.set_mode("pixel");
+                    if (editor.pixel_tab.open(options.pixel)) editor.pixel_tab.set_left("layers"); // as opened from «Файлы»
+                    if (options.look == "design") editor.pixel_tab.set_look(PixelEditor::Look::Design);
+                    else if (options.look == "code") editor.pixel_tab.set_look(PixelEditor::Look::Code);
+                    else if (options.look == "animation") editor.pixel_tab.set_look(PixelEditor::Look::Animation);
+                }
                 if (f == 1 && !options.talk.empty()) {
                     editor.open_tab("story");
                     const std::string& t = options.talk;
@@ -38555,7 +39563,8 @@ int run_offscreen(const Options& options, const char* screenshot, u32 frames, bo
                 if (bench_scheme && cpu_update > 100) FORGE_INFO("scheme: frame %u update %.0f ms", f, cpu_update);
                 SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
                 const Stopwatch render_timer;
-                editor.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
+                editor.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, editor.narrow_w ? std::min(editor.narrow_w, w) : w,
+                              editor.narrow_h ? std::min(editor.narrow_h, h) : h);
                 const f64 cpu_render = render_timer.elapsed_ms();
                 SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
                 SDL_WaitForGPUFences(device, true, &fence, 1);
@@ -38666,6 +39675,16 @@ int main(int argc, char** argv) {
         }
         else if (std::strcmp(argv[i], "--bench-story") == 0) bench_story = true;
         else if (std::strcmp(argv[i], "--talk") == 0 && has_value) app.options.talk = argv[++i];
+        else if (std::strcmp(argv[i], "--pixel") == 0 && has_value) app.options.pixel = argv[++i];
+        else if (std::strcmp(argv[i], "--look") == 0 && has_value) app.options.look = argv[++i];
+        else if (std::strcmp(argv[i], "--size") == 0 && has_value) {
+            unsigned sw = 0, sh = 0;
+            if (std::sscanf(argv[++i], "%ux%u", &sw, &sh) == 2 && sw >= 320 && sh >= 240 && sw <= 7680 && sh <= 4320) {
+                app.options.size_w = sw;
+                app.options.size_h = sh;
+            }
+            else FORGE_ERROR("--size: нужно ШИРИНАxВЫСОТА в единицах интерфейса, например 1100x700");
+        }
         else if (std::strcmp(argv[i], "--templates") == 0 && has_value) app.options.templates = argv[++i];
         else if (std::strcmp(argv[i], "--self-test") == 0) {
             self_test = true;
@@ -38693,7 +39712,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
                                          "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again",
-                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "pixel-scene-h", "pixel-scene-i", "pixel-scene-j", "input", "input-a",
+                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "pixel-scene-h", "pixel-scene-i", "pixel-scene-j", "pixel-look-a", "input", "input-a",
                                          "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
@@ -38713,7 +39732,7 @@ int main(int argc, char** argv) {
                     "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
                     "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, pixel-scene, "
                     "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, pixel-scene-d, pixel-scene-d-again, pixel-scene-e, "
-                    "pixel-scene-f, pixel-scene-g, pixel-scene-h, pixel-scene-i, pixel-scene-j, "
+                    "pixel-scene-f, pixel-scene-g, pixel-scene-h, pixel-scene-i, pixel-scene-j, pixel-look-a, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

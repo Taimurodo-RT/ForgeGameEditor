@@ -79,8 +79,12 @@ inline std::string count_words(u32 n, const char* one, const char* few, const ch
     return std::to_string(n) + " " + (d == 1 && h != 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many);
 }
 
-// The vector view, and the box the pixel frame is shown big in (logical px).
-inline constexpr u32 kViewPx = 288;
+// The column of «Пиксели» (px of the interface; part 7а): the box the pixel frame is shown big in before it is laid out.
+inline constexpr f32 kPixelColumn = 200;
+inline constexpr f32 kPixelGap = 4; // between the rows of that column (.px-pixel-col's gap)
+
+// An image's size in pixels of the window as its style says it, whatever the scale of the interface (part 7а).
+inline std::string texels_style(u32 w, u32 h) { return "width: " + std::to_string(w) + "devpx; height: " + std::to_string(h) + "devpx;"; }
 
 // When a file was last written and how long it is; 0 when it is not there.
 inline i64 stamp_of(const std::filesystem::path& file) {

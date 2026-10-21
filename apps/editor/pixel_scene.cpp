@@ -118,12 +118,17 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
     };
     auto arg_int = [](const Rml::VariantList& a, usize i) { return i < a.size() ? a[i].Get<int>(-1) : -1; };
+    // Part 7а: a scene opened or made from «Файлы» is opened to work on: the left panel shows its «Слои».
     on("px_scene_open", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
-        if (i >= 0 && i < static_cast<int>(scenes_.size())) open(scenes_[static_cast<usize>(i)]);
+        if (i >= 0 && i < static_cast<int>(scenes_.size()) && open(scenes_[static_cast<usize>(i)])) set_left("layers");
     });
-    on("px_new_scene", [this](Rml::Event&, const Rml::VariantList&) { create_scene(); });
-    on("px_actor_clip", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { select_actor_clip(arg_int(a, 0)); });
+    on("px_new_scene", [this](Rml::Event&, const Rml::VariantList&) {
+        if (create_scene()) set_left("layers");
+    });
+    on("px_actor_clip", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        if (select_actor_clip(arg_int(a, 0)) && play_ >= 0) set_side("anim"); // part 7а
+    });
     on("px_actor_clip_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { actor_clip_to_code(arg_int(a, 0)); });
     on("px_actor_clip_to_code", [this](Rml::Event&, const Rml::VariantList&) { actor_clip_to_code(play_); });
     on("px_actor_character", [this](Rml::Event&, const Rml::VariantList&) { open_actor_character(); });
@@ -133,7 +138,9 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
     model.Bind("px_transition_info", &m_transition_info_);
     model.Bind("px_transition_call", &m_transition_call_);
     model.Bind("px_transition_can_code", &m_transition_can_code_);
-    on("px_transition", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { select_transition(arg_int(a, 0)); });
+    on("px_transition", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        if (select_transition(arg_int(a, 0)) && transition_ >= 0) set_side("anim"); // part 7а
+    });
     on("px_transition_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { transition_to_code(arg_int(a, 0)); });
     on("px_transition_to_code", [this](Rml::Event&, const Rml::VariantList&) { transition_to_code(transition_); });
     // Part 6в: the music's and the stops' rows, «Ждать, как в игре» and the line under the player while it stands.
@@ -714,14 +721,18 @@ bool PixelEditor::camera_corners(f32 x[4], f32 y[4]) const {
 
 bool PixelEditor::through_size(u32& w, u32& h) const {
     if (!scene_mode_ || !scene_) return false;
-    pixel::frame_size(scene_->stage().width(), scene_->stage().height(), view_px(), w, h);
+    // Part 7а: the canvas's shape as big as fits in the frame of «Пиксели» (its column's width before it is laid out).
+    const f64 bw = pixel_box_w_ > 0 ? pixel_box_w_ : kPixelColumn * dp_, bh = pixel_box_h_ > 0 ? pixel_box_h_ : kPixelColumn * dp_;
+    const f64 sw = std::max(1.0, scene_->stage().width()), sh = std::max(1.0, scene_->stage().height());
+    const f64 side = sw >= sh ? std::min(bw, bh * sw / sh) : std::min(bh, bw * sh / sw);
+    pixel::frame_size(sw, sh, std::max(1.0, std::floor(side)), w, h);
     return true;
 }
 
 bool PixelEditor::camera_edge(f32 x, f32 y) const {
     f32 cx[4], cy[4];
     if (!camera_corners(cx, cy)) return false;
-    const f64 reach = kFrameReach * std::max(1.0f, view_w_ / static_cast<f32>(kViewPx));
+    const f64 reach = kFrameReach * std::max(1.0f, dp_);
     for (int i = 0; i < 4; ++i)
         if (segment_distance({x, y}, {cx[i], cy[i]}, {cx[(i + 1) % 4], cy[(i + 1) % 4]}) <= reach) return true;
     return false;

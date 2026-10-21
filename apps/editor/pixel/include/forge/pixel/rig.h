@@ -231,6 +231,8 @@ public:
 
     // Picture units to the pixels of a w × h drawing: the picture fitted in, centred (SVG's "xMidYMid meet").
     Affine to_pixels(u32 w, u32 h) const;
+    // The same into a box of any size, w × h of whatever units (the vector's frame in points of the interface).
+    Affine fit_in(f64 w, f64 h) const;
     // Smooth, as the vector looks: straight RGBA.
     assets::CookedTexture draw(u32 w, u32 h);
     // The same with picture units going to the drawing's pixels by `px` (the view zoomed and moved).

@@ -185,7 +185,9 @@ void PixelEditor::bind_motion(Rml::DataModelConstructor& model) {
         if (i >= 0 && i < static_cast<int>(std::size(kSpeeds))) set_speed(kSpeeds[i]);
     });
     on("px_loop_view", [this](Rml::Event&, const Rml::VariantList&) { set_loop_view(!loop_view_); });
-    on("px_block", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { select_block(arg_int(a, 0)); });
+    on("px_block", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
+        if (select_block(arg_int(a, 0)) && block_ >= 0) set_side("anim"); // part 7а
+    });
     on("px_block_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) { block_to_code(arg_int(a, 0)); });
     on("px_flag_code", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         if (const int i = arg_int(a, 0); i >= 0) flag_to_code(static_cast<usize>(i));
@@ -1090,6 +1092,7 @@ void PixelEditor::select_call(const pixel::Block& b) {
     const pixel::CodeSpan span = script().code().sites()[static_cast<usize>(b.site.site)].span;
     auto* text = rmlui_dynamic_cast<Rml::ElementFormControlTextArea*>(element("px-code-text"));
     if (!text) return;
+    set_look(Look::Code); // part 7а: the call shown where the code is
     text->Focus();
     text->SetSelectionRange(static_cast<int>(pixel::panel_char(script_text_, span.begin)), static_cast<int>(pixel::panel_char(script_text_, span.end)));
     caret_ = ~0u;
@@ -1241,6 +1244,7 @@ bool PixelEditor::save_all(std::string& error) {
 bool PixelEditor::goto_line(u32 line) {
     auto* text = rmlui_dynamic_cast<Rml::ElementFormControlTextArea*>(element("px-code-text"));
     if (!text || line == 0) return false;
+    set_look(Look::Code); // part 7а: the line shown where the code is
     const int at = static_cast<int>(pixel::line_char(code_, line));
     text->Focus();
     text->SetSelectionRange(at, at);
@@ -1259,6 +1263,7 @@ bool PixelEditor::code_selection(u32& from, u32& to) const {
 }
 
 bool PixelEditor::panel_key(const SDL_KeyboardEvent& k, Rml::Context* context) {
+    if (look_key(k)) return true; // Ctrl+1 … Ctrl+3 from the code too (part 7а)
     const bool ctrl = (k.mod & SDL_KMOD_CTRL) != 0, shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     if (ctrl && k.key == SDLK_S) {
         save_code();
@@ -1369,6 +1374,7 @@ void PixelEditor::rebuild_console() {
     m_console_.clear();
     for (const ConsoleLine& l : console_) m_console_.push_back({l.text, static_cast<int>(l.line), l.error, l.warn});
     dirty("px_console");
+    rebuild_problems(); // part 7а
 }
 
 // --- the modules the recording required ---------------------------------------------------------------

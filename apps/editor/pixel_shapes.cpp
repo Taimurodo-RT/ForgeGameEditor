@@ -47,6 +47,7 @@ const char* tool_word(PixelEditor::Tool t) {
     case PixelEditor::Tool::Ellipse: return "ellipse";
     case PixelEditor::Tool::Line: return "line";
     case PixelEditor::Tool::Pen: return "pen";
+    case PixelEditor::Tool::Hand: return "hand";
     }
     return "select";
 }
@@ -120,7 +121,7 @@ void PixelEditor::bind_shapes(Rml::DataModelConstructor& model) {
     };
     on("px_tool", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
         const std::string w = arg_str(a, 0);
-        for (Tool t : {Tool::Select, Tool::Rect, Tool::Ellipse, Tool::Line, Tool::Pen})
+        for (Tool t : {Tool::Select, Tool::Rect, Tool::Ellipse, Tool::Line, Tool::Pen, Tool::Hand})
             if (w == tool_word(t)) set_tool(t);
     });
     // A field left as it shows writes nothing (and saves no panel).
@@ -150,7 +151,7 @@ void PixelEditor::bind_shapes(Rml::DataModelConstructor& model) {
 // --- the tools ---------------------------------------------------------------------------------------
 
 void PixelEditor::set_tool(Tool t) {
-    if (scene_mode_ && t != Tool::Select) { // part 6а: the stage's shapes are typed in its code
+    if (scene_mode_ && t != Tool::Select && t != Tool::Hand) { // part 6а: the stage's shapes are typed in its code
         refuse_edit(kSceneShapes);
         t = Tool::Select;
     }
@@ -258,6 +259,7 @@ bool PixelEditor::write_shape(const pixel::NewShape& s) {
     m_tool_ = tool_word(tool_);
     dirty("px_tool");
     select_part(id);
+    set_side("props"); // part 7а: its «Фигура»
     view_dirty_ = true;
     return true;
 }
@@ -275,7 +277,7 @@ void PixelEditor::shape_press(f32 x, f32 y) {
     const vector::Point p = pixel::tool_point(view_to_picture(x, y), snap_step_);
     if (tool_ == Tool::Pen) {
         f32 fx = 0, fy = 0;
-        if (pen_.size() >= 3 && screen_of(pen_.front(), fx, fy) && std::hypot(fx - x, fy - y) <= kPenClose * std::max(1.0f, view_w_ / kViewPx)) {
+        if (pen_.size() >= 3 && screen_of(pen_.front(), fx, fy) && std::hypot(fx - x, fy - y) <= kPenClose * std::max(1.0f, dp_)) {
             write_shape({pixel::NewShape::Kind::Poly, pen_, shape_color_});
             return;
         }
@@ -307,7 +309,7 @@ void PixelEditor::shape_release() {
 }
 
 void PixelEditor::draw_tool(assets::CookedTexture& t, const pixel::Affine& texels) const {
-    if (tool_ == Tool::Select || t.rgba8.empty()) return;
+    if (tool_ == Tool::Select || tool_ == Tool::Hand || t.rgba8.empty()) return;
     u8 rgb[3] = {0x59, 0x68, 0xe8};
     vector::parse_svg_color(shape_color_, rgb);
     const Color c{rgb[0], rgb[1], rgb[2], 255}, white{255, 255, 255, 255};

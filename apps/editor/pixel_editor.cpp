@@ -363,6 +363,7 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
     bind_view(model);
     bind_shapes(model);
     bind_scene(model);
+    bind_look(model);
 
     auto on = [&](const char* name, auto fn) {
         model.BindEventCallback(name, [fn](Rml::DataModelHandle, Rml::Event& ev, const Rml::VariantList& args) { fn(ev, args); });
@@ -384,16 +385,23 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
         return !t.empty() && end && *end == '\0' && std::isfinite(out);
     };
 
+    // Part 7а: a file opened from «Файлы» is opened to work on: the left panel shows its «Слои».
     on("px_open", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
-        if (i >= 0 && i < static_cast<int>(listed_.size())) open(listed_[static_cast<usize>(i)]);
+        if (i >= 0 && i < static_cast<int>(listed_.size()) && open(listed_[static_cast<usize>(i)])) set_left("layers");
     });
-    on("px_new", [this](Rml::Event&, const Rml::VariantList&) { create_drawn(); });
+    on("px_new", [this](Rml::Event&, const Rml::VariantList&) {
+        if (create_drawn()) set_left("layers");
+    });
     on("px_create", [this, arg_int](Rml::Event&, const Rml::VariantList& a) {
         const int i = arg_int(a, 0);
-        if (i >= 0 && i < static_cast<int>(svgs_.size())) create(svgs_[static_cast<usize>(i)]);
+        if (i >= 0 && i < static_cast<int>(svgs_.size()) && create(svgs_[static_cast<usize>(i)])) set_left("layers");
     });
-    on("px_part", [this, arg_str](Rml::Event&, const Rml::VariantList& a) { select_part(arg_str(a, 0)); });
+    on("px_part", [this, arg_str](Rml::Event&, const Rml::VariantList& a) {
+        const std::string id = arg_str(a, 0);
+        select_part(id);
+        if (id == part_) set_side("props"); // part 7а: a part chosen shows «Свойства»
+    });
     auto param = [this, number](const std::string& name, const std::string& text) {
         f64 v = 0;
         if (number(text, v)) set_param(name, v);
@@ -489,7 +497,8 @@ void PixelEditor::bind(Rml::DataModelConstructor& model) {
 
 // --- each frame -------------------------------------------------------------------
 
-u32 PixelEditor::view_px() const { return std::max(1u, static_cast<u32>(std::lround(kViewPx * dp_))); }
+u32 PixelEditor::view_texels_w() const { return view_tw_ > 0 ? view_tw_ : std::max(1u, static_cast<u32>(std::lround(view_pw_ * dp_))); }
+u32 PixelEditor::view_texels_h() const { return view_th_ > 0 ? view_th_ : std::max(1u, static_cast<u32>(std::lround(view_ph_ * dp_))); }
 
 void PixelEditor::update(f64 dt, Rml::Context* context) {
     context_ = context;
@@ -581,17 +590,7 @@ void PixelEditor::update(f64 dt, Rml::Context* context) {
         update_timeline_box();
         update_hover(context);
     }
-    if (context) {
-        Rml::Element* view = nullptr;
-        for (int i = 0; i < context->GetNumDocuments() && !view; ++i) view = context->GetDocument(i)->GetElementById("px-vector-img");
-        if (view && view->IsVisible(true)) {
-            const Rml::Vector2f at = view->GetAbsoluteOffset(Rml::BoxArea::Content);
-            const Rml::Vector2f size = view->GetBox().GetSize(Rml::BoxArea::Content);
-            view_x_ = at.x, view_y_ = at.y, view_w_ = size.x, view_h_ = size.y;
-        } else {
-            view_w_ = view_h_ = 0;
-        }
-    }
+    if (context) measure_views(context); // part 7а: the vector fills its frame, whatever its size now
     if (view_dirty_) redraw();
     if (ease_dirty_) draw_ease(); // part 4ж: once between two of the UI's updates
     track_mouse(context);
@@ -609,6 +608,8 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
     case SDL_EVENT_WINDOW_FOCUS_LOST: shift_ = false; return false;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
         if ((e.button.button != SDL_BUTTON_LEFT && e.button.button != SDL_BUTTON_MIDDLE) || !context || !has_) return false;
+        // Part 7а: the bottom panel's top edge and the code's edge dragged.
+        if (e.button.button == SDL_BUTTON_LEFT && grip_press(context, e.button.x * density, e.button.y * density)) return true;
         bool vector = false, timeline = false, pixels = false, ease = false;
         for (const Rml::Element* el = context->GetHoverElement(); el; el = el->GetParentNode()) {
             vector = vector || el->GetId() == "px-vector";
@@ -622,8 +623,9 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
             context_ = context;
             return ease_press(mouse_x_, mouse_y_);
         }
-        // Part 3в: the middle button pans the vector; picking, a click copies the colour under it.
-        if (vector && e.button.button == SDL_BUTTON_MIDDLE) {
+        // Part 3в: the middle button pans the vector, and the left with «Рука» (part 7а); picking, a click copies the colour
+        // under it.
+        if (vector && (e.button.button == SDL_BUTTON_MIDDLE || (e.button.button == SDL_BUTTON_LEFT && tool_ == Tool::Hand && !picking_))) {
             panning_ = true;
             pan_x_ = mouse_x_, pan_y_ = mouse_y_;
             return true;
@@ -643,6 +645,10 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
     }
     case SDL_EVENT_MOUSE_MOTION:
         mouse_x_ = e.motion.x * density, mouse_y_ = e.motion.y * density;
+        if (grip_) {
+            grip_drag(mouse_x_, mouse_y_);
+            return true;
+        }
         if (panning_) {
             pan_view(mouse_x_ - pan_x_, mouse_y_ - pan_y_);
             pan_x_ = mouse_x_, pan_y_ = mouse_y_;
@@ -666,7 +672,11 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
         drag(e.motion.x * density, e.motion.y * density);
         return true;
     case SDL_EVENT_MOUSE_BUTTON_UP:
-        if (panning_ && e.button.button == SDL_BUTTON_MIDDLE) {
+        if (grip_ && e.button.button == SDL_BUTTON_LEFT) {
+            grip_release();
+            return true;
+        }
+        if (panning_ && (e.button.button == SDL_BUTTON_MIDDLE || e.button.button == SDL_BUTTON_LEFT)) {
             panning_ = false;
             return true;
         }
@@ -691,6 +701,7 @@ bool PixelEditor::handle_event(const SDL_Event& e, f32 density, Rml::Context* co
 
 bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     if (hold_key(k)) return true; // part 6в: the keys of the action the player waits for, before the tab's
+    if (look_key(k)) return true; // part 7а: Ctrl+1 … Ctrl+3
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT)) return false;
     const bool shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     switch (k.key) {
@@ -701,6 +712,7 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
     case SDLK_V: set_tool(Tool::Select); return true;
     case SDLK_R: set_tool(Tool::Rect); return true;
     case SDLK_O: set_tool(Tool::Ellipse); return true;
+    case SDLK_H: set_tool(Tool::Hand); return true; // part 7а
     case SDLK_L: shift ? set_tool(Tool::Line) : set_loop_view(!loop_view_); return true;
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
@@ -717,6 +729,7 @@ bool PixelEditor::handle_key(const SDL_KeyboardEvent& k) {
         else if (giving_) open_give(false);
         else if (picking_) set_picking(false);
         else if (tool_ != Tool::Select) set_tool(Tool::Select);
+        else if (export_open_) set_export(false); // part 7а: «Экспорт» after the steps Esc had before
         else return false;
         return true;
     // Part 3в: the vector's zoom, the grid, the point under the mouse, the eyedropper, the preview's sound.
@@ -1211,15 +1224,15 @@ bool PixelEditor::set_pivot(const std::string& id, vector::Point at) {
 
 vector::Point PixelEditor::view_to_picture(f32 x, f32 y) const {
     if (view_w_ <= 0 || view_h_ <= 0) return {};
-    const f64 vx = (x - view_x_) * kViewPx / view_w_, vy = (y - view_y_) * kViewPx / view_h_;
+    const f64 vx = (x - view_x_) * view_pw_ / view_w_, vy = (y - view_y_) * view_ph_ / view_h_;
     return pixel::inverse(to_view()).apply({vx, vy});
 }
 
 bool PixelEditor::screen_of(vector::Point p, f32& x, f32& y) const {
     if (view_w_ <= 0 || view_h_ <= 0 || !rig().loaded()) return false;
     const vector::Point v = to_view().apply(p);
-    x = view_x_ + static_cast<f32>(v.x * view_w_ / kViewPx);
-    y = view_y_ + static_cast<f32>(v.y * view_h_ / kViewPx);
+    x = view_x_ + static_cast<f32>(v.x * view_w_ / view_pw_);
+    y = view_y_ + static_cast<f32>(v.y * view_h_ / view_ph_);
     return true;
 }
 
@@ -1235,7 +1248,7 @@ void PixelEditor::press(f32 x, f32 y) {
     snap_step_ = snapping_ ? snap_step() : 0;
     if (!part_.empty() && !scene_mode_) {
         f32 px, py;
-        if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, view_w_ / kViewPx)) {
+        if (screen_of(posed_pivot(part_), px, py) && std::hypot(px - x, py - y) <= kPivotReach * std::max(1.0f, dp_)) {
             play(false);
             dragging_ = true;
             drag_moved_ = false;
@@ -1250,6 +1263,7 @@ void PixelEditor::press(f32 x, f32 y) {
         return;
     }
     select_part(best);
+    if (!best.empty() && best == part_) set_side("props"); // part 7а
     // Dragged on past a few points, the part moves: into the code on release.
     moving_ = !best.empty();
     move_started_ = false;
@@ -1905,7 +1919,7 @@ void PixelEditor::redraw() {
     const pixel::Affine texels = to_texels();
     for (usize i = ks.size(); i-- > 0;) {
         if (!rig().pose(poses[i], why) && i == 0 && pose_problem_.empty()) pose_problem_ = why;
-        vec[i] = rig().draw(view_px(), view_px(), texels);
+        vec[i] = rig().draw(view_texels_w(), view_texels_h(), texels);
     }
     for (usize i = 1; i < ks.size(); ++i) {
         over_faint(vec[0], vec[i], kOnion);
@@ -1993,7 +2007,7 @@ void PixelEditor::redraw_scene() {
         // Part 6в: the actors' clips ahead by the waits of «Ждать, как в игре».
         if (scene_ && !scene_->pose(ts[i], rec, poses[i], held_, i == 0 ? held_at_ : -1) && i == 0 && pose_problem_.empty())
             pose_problem_ = "Сцена: " + scene_->error();
-        vec[i] = rig().draw(view_px(), view_px(), texels);
+        vec[i] = rig().draw(view_texels_w(), view_texels_h(), texels);
     }
     for (usize i = 1; i < ks.size(); ++i) over_faint(vec[0], vec[i], kOnion);
     vector_ = vec[0];
@@ -2044,19 +2058,32 @@ void PixelEditor::show(const assets::CookedTexture& vec, const assets::CookedTex
         images_[0][0] = "px_v_" + n;
         ui_->set_image(images_[0][0], vec.rgba8.data(), vec.width, vec.height);
         m_vector_ = "/memory/" + images_[0][0];
+        m_vector_style_ = texels_style(vec.width, vec.height);
         if (!px.rgba8.empty()) {
-            const u32 s = std::max(1u, view_px() / std::max(px.width, px.height));
-            const assets::CookedTexture big = bigger(px, s);
+            // Part 7а: as many whole times bigger as fit in the frame of «Пиксели» (a scene's frame fits it already); a
+            // frame bigger than it, smaller to fit, so that all of it is seen.
+            const f32 bw = pixel_box_w_ > 0 ? pixel_box_w_ : kPixelColumn * dp_, bh = pixel_box_h_ > 0 ? pixel_box_h_ : kPixelColumn * dp_;
+            const f32 fit = std::min(bw / static_cast<f32>(px.width), bh / static_cast<f32>(px.height));
+            const assets::CookedTexture big = bigger(px, fit >= 1 ? static_cast<u32>(fit) : 1);
             images_[0][1] = "px_p_" + n, images_[0][2] = "px_1_" + n;
             ui_->set_image(images_[0][1], big.rgba8.data(), big.width, big.height);
             ui_->set_image(images_[0][2], px.rgba8.data(), px.width, px.height);
             m_pixel_ = "/memory/" + images_[0][1];
-            m_one_ = "/memory/" + images_[0][2];
+            // In its real size under it while it fits in the column and leaves the frame above as much room (a frame
+            // of 256 in the column of 200 is shown above only, smaller).
+            const bool one = pixel_room_h_ <= 0 || (static_cast<f32>(px.width) <= pixel_room_w_ && 2.0f * static_cast<f32>(px.height) + kPixelGap * dp_ <= pixel_room_h_);
+            m_one_ = one ? "/memory/" + images_[0][2] : std::string();
+            m_pixel_style_ = fit >= 1 ? texels_style(big.width, big.height)
+                                      : texels_style(std::max(1u, static_cast<u32>(static_cast<f32>(px.width) * fit)), std::max(1u, static_cast<u32>(static_cast<f32>(px.height) * fit)));
+            m_one_style_ = texels_style(px.width, px.height);
         }
     }
     dirty("px_vector");
     dirty("px_pixel");
     dirty("px_one");
+    dirty("px_vector_style");
+    dirty("px_pixel_style");
+    dirty("px_one_style");
 }
 
 void PixelEditor::rebuild_list() {

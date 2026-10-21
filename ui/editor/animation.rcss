@@ -117,27 +117,69 @@
 .an-bar .lg-modes { margin-left: var(--space-3); }
 .an-soon { font-size: 11px; color: var(--on-surface-variant); }
 
-/* «Векторная»: the characters and the parts' tree, the code panel with its console, the views and the settings in a
-   row; the player and the timeline along the bottom. */
+/* «Векторная» (step 7 of docs/models/движение-модель.md, «Вид по образцу»): the bar of the path, the three views and
+   «Экспорт»; under it the tools' rail, the left panel («Слои», «Файлы») and the middle over the bottom panel, the right
+   panel all down the side. What another view or tab of a panel has is in the page, not shown (.px-off), so its fields
+   keep what they hold. Sizes are the model's, in px of the interface; the narrow window's at the end. */
 .px-body { gap: var(--space-2); }
-.px-top { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
-.px-nav { width: 220px; }
-.px-stage { flex: 0 0 auto; overflow-y: auto; }
-/* The problem and the note under the views wrap at the views' width: a long line does not widen the stage. */
+/* Two classes, so no rule of one class that shows a box as a row or a column shows it here. */
+.px-body .px-off { display: none; }
+.px-bar { flex: 0 0 auto; height: 40px; gap: var(--space-2); align-items: center; padding: 0px var(--space-2); border-radius: 6px; background-color: var(--surface-container-low); }
+.px-path { gap: 6px; align-items: center; font-size: 14px; white-space: nowrap; }
+.px-path-kind { color: var(--on-surface-variant); }
+.px-path-name { font-weight: 600; }
+.px-saved { font-size: 12px; color: var(--on-surface-variant); white-space: nowrap; }
+.px-looks { gap: 2px; padding: 2px; border: 1px var(--outline-variant); border-radius: 16px; }
+.px-look { height: 26px; line-height: 26px; padding: 0px 14px; border-radius: 13px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.px-look:hover { background-color: var(--state-hover-layer); }
+.px-look.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); font-weight: 600; }
+.px-main { flex: 1 1 0px; min-height: 0px; gap: var(--space-2); align-items: stretch; }
+.px-work { flex: 1 1 0px; min-width: 0px; min-height: 0px; }
+/* The bottom panel: 34 % of the height under the bar in «Дизайн» and «Код», 58 % in «Анимация», 120 at least and the
+   height − 160 at most (the part over it 154, and the grip 6); its height dragged is its style (px_tl_style). */
+.px-upper { flex: 66 1 0px; min-height: 154px; gap: var(--space-2); align-items: stretch; }
+.look-animation .px-upper { flex: 42 1 0px; }
+.px-grip { flex: 0 0 auto; height: 6px; border-radius: 3px; cursor: ns-resize; }
+.px-grip:hover, .px-split:hover { background-color: var(--outline-variant); }
+.px-rail { flex: 0 0 auto; width: 46px; gap: 4px; align-items: center; padding: var(--space-1) 0px; border-radius: 6px; background-color: var(--surface-container-low); }
+.px-tools { gap: 4px; align-items: center; }
+.px-rail-line { width: 24px; height: 1px; margin: 2px 0px; background-color: var(--outline-variant); }
+.px-tool { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; }
+.px-tool:hover { background-color: var(--state-hover-layer); }
+.px-tool.selected { background-color: var(--primary-container); color: var(--on-primary-container); }
+.px-left { flex: 0 0 auto; width: 216px; min-height: 0px; border-radius: 6px; background-color: var(--surface-container-low); }
+.px-tabs { flex: 0 0 auto; gap: 2px; align-items: stretch; padding: 0px var(--space-1); }
+.px-tab { height: 30px; line-height: 30px; padding: 0px 10px; font-size: 13px; white-space: nowrap; color: var(--on-surface-variant); border-bottom: 2px transparent; cursor: pointer; }
+.px-tab:hover { color: var(--on-surface); }
+.px-tab.selected { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.px-badge { display: inline-block; min-width: 8px; height: 16px; line-height: 16px; padding: 0px 4px; margin-left: 2px; border-radius: 8px; font-size: 11px; text-align: center; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
+.px-badge.bad { background-color: var(--error); color: var(--on-error); }
+.px-pane { flex: 1 1 0px; min-height: 0px; overflow-y: auto; padding: var(--space-1); }
+.px-center { flex: 1 1 0px; min-width: 0px; min-height: 0px; padding: var(--space-1); border-radius: 6px; background-color: var(--surface-container-low); }
+.px-center-in { flex: 1 1 0px; min-height: 0px; gap: var(--space-1); align-items: stretch; }
+.px-split { flex: 0 0 auto; width: 6px; border-radius: 3px; cursor: ew-resize; }
+.px-stage { flex: 1 1 0px; min-width: 0px; min-height: 0px; gap: 2px; }
+.px-canvas-head { flex: 0 0 auto; height: 32px; gap: var(--space-1); align-items: center; padding: 0px var(--space-1); }
+/* The problem and the note under the canvas's line wrap at the middle's width: a long line does not widen it. */
+.px-said { flex: 0 0 auto; }
 .px-said > div { flex: 1 1 0px; min-width: 0px; }
-.px-views { gap: var(--space-2); flex-wrap: wrap; justify-content: center; }
-.px-view { gap: var(--space-1); align-items: center; }
-.px-canvas {
-    width: 288px;
-    height: 288px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    background-color: var(--surface-container-highest);
-}
-#px-vector { cursor: crosshair; }
-.px-one { gap: var(--space-1); align-items: center; }
+/* The vector fills its frame: its picture is that frame's size in pixels of the window (px_vector_style), laid over it. */
+.px-views { flex: 1 1 0px; min-height: 0px; gap: var(--space-1); align-items: stretch; }
+.px-canvas { position: relative; overflow: hidden; border-radius: 6px; background-color: var(--surface-container-highest); }
+.px-vector { flex: 1 1 0px; min-width: 0px; min-height: 0px; cursor: crosshair; }
+#px-vector-img { position: absolute; left: 0px; top: 0px; }
+.px-canvas-hint { position: absolute; left: 8px; right: 8px; bottom: 6px; white-space: nowrap; overflow: hidden; font-size: 11px; color: var(--on-surface-variant); opacity: 0.75; pointer-events: none; }
+.px-pixel-col { flex: 0 0 auto; width: 200px; min-height: 0px; gap: 4px; }
+.px-pixel-col.folded { width: 28px; }
+.px-pixel-head { flex: 0 0 auto; min-height: 28px; gap: 4px; align-items: center; }
+.px-pixel { flex: 1 1 0px; min-height: 0px; display: flex; align-items: center; justify-content: center; }
+/* The frame in its real size under it, while it fits (pixel_editor.cpp); cut at the column's edges, never over them. */
+.px-one { flex: 0 1 auto; min-height: 0px; overflow: hidden; gap: var(--space-1); align-items: center; }
+.px-zoom { min-width: 48px; text-align: center; }
+/* The right panel: «Свойства» or «Анимация», or «Экспорт» in their place. */
+.px-side { flex: 0 0 auto; width: 270px; min-height: 0px; border-radius: 6px; background-color: var(--surface-container-low); }
+.px-side-head { flex: 0 0 auto; height: 32px; gap: var(--space-1); align-items: center; padding: 0px var(--space-2); font-size: 13px; font-weight: 600; }
+.px-side-pane { gap: var(--space-1); }
 .px-problem { white-space: pre-line; padding: var(--space-1) var(--space-2); }
 .px-part {
     min-height: 28px;
@@ -150,7 +192,9 @@
 }
 .px-part:hover { background-color: var(--state-hover-layer); }
 .px-part.selected { background-color: var(--secondary-container); color: var(--on-secondary-container); font-weight: 600; }
-.px-part .sub { font-size: 11px; color: var(--on-surface-variant); font-weight: normal; }
+.px-part .sub { flex: 0 0 auto; white-space: nowrap; font-size: 11px; color: var(--on-surface-variant); font-weight: normal; }
+/* A long name in a narrow panel is cut, not written over its place. */
+.px-part > span.grow { flex: 1 1 0px; min-width: 0px; white-space: nowrap; overflow: hidden; }
 .px-field { gap: var(--space-1); align-items: center; padding: 2px var(--space-2); font-size: 13px; }
 .px-field input { width: 64px; }
 #px-outline-color { width: 84px; }
@@ -181,12 +225,10 @@
 
 /* The code panel: line numbers beside the text, the console under it. */
 .px-code {
-    flex: 1 1 0px;
-    min-width: 260px;
+    flex: 0 0 48%;
+    min-width: 0px;
+    min-height: 0px;
     gap: var(--space-1);
-    padding: var(--space-2);
-    border-radius: 6px;
-    background-color: var(--surface-container-low);
 }
 .px-code-head { gap: var(--space-1); align-items: center; font-size: 13px; font-weight: 600; min-height: 28px; }
 .px-code-head icon { color: var(--primary); }
@@ -229,13 +271,20 @@
 .px-con.link:hover { background-color: var(--state-hover-layer); }
 
 /* The player and the timeline: a name column on the left, the time to the right of it on every row. */
-.px-tl-panel { flex: 0 0 auto; gap: 2px; padding: var(--space-1) var(--space-2); border-radius: 6px; background-color: var(--surface-container-low); }
-.px-player { gap: var(--space-1); align-items: center; min-height: 32px; }
+.px-tl-panel { flex: 34 1 0px; min-height: 120px; gap: 2px; padding: var(--space-1) var(--space-2); border-radius: 6px; background-color: var(--surface-container-low); }
+.look-animation .px-tl-panel { flex: 58 1 0px; }
+/* Its head: the tabs, the player and its switches, on two lines when they do not fit on one. */
+.px-player { flex: 0 0 auto; flex-wrap: wrap; gap: var(--space-1); align-items: center; min-height: 32px; }
+.px-tl-panel .px-pane { padding: 0px; }
+/* The timeline's pane keeps its scrollbar's room always: a row that comes or goes never moves the time across it. */
+.px-tl-panel .px-tl-pane { overflow-y: scroll; }
+.px-tl-panel .px-console { flex: 1 1 0px; height: auto; min-height: 0px; }
 .px-num { font-family: var(--font-mono); font-size: 12px; min-width: 80px; }
 #px-time, #px-shown-fps { margin-left: var(--space-2); } /* the time and the frames shown each a word of its own */
-.px-clips { gap: 4px; align-items: center; min-height: 32px; }
-.px-tl { position: relative; gap: 2px; }
-.px-tl-row { align-items: stretch; }
+.px-clips { flex: 0 0 auto; gap: 4px; align-items: center; min-height: 32px; }
+/* The timeline fills what the bottom panel has and never squeezes its rows: when they need more, the panel scrolls. */
+.px-tl { position: relative; flex: 1 0 auto; min-height: 0px; gap: 2px; }
+.px-tl-row { flex: 0 0 auto; align-items: stretch; }
 .px-tl-name { flex: 0 0 120px; width: 120px; font-size: 12px; color: var(--on-surface-variant); padding-right: var(--space-2); text-align: right; }
 .px-tl-row > .px-tl-name { line-height: 22px; }
 .px-tl-time { position: relative; flex: 1 1 0px; height: 22px; overflow: hidden; border-radius: 4px; background-color: var(--surface-container); }
@@ -276,14 +325,16 @@
 .px-sound-row.missing .px-tl-name { color: var(--error); }
 .px-sound-row.missing .px-tl-time { background-color: var(--error-container); }
 /* The line under the views: the zoom, the point under the mouse, the eyedropper's colour; the grid and the eyedropper. */
-.px-view-line { gap: var(--space-2); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
-/* Part 4е: the tools over the views, the colour of new shapes, «Привязка»; the «Фигура» fields of a part. */
-.px-tools { gap: var(--space-1); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
+.px-view-line { flex: 0 0 auto; flex-wrap: wrap; gap: var(--space-2); align-items: center; min-height: 28px; padding: 0px var(--space-1); }
+/* Its buttons keep their width; a narrow line goes on below. */
+.px-view-line > div, .px-view-line > span { flex-shrink: 0; }
+.px-view-line > .grow { flex: 1 1 0px; }
+/* Part 4е: the colour of new shapes over the vector; the «Фигура» fields of a part. */
 #px-shape-color { width: 84px; }
 #px-shape .px-field input { width: 84px; }
 .px-swatch { width: 16px; height: 16px; border-radius: 3px; border: 1px var(--outline-variant); }
 .px-pause { position: absolute; box-sizing: border-box; top: 3px; height: 16px; overflow: hidden; border-radius: 3px; font-size: 10px; line-height: 16px; padding-left: 3px; background-color: var(--surface-container-highest); color: var(--on-surface-variant); }
-.px-tracks { position: relative; height: 104px; overflow-y: auto; }
+.px-tracks { position: relative; flex: 1 1 0px; min-height: 44px; overflow-y: auto; }
 .px-tracks-in { position: relative; }
 .px-track-name { position: absolute; left: 0px; width: 112px; height: 20px; line-height: 20px; padding-right: 8px; text-align: right; font-size: 11px; color: var(--on-surface-variant); overflow: hidden; }
 .px-blocks { position: absolute; left: 128px; right: 0px; top: 0px; bottom: 0px; } /* under the ruler, as .px-over */
@@ -307,7 +358,7 @@
 .px-block.selected { border-color: var(--primary); background-color: var(--primary); color: var(--on-primary); }
 .px-tl.stale .px-block, .px-tl.stale .px-flag, .px-tl.stale .px-pause { opacity: 0.4; }
 /* Part 6а: the actors' clips of a scene, a row for each actor; a loop's bar runs to its next clip, a stop is a mark. */
-.px-plays { height: auto; max-height: 80px; border-top: 1px var(--outline-variant); }
+.px-plays { flex: 0 0 auto; min-height: 0px; max-height: 80px; border-top: 1px var(--outline-variant); }
 .px-block.px-play { background-color: var(--tertiary-container); color: var(--on-tertiary-container); }
 .px-block.px-play.loop { border-style: dashed; }
 .px-block.px-play.stop { padding-left: 0px; background-color: var(--outline); }
@@ -342,7 +393,29 @@
 .px-flag.px-stop.missing { border-left-color: var(--error); }
 .px-flag.px-stop.missing span { color: var(--error); }
 .px-flag.px-stop.held { background-color: var(--primary-container); }
-.px-held { gap: var(--space-1); align-items: center; min-height: 24px; padding: 0px var(--space-2); border-radius: 4px; font-size: 12px; background-color: var(--primary-container); color: var(--on-primary-container); }
-.px-tl-note { padding: 2px 0px 2px 128px; }
+.px-held { flex: 0 0 auto; gap: var(--space-1); align-items: center; min-height: 24px; padding: 0px var(--space-2); border-radius: 4px; font-size: 12px; background-color: var(--primary-container); color: var(--on-primary-container); }
+.px-tl-note { flex: 0 0 auto; padding: 2px 0px 2px 128px; }
 .px-over { position: absolute; left: 128px; right: 0px; top: 0px; bottom: 0px; pointer-events: none; }
 .px-head { position: absolute; top: 0px; bottom: 0px; width: 2px; background-color: var(--error); pointer-events: none; }
+
+/* The narrow window (part 7а): the rail, the left and the right panel by the window's width; under 1200 the path
+   without its kind and, in «Код», the code over the vector. */
+@media (min-width: 1550px) {
+    .px-rail { width: 50px; }
+    .px-left { width: 236px; }
+    .px-side { width: 296px; }
+}
+@media (max-width: 1199.9px) {
+    .px-rail { width: 42px; }
+    .px-left { width: 184px; }
+    .px-side { width: 238px; }
+    .px-path-kind { display: none; }
+    .look-code .px-center-in { flex-direction: column; }
+    .look-code .px-code { flex: 0 0 50%; }
+    .look-code .px-split { width: auto; height: 6px; cursor: ns-resize; }
+    .look-code .px-code-box { min-height: 48px; }
+}
+@media (max-width: 979.9px) {
+    .px-left { width: 164px; }
+    .px-side { width: 218px; }
+}

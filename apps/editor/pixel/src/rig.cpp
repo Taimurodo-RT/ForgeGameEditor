@@ -1647,7 +1647,9 @@ const Rig& Rig::shown() const { return const_cast<Rig*>(this)->shown(); }
 
 bool Rig::swapping() const { return impl_->swap; }
 
-Affine Rig::to_pixels(u32 w, u32 h) const {
+Affine Rig::to_pixels(u32 w, u32 h) const { return fit_in(w, h); }
+
+Affine Rig::fit_in(f64 w, f64 h) const {
     const f64* vb = impl_->vb;
     if (vb[2] <= 0 || vb[3] <= 0) return {};
     const f64 s = std::min(w / vb[2], h / vb[3]);

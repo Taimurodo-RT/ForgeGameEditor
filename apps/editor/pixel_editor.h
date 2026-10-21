@@ -55,6 +55,12 @@
 // the player's frame (Scene::draw_frame) with the transition in or out over it, and «Снимок кадра» takes that. The tree's
 // first row is «Камера», its fields x, y, zoom and rot; the timeline has the camera's tracks, its row «камера · следит»
 // and a row of the transitions, each chosen showing its kind, length and call.
+//
+// Step 7 «Вид по образцу», part 7а «Раскладка» (pixel_look.cpp): a bar of the path, the three views and «Экспорт» over
+// the tab; the tools' rail, the left panel with «Слои» and «Файлы», the middle (the code in «Код», the vector filling
+// its frame, «Пиксели») over the bottom panel («Таймлайн», «Проблемы N», «Консоль»), the right panel («Свойства»,
+// «Анимация», or «Экспорт» in their place) all down the side. The vector's points are the px of the interface of its
+// frame, whatever its size; ×1 fits the picture in it.
 
 #include "forge/editor/document.h"
 #include "forge/editor/undo.h"
@@ -302,7 +308,9 @@ public:
 
     // --- the view and the sounds (part 3в, pixel_view.cpp) ---
     // The vector's zoom and pan: step 0 … pixel::kZoomTop round a point of the screen (the context's pixels), = and −
-    // round the view's middle, 0 fitted; the middle button pans by the mouse's move. A new character starts fitted.
+    // round the view's middle, 0 fitted; the middle button or the hand pans by the mouse's move. A new character starts
+    // fitted. The view's points are its frame's px of the interface (part 7а): when the frame changes its size, the step
+    // stays and the point of the picture in the view's middle stays there, as far as the edges let it.
     const pixel::PictureView& picture_view() const { return zoom_; }
     void zoom_view(i32 step, f32 x, f32 y);
     void zoom_view_by(int steps);
@@ -349,7 +357,8 @@ public:
     // the tool «Выбор» again. Refused, note() saying why and nothing written, for a picture of an SVG file, a drawing
     // function not written in this file, code with an error, a frame in a swap, a shape of no size. Choosing a tool turns
     // the eyedropper off and finishes the pen as Enter does.
-    enum class Tool : u8 { Select, Rect, Ellipse, Line, Pen };
+    // Part 7а: «Рука» (H) drags the view with the left button as the middle one does, in a scene too.
+    enum class Tool : u8 { Select, Rect, Ellipse, Line, Pen, Hand };
     void set_tool(Tool t);
     Tool tool() const { return tool_; }
     // The pen's points so far (picture units). Enter finishes it open (a path), a click on its first point closes it (a
@@ -507,6 +516,41 @@ public:
     bool go_on();
     void toggle_play(); // ▶ and Space: on from a stop, else play or pause
     bool open_actor_character();
+
+    // --- the look (step 7, part 7а «Раскладка», pixel_look.cpp) ---
+    // The three views: «Дизайн» (the vector, «Пиксели», «Свойства»), «Код» (the code beside the vector), «Анимация» (the
+    // timeline higher, «Анимация» on the right); Ctrl+1 … Ctrl+3. A view shows its right tab at first, and «Пиксели» and
+    // the bottom panel's height as it last had them; the code's share of the middle is one for all. None of it is
+    // written into files or the history; the first view of a run is «Код», a character or scene opens in the last.
+    enum class Look : u8 { Design, Code, Animation };
+    void set_look(Look l);
+    Look look() const { return look_; }
+    // The left panel's tab: «Слои» ("layers") or «Файлы» ("files"); nothing open shows «Файлы», a file opened from
+    // them «Слои». The right's: «Свойства» ("props") or «Анимация» ("anim"), set by what is selected (a part:
+    // «Свойства»; a block, a pause, an actor's clip, a transition: «Анимация») and by the view. The bottom's: "timeline",
+    // "problems", "console". «Экспорт» in place of the right's tabs (Esc closes it after the steps Esc had before).
+    void set_left(const std::string& tab);
+    const std::string& left() const { return left_; }
+    void set_side(const std::string& tab);
+    const std::string& side() const { return side_; }
+    void set_bottom(const std::string& tab);
+    const std::string& bottom() const { return bottom_; }
+    void set_export(bool open);
+    bool export_open() const { return export_open_; }
+    void fold_pixels(bool folded);
+    bool pixels_folded() const { return folded_[static_cast<usize>(look_)]; }
+    // «Проблемы»: the console's errors and warnings, in its order; a click puts the panel on its line, in «Код».
+    const std::vector<ConsoleLine>& problems() const { return problems_; }
+    bool problem_to_code(usize index);
+    // The bottom panel's height dragged (px of the interface; 0: its share of the view), the code's share of the middle
+    // (0: the view's own, 48 % or 50 % in a narrow window).
+    f64 bottom_height() const { return tl_height_[static_cast<usize>(look_)]; }
+    f64 code_share() const { return code_share_; }
+    // The vector's frame: its points (px of the interface) and its texels (pixels of the window, the texture's size).
+    f64 view_points_w() const { return view_pw_; }
+    f64 view_points_h() const { return view_ph_; }
+    u32 view_texels_w() const;
+    u32 view_texels_h() const;
 
     // What the views show now (for the self-test): the vector, the pixel frame at its size, both as the UI names them.
     const assets::CookedTexture& vector_view() const { return vector_; }
@@ -768,10 +812,21 @@ private:
     void ease_drag(f32 x, f32 y);
     void ease_release();
     void ease_cancel();                            // Esc while held: back where it was, nothing written
+    // Part 7а (pixel_look.cpp): the look's bindings and events; the frames of the vector and «Пиксели» measured, the
+    // vector resized to its frame; the grips of the bottom panel and the code's share dragged.
+    void bind_look(Rml::DataModelConstructor& model);
+    void measure_views(Rml::Context* context);
+    void resize_view(f64 pw, f64 ph, u32 tw, u32 th);
+    bool grip_press(Rml::Context* context, f32 x, f32 y);
+    void grip_drag(f32 x, f32 y);
+    void grip_release();
+    void look_styles(); // px_tl_style, px_code_style
+    void rebuild_problems();
+    bool look_key(const SDL_KeyboardEvent& k); // Ctrl+1 … Ctrl+3
     // Part 3в (pixel_view.cpp).
     void bind_view(Rml::DataModelConstructor& model);
-    pixel::Affine to_view() const;   // picture units to the view's points (kViewPx) at its zoom
-    pixel::Affine to_texels() const; // … to the vector's texels (view_px())
+    pixel::Affine to_view() const;   // picture units to the view's points (its frame's px) at its zoom
+    pixel::Affine to_texels() const; // … to the vector's texels (view_texels_w() × view_texels_h())
     void fit_box();                  // the picture's box at ×1, the zoom kept within it
     void track_mouse(Rml::Context* context); // the line under the views from the mouse
     bool pick_click(f32 x, f32 y);   // a click while picking: the colour copied
@@ -882,9 +937,34 @@ private:
     std::string images_[2][3]; // the pictures shown now and before: vector, pixel big, pixel 1:1
     u64 image_serial_ = 0;
     f32 view_x_ = 0, view_y_ = 0, view_w_ = 0, view_h_ = 0; // the vector view on screen (context pixels)
-    // The views are drawn at their size in pixels of the window: 288 px of the style, dp_ pixels each.
+    // The views are drawn at their size in pixels of the window, dp_ of them a px of the interface. The vector's frame in
+    // points and in texels (part 7а; 0 texels: not measured yet, its points at dp_); «Пиксели»'s frame in pixels of the
+    // window (0: not measured yet).
     f32 dp_ = 1;
-    u32 view_px() const;
+    f64 view_pw_ = kViewPoints, view_ph_ = kViewPoints;
+    u32 view_tw_ = 0, view_th_ = 0;
+    f32 pixel_box_w_ = 0, pixel_box_h_ = 0;
+    // … and its column's room under its head (0: not measured yet): the frame «в настоящем размере» is shown under «как
+    // запечётся» only while it fits there and leaves «как запечётся» as much room.
+    f32 pixel_room_w_ = 0, pixel_room_h_ = 0;
+    static constexpr f64 kViewPoints = 288; // the frame before it is first measured
+    // Part 7а: the look, the panels' tabs, «Пиксели» folded and the bottom panel's height of each view, the code's
+    // share, the grip held (0: none, 1: the bottom panel's, 2: the code's), where it was pressed and what it held then.
+    Look look_ = Look::Code;
+    std::string left_ = "files", side_ = "props", bottom_ = "timeline";
+    bool export_open_ = false;
+    bool folded_[3] = {false, true, false};
+    f64 tl_height_[3] = {0, 0, 0};
+    f64 tab_h_ = 0; // the height under the bar (px of the interface; 0: not measured yet)
+    f64 code_share_ = 0;
+    int grip_ = 0;
+    bool grip_across_ = false; // the code's grip moves up and down (the code over the vector)
+    f32 grip_at_ = 0, grip_from_ = 0, grip_whole_ = 0;
+    std::vector<ConsoleLine> problems_;
+    std::vector<ConsoleRow> m_problems_;
+    Rml::String m_look_ = "code", m_left_ = "files", m_side_ = "props", m_bottom_ = "timeline", m_tl_style_, m_code_style_,
+        m_vector_style_, m_pixel_style_, m_one_style_;
+    bool m_export_open_ = false, m_pixels_folded_ = true;
     bool dragging_ = false, drag_moved_ = false;
     pixel::PixelDoc drag_doc_; // the file's, while a pivot is dragged
     // Part 3б: a part dragged in the vector (pressed at move_x_, move_y_; started past 3 points), its move so far.

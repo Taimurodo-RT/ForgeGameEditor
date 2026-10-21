@@ -71,24 +71,24 @@ void PixelEditor::bind_view(Rml::DataModelConstructor& model) {
 
 // --- the zoom -----------------------------------------------------------------------------------------
 
-pixel::Affine PixelEditor::to_view() const { return zoom_.affine() * rig().to_pixels(kViewPx, kViewPx); }
+pixel::Affine PixelEditor::to_view() const { return zoom_.affine() * rig().fit_in(view_pw_, view_ph_); }
 
 pixel::Affine PixelEditor::to_texels() const {
-    // The view's zoom in its texels: the same steps, its pan view_px() / kViewPx texels a point.
-    const f64 k = static_cast<f64>(view_px()) / kViewPx, z = zoom_.zoom();
-    return pixel::Affine{z, 0, 0, z, zoom_.ox * k, zoom_.oy * k} * rig().to_pixels(view_px(), view_px());
+    // The view's zoom in its texels: the same steps, its pan as many texels a point as the frame has (part 7а).
+    const f64 tw = view_texels_w(), th = view_texels_h(), kx = tw / view_pw_, ky = th / view_ph_, z = zoom_.zoom();
+    return pixel::Affine{z, 0, 0, z, zoom_.ox * kx, zoom_.oy * ky} * rig().fit_in(tw, th);
 }
 
 void PixelEditor::fit_box() {
-    zoom_.width = zoom_.height = kViewPx;
+    zoom_.width = view_pw_, zoom_.height = view_ph_;
     const f64 w = rig().width(), h = rig().height();
     if (rig().loaded() && w > 0 && h > 0) {
-        const f64 s = std::min(kViewPx / w, kViewPx / h);
-        zoom_.box[0] = (kViewPx - w * s) / 2, zoom_.box[1] = (kViewPx - h * s) / 2;
-        zoom_.box[2] = (kViewPx + w * s) / 2, zoom_.box[3] = (kViewPx + h * s) / 2;
+        const f64 s = std::min(view_pw_ / w, view_ph_ / h);
+        zoom_.box[0] = (view_pw_ - w * s) / 2, zoom_.box[1] = (view_ph_ - h * s) / 2;
+        zoom_.box[2] = (view_pw_ + w * s) / 2, zoom_.box[3] = (view_ph_ + h * s) / 2;
     } else {
         zoom_.box[0] = zoom_.box[1] = 0;
-        zoom_.box[2] = zoom_.box[3] = kViewPx;
+        zoom_.box[2] = view_pw_, zoom_.box[3] = view_ph_;
     }
     zoom_.clamp();
     const std::string words = pixel::zoom_words(zoom_.step);
@@ -102,8 +102,8 @@ void PixelEditor::zoom_view(i32 step, f32 x, f32 y) {
     if (!has_) return;
     fit_box();
     // The point of the view under (x, y); its middle when it is not laid out.
-    vector::Point at{kViewPx / 2.0, kViewPx / 2.0};
-    if (view_w_ > 0 && view_h_ > 0) at = {(x - view_x_) * static_cast<f64>(kViewPx) / view_w_, (y - view_y_) * static_cast<f64>(kViewPx) / view_h_};
+    vector::Point at{view_pw_ / 2, view_ph_ / 2};
+    if (view_w_ > 0 && view_h_ > 0) at = {(x - view_x_) * view_pw_ / view_w_, (y - view_y_) * view_ph_ / view_h_};
     zoom_.zoom_to(step, at);
     fit_box();
     view_dirty_ = true;
@@ -112,7 +112,7 @@ void PixelEditor::zoom_view(i32 step, f32 x, f32 y) {
 void PixelEditor::zoom_view_by(int steps) {
     if (!has_) return;
     fit_box();
-    zoom_.zoom_to(zoom_.step + steps, {kViewPx / 2.0, kViewPx / 2.0});
+    zoom_.zoom_to(zoom_.step + steps, {view_pw_ / 2, view_ph_ / 2});
     fit_box();
     view_dirty_ = true;
 }
@@ -126,7 +126,7 @@ void PixelEditor::fit_view() {
 void PixelEditor::pan_view(f32 dx, f32 dy) {
     if (view_w_ <= 0 || view_h_ <= 0) return;
     fit_box();
-    zoom_.pan(dx * static_cast<f64>(kViewPx) / view_w_, dy * static_cast<f64>(kViewPx) / view_h_);
+    zoom_.pan(dx * view_pw_ / view_w_, dy * view_ph_ / view_h_);
     view_dirty_ = true;
 }
 
