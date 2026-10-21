@@ -89,10 +89,12 @@ private:
     std::unordered_map<std::string, ClipPtr> clips_, put_;
     std::string music_, last_click_;
     Voice voice_;
-    // Tunes playing and their voices (by list), at volume × scale.
+    // Tunes playing (each as it began: `since` the place it began from) and their voices (by list), at volume × scale;
+    // the latest time each was wanted at, to tell a scene begun again.
     struct Tunes {
         std::vector<Tune> list;
         std::vector<Voice> voices;
+        std::vector<f64> latest;
     };
     void play_tunes(Tunes& on, const std::vector<Tune>& want, f32 scale);
     Tunes tunes_, screen_tunes_;

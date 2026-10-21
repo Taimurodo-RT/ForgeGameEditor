@@ -507,7 +507,8 @@ TEST_CASE("screen sound: a scene's tunes behind a screen beside a cut-scene's, u
     REQUIRE(mixer.heard(behind, volume, seconds));
     CHECK(volume == doctest::Approx(0.5));
     REQUIRE(s.screen_tunes().size() == 1);
-    CHECK(s.screen_tunes()[0].since == 1.5);
+    CHECK(s.screen_tunes()[0].since == 0); // as it began: from the start of its file
+    CHECK(s.screen_tunes()[0].volume == 1);
     // Its scene began again: its time back to the start, a voice of its own from there.
     s.screen_tunes({{1, "мелодия меню.wav", 0.02, 1.0f}});
     CHECK(mixer.started() == started + 1);

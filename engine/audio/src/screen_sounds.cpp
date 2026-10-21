@@ -80,16 +80,19 @@ void ScreenSounds::play_tunes(Tunes& on, const std::vector<Tune>& want, f32 scal
     constexpr f64 kBack = 0.05;
     for (usize i = on.list.size(); i-- > 0;) {
         const Tune& o = on.list[i];
-        if (std::none_of(want.begin(), want.end(), [&](const Tune& t) { return t.call == o.call && t.name == o.name && t.since + kBack >= o.since; })) {
+        const f64 latest = on.latest[i];
+        if (std::none_of(want.begin(), want.end(), [&](const Tune& t) { return t.call == o.call && t.name == o.name && t.since + kBack >= latest; })) {
             if (mixer_) mixer_->stop(on.voices[i]);
             on.list.erase(on.list.begin() + static_cast<std::ptrdiff_t>(i));
             on.voices.erase(on.voices.begin() + static_cast<std::ptrdiff_t>(i));
+            on.latest.erase(on.latest.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }
     for (const Tune& t : want) {
         const auto o = std::find_if(on.list.begin(), on.list.end(), [&](const Tune& x) { return x.call == t.call; });
         if (o != on.list.end()) {
-            o->since = std::max(o->since, t.since);
+            f64& latest = on.latest[static_cast<usize>(o - on.list.begin())];
+            latest = std::max(latest, t.since);
             if (o->volume != t.volume) {
                 o->volume = t.volume;
                 if (mixer_) mixer_->set(on.voices[static_cast<usize>(o - on.list.begin())], t.volume * scale, 0);
@@ -101,6 +104,7 @@ void ScreenSounds::play_tunes(Tunes& on, const std::vector<Tune>& want, f32 scal
             v = mixer_->play(c, {.volume = t.volume * scale, .loop = true, .bus = Bus::Music, .from = t.since});
         on.list.push_back(t);
         on.voices.push_back(v);
+        on.latest.push_back(t.since);
     }
 }
 
