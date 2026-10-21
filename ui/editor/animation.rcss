@@ -163,6 +163,10 @@
 /* The problem and the note under the canvas's line wrap at the middle's width: a long line does not widen it. */
 .px-said { flex: 0 0 auto; }
 .px-said > div { flex: 1 1 0px; min-width: 0px; }
+/* Part 7а: the problem and the note lie over the top of the vector, under the canvas row, and take none of its height: the
+   vector's frame keeps its size when they come and go. The mouse goes through them to the vector. */
+.px-said-over { position: absolute; left: 0px; right: 0px; top: 0px; pointer-events: none; }
+.px-said-over .px-said { background-color: var(--surface-container-high); }
 /* The vector fills its frame: its picture is that frame's size in pixels of the window (px_vector_style), laid over it. */
 .px-views { flex: 1 1 0px; min-height: 0px; gap: var(--space-1); align-items: stretch; }
 .px-canvas { position: relative; overflow: hidden; border-radius: 6px; background-color: var(--surface-container-highest); }

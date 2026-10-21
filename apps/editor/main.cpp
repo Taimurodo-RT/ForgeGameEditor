@@ -7301,15 +7301,16 @@ private:
         y = at.y + size.y * fy;
         return true;
     }
-    // A click with the mouse in the middle of an element, scrolled into its panel's view first (as the author would).
-    bool ue_press(const std::string& id) {
+    // A click with the mouse in the middle of an element (or at fractions of its box), scrolled into its panel's view
+    // first (as the author would).
+    bool ue_press(const std::string& id, f32 fx = 0.5f, f32 fy = 0.5f) {
         px_reveal(id.c_str());
         if (Rml::Element* e = ed_.find_element(id.c_str()); e && e->IsVisible(true)) {
             e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
             ed_.context()->Update();
         }
         f32 x = 0, y = 0;
-        if (!ue_point(id.c_str(), 0.5f, 0.5f, x, y)) return false;
+        if (!ue_point(id.c_str(), fx, fy, x, y)) return false;
         left_click(x, y);
         return true;
     }
@@ -17255,6 +17256,10 @@ private:
     static std::filesystem::path px_mine(const char* title) { return px_root() / utf8_path("Мои игры") / utf8_path(title); }
     // A click on an element of the tab's right column, scrolled to first as a person scrolls to it.
     bool px_click(const std::string& id) { return ue_press(id); }
+    // Frame k's cell of the ruler pressed. A scene's frames are 60 a second, so in the whole clip's view a cell is a few
+    // points wide: the first is pressed on its right part, past the range's edge, which reaches 3 points into it (the
+    // mouse stands on whole points).
+    bool px_frame_cell(u32 k) { return ue_press("px-frame-" + std::to_string(k), k == 0 ? 0.8f : 0.5f); }
     // The author's drawing: a hedgehog of 32 × 64 (the hero's frame), its legs, its torso with the head, a mouth and the
     // open mouth it morphs into (hidden; of the same colour, so the frames keep the SVG's four).
     static constexpr const char* kPxHedgehog = R"svg(<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 64" width="32" height="64">
@@ -20034,7 +20039,7 @@ return {
             // All of the clip again by the range's ends: no range in the file either.
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(file(doc) == mo_ranged_, "Ctrl+Z: 0,3 to 0,8 s again");
-            check(px_click("px-frame-0") && px().time() == 0, "frame 1");
+            check(px_frame_cell(0) && px().time() == 0, "frame 1");
             key(SDLK_B, SDL_KMOD_NONE);
             check(step_label() == "«Ёжик»: «В воздухе» с 0 по 0,8 с" && px().cut().frames == 24, "B at 0: " + step_label());
             break;
@@ -20465,7 +20470,7 @@ return {
             if (wait(2)) return true;
             out = mb_recorded();
             mb_k_ = 0;
-            check(px_click("px-frame-0"), "frame 1 of the ruler");
+            check(px_frame_cell(0), "frame 1 of the ruler");
             return true;
         }
         if (wait(2)) return true;
@@ -20479,7 +20484,7 @@ return {
             mb_laid_ = 3;
             return true;
         }
-        check(px_click("px-frame-" + std::to_string(mb_k_)), "frame " + std::to_string(mb_k_ + 1) + " of the ruler");
+        check(px_frame_cell(static_cast<u32>(mb_k_)), "frame " + std::to_string(mb_k_ + 1) + " of the ruler");
         return true;
     }
 
@@ -21023,7 +21028,7 @@ return {
             check(away(), "out of the panel");
             key(SDLK_Z, SDL_KMOD_CTRL);
             check(files_are(mb_code_, mb_frames_) && step_label() == mb_label_, "Ctrl+Z: the line that does not compile undone");
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         }
         // The tree's row under the mouse: its part outlined in the vector, a colour of its own; and not after.
@@ -26691,7 +26696,7 @@ return {
                   "«В воздухе»: 0,4 s, 5 frames (it does not repeat: its end too), no start, no flag «Начало», the console empty: " +
                       std::to_string(rec->length) + " s, " + std::to_string(px().whole().frames) + " frames, " + std::to_string(px().console().size()) +
                       " lines");
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         case 5: {
             if (wait(2)) return true;
@@ -26758,7 +26763,7 @@ return {
         }
         case 9:
             if (hold(px().clip() == "air" && rec && rec->start.clip == "idle" && !px().stale() && shown("px-start"), "«В воздухе» from idle")) return true;
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         case 10: {
             if (wait(2)) return true;
@@ -26778,7 +26783,7 @@ return {
         case 12:
             if (hold(px().clip() == "air" && rec && rec->start.clip == "idle" && !px().stale() && shown("px-start"), "«В воздухе» from idle")) return true;
             check(ml_flag() == flag, "its flag again");
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         // Frame 1 is idle at its end in both views; then baked.
         case 13: {
@@ -26815,7 +26820,7 @@ return {
                 }
             check(bad.empty(), "each of the 11 frames as the library bakes the files apart from the tab;" + bad);
             ml_doc_ = file(doc);
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         }
         // The body dragged in frame 1: at(0, …) right after start_from, x from where the pose has it.
@@ -26930,7 +26935,7 @@ return {
             check(!was.empty() && seen == std::string(was.begin(), was.end()),
                   "the recording, the flag «из idle», the tracks and both views of every frame as pixel-motion-l saw them\n" + seen);
             check(element_text("px-total") == "в картинке 11 кадров из 64" && !px().edited(), "«" + element_text("px-total") + "», the picture as baked");
-            check(px_click("px-frame-0") && px().frame() == 0, "frame 1");
+            check(px_frame_cell(0) && px().frame() == 0, "frame 1");
             break;
         }
         case 5: {
@@ -27928,9 +27933,9 @@ return {
             if (rec->plays[i].actor == actor && rec->plays[i].clip == clip) return static_cast<i32>(i);
         return -1;
     }
-    // The ruler's frame k shown: frame 1 clicked, then → k times.
+    // Frame k of the ruler: its first frame pressed, then → k times.
     void sc_frame(u32 k) {
-        check(px_click("px-frame-0"), "frame 1 of the ruler");
+        check(px_frame_cell(0) && px().frame() == 0, "frame 1 of the ruler");
         for (u32 i = 0; i < k; ++i) key(SDLK_RIGHT, SDL_KMOD_NONE);
     }
 
@@ -28462,11 +28467,15 @@ return {
             if (hold(rec && !px().stale() && px().code() == sb_base_ && shown("px-play-0"), "the scene recorded")) return true;
             check(element_text("px-through-label") == "Через камеру: кадр игрока 160 × 90" && shown("px-pixel-img") && !shown("px-one"),
                   "the small view «Через камеру»: «" + element_text("px-through-label") + "»");
-            // The canvas's shape, its longer side the vector's.
-            const assets::CookedTexture &through = px().pixel_frame(), &vec = px().vector_view();
-            check(through.width == vec.width && std::abs(static_cast<f64>(through.height) * 160 - static_cast<f64>(through.width) * 90) <= 160,
-                  "«Через камеру» 16 : 9 as wide as the vector: " + std::to_string(through.width) + " × " + std::to_string(through.height) + " for " +
-                      std::to_string(vec.width));
+            // The canvas's shape as big as fits in the frame of «Пиксели» (part 7а).
+            const assets::CookedTexture& through = px().pixel_frame();
+            Rml::Element* box = ed_.find_element("px-pixel");
+            const Rml::Vector2f in = box ? box->GetBox().GetSize(Rml::BoxArea::Content) : Rml::Vector2f{};
+            const u32 bw = static_cast<u32>(std::floor(in.x)), bh = static_cast<u32>(std::floor(in.y));
+            check(through.width <= bw && through.height <= bh && (through.width == bw || bh - through.height <= 1) &&
+                      std::abs(static_cast<f64>(through.height) * 160 - static_cast<f64>(through.width) * 90) <= 160,
+                  "«Через камеру» 16 : 9 as big as fits in the frame of «Пиксели»: " + std::to_string(through.width) + " × " +
+                      std::to_string(through.height) + " in " + std::to_string(bw) + " × " + std::to_string(bh));
             check(shown("px-part-camera") && element_text("px-part-camera").find("Камера") != std::string::npos &&
                       element_text("px-part-camera").find("кадр игрока") != std::string::npos,
                   "the tree's first row «Камера»: «" + element_text("px-part-camera") + "»");
@@ -28828,6 +28837,9 @@ return {
         px_reveal(id);
         Rml::Element* e = ed_.find_element(id);
         if (!e || !e->IsVisible(true)) return false;
+        // Scrolled into the timeline's view first, as the author would (part 7а: the bottom panel is lower than the rows).
+        e->ScrollIntoView(Rml::ScrollIntoViewOptions(Rml::ScrollAlignment::Nearest));
+        ed_.context()->Update();
         const Rml::Vector2f at = e->GetAbsoluteOffset(Rml::BoxArea::Border), size = e->GetBox().GetSize(Rml::BoxArea::Border);
         left_click(at.x + 10, at.y + size.y / 2);
         left_click(at.x + 10, at.y + size.y / 2);

@@ -1355,11 +1355,13 @@
                             <span id="px-size-words" class="px-num">{{ px_size }}</span>
                             <div id="px-fit" class="an-chip" title="Вписать (0)" data-event-click="px_fit"><icon class="s" name="fit_screen"/><span>Вписать</span></div>
                         </div>
-                        <div class="px-said row" data-if="px_problem != ''"><div id="px-problem" class="an-problem px-problem">{{ px_problem }}</div></div>
-                        <div class="px-said row" data-if="px_note != ''"><div id="px-note" class="an-sel-note">{{ px_note }}</div></div>
                         <div class="px-views row grow">
                             <div id="px-vector" class="px-canvas px-vector grow" title="Колесо, = и − — масштаб, 0 — вписать, средняя кнопка или рука — сдвиг">
                                 <img id="px-vector-img" data-if="px_vector != ''" data-attr-src="px_vector" data-attr-style="px_vector_style"/>
+                                <div id="px-said" class="px-said-over column">
+                                    <div class="px-said row" data-if="px_problem != ''"><div id="px-problem" class="an-problem px-problem">{{ px_problem }}</div></div>
+                                    <div class="px-said row" data-if="px_note != ''"><div id="px-note" class="an-sel-note">{{ px_note }}</div></div>
+                                </div>
                                 <span class="px-canvas-hint">Щелчок выбирает часть, протяжка двигает её в коде, опорная точка тянется мышью · пробел — пуск</span>
                             </div>
                             <div id="px-pixel-col" class="px-pixel-col column" data-class-folded="px_pixels_folded">
