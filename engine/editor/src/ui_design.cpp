@@ -695,6 +695,7 @@ std::string save_screen(const Screen& screen) {
             }
             if (!screen.music.empty()) yyjson_mut_obj_add_strcpy(doc, so, "music", screen.music.c_str());
             if (!screen.button_sound.empty()) yyjson_mut_obj_add_strcpy(doc, so, "button_sound", screen.button_sound.c_str());
+            if (!screen.scene_behind.empty()) yyjson_mut_obj_add_strcpy(doc, so, "scene_behind", screen.scene_behind.c_str());
         }
         yyjson_mut_obj_add_val(doc, root, "settings", so);
     }
@@ -767,6 +768,7 @@ bool load_screen(std::string_view json, Screen& out, std::string* error) {
         s.appear_time = std::clamp(num(so, "appear_time", 0.25f), 0.05f, 10.0f);
         s.music = str(so, "music");
         s.button_sound = str(so, "button_sound");
+        s.scene_behind = str(so, "scene_behind");
     }
     if (yyjson_val* a = yyjson_obj_get(root, "colors"); yyjson_is_arr(a)) {
         usize i, n;
@@ -1949,6 +1951,7 @@ void write_elements(const Node& n, std::string& html, int depth, const std::vect
                     fmt(screen->appear_time) + "\"";
         if (!screen->music.empty()) html += " forge-music=\"" + escape_html(screen->music) + "\"";
         if (!screen->button_sound.empty()) html += " forge-button-sound=\"" + escape_html(screen->button_sound) + "\"";
+        if (!screen->scene_behind.empty()) html += " forge-scene-behind=\"" + escape_html(screen->scene_behind) + "\"";
     }
     write_game_attributes(n, html);
     if (std::find(off.begin(), off.end(), n.id) != off.end()) html += " forge-disabled=\"1\"";

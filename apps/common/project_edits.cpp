@@ -243,6 +243,18 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("st_wide", &forge::edits::ProjectEdits::st_wide);
     t.field("st_blend_frames", &forge::edits::ProjectEdits::st_blend_frames);
     t.field("st_blend_files", &forge::edits::ProjectEdits::st_blend_files);
+    t.field("sb_menu", &forge::edits::ProjectEdits::sb_menu);
+    t.field("sb_scene", &forge::edits::ProjectEdits::sb_scene);
+    t.field("sb_button", &forge::edits::ProjectEdits::sb_button);
+    t.field("sb_button_color", &forge::edits::ProjectEdits::sb_button_color);
+    t.field("sb_music", &forge::edits::ProjectEdits::sb_music);
+    t.field("sb_window", &forge::edits::ProjectEdits::sb_window);
+    t.field("sb_window_scene", &forge::edits::ProjectEdits::sb_window_scene);
+    t.field("sb_length", &forge::edits::ProjectEdits::sb_length);
+    t.field("sb_window_length", &forge::edits::ProjectEdits::sb_window_length);
+    t.field("sb_frames", &forge::edits::ProjectEdits::sb_frames);
+    t.field("sb_files", &forge::edits::ProjectEdits::sb_files);
+    t.field("sb_wide", &forge::edits::ProjectEdits::sb_wide);
 }
 
 namespace forge::edits {

@@ -216,6 +216,7 @@ struct GameScene::Impl {
     f64 fit_scale = 1, fit_left = 0, fit_top = 0;
     std::string camera_transform;
     u64 run_poses = 0;
+    f64 alpha = 1; // part 6г5б: how much of it shows (set_alpha)
 
     // The music: what on_music last heard; after the end, the scene's going out over kMusicBack.
     std::vector<SceneTune> tunes;
@@ -362,12 +363,44 @@ struct GameScene::Impl {
 
     void fire(const vector::SceneMark& mk) {
         if (!mk.sound) {
-            if (self->on_message) self->on_message(mk.name);
+            if (self->on_message && !how.behind) self->on_message(mk.name);
             return;
         }
         const std::string file = scene_sound_file(sounds, mk.name);
         if (file.empty()) say("сцена «" + name + "»: звука «" + mk.name + "» нет в звуках игры");
         else if (self->on_sound) self->on_sound(file);
+    }
+
+    // Part 6г5б: dt seconds of a scene behind a screen pass, round and round: its waits and talks pass at once (its time
+    // goes on as if it had not stood at them), the marks it passes sound (fire: its messages do not go to the logic), at its
+    // end it begins again from its start (the frame of its length is its first), and its music with it: a tune's time
+    // going back starts it again.
+    void round_on(f64 dt) {
+        const f64 length = scene.file.length;
+        auto sound = [&](const vector::SceneAt* from, const vector::SceneAt& to) {
+            std::vector<vector::SceneMark> passed;
+            std::string why;
+            if (!vector::scene_marks_between(scene, from, to, passed, why)) say("сцена «" + name + "»: " + why);
+            else
+                for (const vector::SceneMark& mk : passed) fire(mk);
+        };
+        f64 ahead = clock + dt;
+        if (!(length > 0)) ahead = 0;
+        else if (std::round(ahead * 1e9) / 1e9 >= length) {
+            vector::SceneAt end = at();
+            end.t = length;
+            sound(has_was ? &was : nullptr, end);
+            has_was = false;
+            ahead = std::fmod(ahead, length);
+            if (std::round(ahead * 1e9) / 1e9 >= length) ahead = 0;
+        }
+        clock = ahead;
+        t = std::min(std::round(clock * 1e9) / 1e9, length);
+        const vector::SceneAt now = at();
+        sound(has_was ? &was : nullptr, now);
+        was = now;
+        has_was = true;
+        music_now();
     }
 
     // Its talk open now closes (it is skipped or dropped).
@@ -594,7 +627,8 @@ struct GameScene::Impl {
     // A frame of a transition, shown or not, in its track's pose (pp null: where it stands, whole): moved by its x, y in
     // the canvas's units as the screen is to the canvas, turned and scaled round the screen's middle; faded and masked
     // as a whole on its wrap, so the mask stands while the frame moves.
-    void set_frame(Frame& fr, bool shown, const vector::MotionPartPose* pp, const std::string& mask) {
+    // fade: how much of the scene shows (part 6г5б), over the frame's own.
+    void set_frame(Frame& fr, bool shown, const vector::MotionPartPose* pp, const std::string& mask, f64 fade = 1) {
         show(fr.wrap, shown, fr.shown);
         if (!shown) return;
         using vector::MotionProp;
@@ -604,7 +638,7 @@ struct GameScene::Impl {
             return std::isfinite(v) ? v : vector::motion_rest(p).v;
         };
         const f64 x = value(MotionProp::X), y = value(MotionProp::Y), rot = value(MotionProp::Rot), scale = value(MotionProp::Scale);
-        const f64 opacity = std::clamp(value(MotionProp::Opacity), 0.0, 1.0);
+        const f64 opacity = std::clamp(value(MotionProp::Opacity), 0.0, 1.0) * std::clamp(fade, 0.0, 1.0);
         std::string tr;
         if (x != 0 || y != 0 || rot != 0 || scale != 1) {
             const f64 dp = fit_dp > 0 ? fit_dp : 1.0;
@@ -800,7 +834,8 @@ struct GameScene::Impl {
         // last frame of the scene before it, which stands as the old frame till it is in; going out, the game's live frame
         // over it; after its leave, nothing of it.
         using Phase = vector::ScenePhase;
-        const Phase phase = pose.phase;
+        // A scene behind a screen (part 6г5б) draws its frame all its time: none of its transitions.
+        const Phase phase = how.behind ? Phase::Scene : pose.phase;
         cur.phase = phase;
         if (prev.doc && phase != Phase::Enter) close(prev);
         const bool over_prev = prev.doc != nullptr;
@@ -821,7 +856,7 @@ struct GameScene::Impl {
         show(cur.black, game, cur.black_on);
         set_frame(cur.below, enter && !over_prev, &pose.frames[0], enter && !over_prev ? mask(0) : std::string());
         set_frame(cur.look, phase != Phase::Gone, enter ? &pose.frames[1] : leave ? &pose.frames[2] : nullptr,
-                  enter ? mask(1) : leave ? mask(2) : std::string());
+                  enter ? mask(1) : leave ? mask(2) : std::string(), alpha);
         set_frame(cur.above, leave, &pose.frames[3], leave ? mask(3) : std::string());
         if (over_prev) {
             show(prev.backdrop, false, prev.backdrop_on);
@@ -976,6 +1011,11 @@ void GameScene::update(f64 dt, int width, int height) {
         im.fresh = false;
         dt = 0;
     }
+    if (im.how.behind) {
+        im.round_on(dt);
+        im.draw(width, height);
+        return;
+    }
     const u64 me = im.serial;
     // A frame of no time (the pause menu up) does not come to the next stop either: a talk could not open over the menu.
     if (first || dt > 0) im.advance(dt);
@@ -1048,6 +1088,8 @@ bool GameScene::wants_backdrop() const {
     return false;
 }
 void GameScene::set_ui(ui::Ui* ui) { impl_->ui = ui; }
+void GameScene::set_alpha(f64 alpha) { impl_->alpha = std::isfinite(alpha) ? std::clamp(alpha, 0.0, 1.0) : 1.0; }
+bool GameScene::has_music() const { return impl_->going && !impl_->scene.file.music.empty(); }
 void GameScene::logic_ran(u64 runs) {
     impl_->runs_told = true;
     impl_->runs = runs;

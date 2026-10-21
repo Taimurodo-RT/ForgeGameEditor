@@ -24,6 +24,11 @@
 // shell draws the world into a texture for it: wants_backdrop). A scene played by the logic that heard the end of the one
 // before comes in over that one's last frame, which is held till the game's logic has run once after the end
 // (logic_ran). A picture's or an actor's mask by a shape of the stage is drawn.
+//
+// Part 6г5б: a scene behind a screen of the game (forge-scene-behind, screens.h) is a player of its own with
+// SceneHow::behind: round and round from its start, its frame all its time (no transitions drawn), its waits and talks
+// passing at once, its messages not going to the logic (its sounds sound), its music beginning again with each round, as
+// much of it showing as its screen does (set_alpha).
 
 #include "forge/core/types.h"
 #include "forge/vector/scene_file.h"
@@ -50,6 +55,9 @@ namespace forge::game {
 struct SceneHow {
     bool pause = true; // the world stands and does not hear the player while it plays
     bool skip = true;  // the pause menu has «Пропустить сцену»
+    // Part 6г5б: a scene behind a screen, not a cut-scene: round and round, its frame all its time, waits and talks
+    // passing at once, no messages to the logic, never ending (drop stops it).
+    bool behind = false;
 };
 
 // A tune of the scene's music now (vector::scene_music_at): the file of the game's sounds it plays, by the call
@@ -119,6 +127,10 @@ public:
     bool wants_backdrop() const;
     // The UI whose renderer takes the masks it makes (none: they are not made).
     void set_ui(ui::Ui* ui);
+    // Part 6г5б: how much of it shows, 0..1, faded as one picture (a scene behind a screen comes and goes with it).
+    void set_alpha(f64 alpha);
+    // Whether its scene has music (a call of `music`): a screen without music of its own plays it.
+    bool has_music() const;
     // Part 6г4: how many times the game's logic has run so far (its ticks), each frame before update: the last frame of
     // the one over stays till this changes after its end, so the scene the logic begins on hearing it comes in over it
     // (on a screen of 144 Hz the logic's next tick may be two frames on). Not told, each update is taken for a run.

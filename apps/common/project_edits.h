@@ -258,6 +258,16 @@ struct ProjectEdits {
     // waits, at st_blend_frames (its time, having waited st_holds) its frames are st_blend_files, the clips mixed.
     std::vector<double> st_blend_frames;
     std::vector<std::string> st_blend_files;
+    // Part 6г5б (the editor's self-test pixel-scene-i): the game's own main menu sb_menu with sb_scene behind it, its
+    // button sb_button (the layer's element id, «Новая игра») of the colour sb_button_color over it; the scene's frames
+    // at sb_frames (its time, round and round) sb_files as the tab draws it without its ways in and out, sb_length a
+    // round, its music sb_music. The window sb_window stops the world, sb_window_scene behind it (sb_window_length a
+    // round). sb_wide: on 1920 × 1080, the time of a frame with the scene behind the menu.
+    std::string sb_menu, sb_scene, sb_button, sb_button_color, sb_music, sb_window, sb_window_scene;
+    double sb_length = 0, sb_window_length = 0;
+    std::vector<double> sb_frames;
+    std::vector<std::string> sb_files;
+    bool sb_wide = false;
 };
 
 // False (error says why) when the file cannot be read.

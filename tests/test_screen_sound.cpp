@@ -436,6 +436,112 @@ TEST_CASE("screen sound: the screen's music and buttons' sounds survive saving, 
     CHECK(d::screen_html(reopened).find("forge-music") == std::string::npos);
 }
 
+TEST_CASE("screen sound: the scene behind a screen survives saving and is in its page; old screens open as they were") {
+    // Part 6г5б of docs/models/сцены-модель.md.
+    d::Screen s = menu_screen();
+    s.scene_behind = "Заставка";
+    const std::string json = d::save_screen(s);
+    CHECK(json.find("\"scene_behind\":\"Заставка\"") != std::string::npos);
+    d::Screen back;
+    REQUIRE(d::load_screen(json, back));
+    CHECK(back.scene_behind == "Заставка");
+    CHECK(back.music == s.music);
+    CHECK(d::save_screen(back) == json);
+    const std::string html = d::screen_html(s);
+    CHECK(html.find("forge-music=\"мелодия меню.wav\" forge-button-sound=\"щелчок.wav\" forge-scene-behind=\"Заставка\"") != std::string::npos);
+    // On the screen's root only.
+    CHECK(html.find("forge-scene-behind") == html.rfind("forge-scene-behind"));
+    // None: neither in the file nor in the page; a screen saved before it opens and saves as it was.
+    d::Screen old = s;
+    old.scene_behind.clear();
+    const std::string old_json = d::save_screen(old);
+    CHECK(old_json.find("scene_behind") == std::string::npos);
+    d::Screen reopened;
+    REQUIRE(d::load_screen(old_json, reopened));
+    CHECK(reopened.scene_behind.empty());
+    CHECK(d::save_screen(reopened) == old_json);
+    CHECK(d::screen_html(reopened).find("forge-scene-behind") == std::string::npos);
+    // A name that needs escaping stays one attribute.
+    d::Screen odd = s;
+    odd.scene_behind = "\"a&b\"";
+    CHECK(d::screen_html(odd).find("forge-scene-behind=\"&quot;a&amp;b&quot;\"") != std::string::npos);
+    // The game's components are not a screen the game shows: none there.
+    d::Screen lib = d::make_screen("Компоненты", 1920, 1080);
+    lib.library = true;
+    lib.scene_behind = "Заставка";
+    CHECK(d::save_screen(lib).find("scene_behind") == std::string::npos);
+}
+
+TEST_CASE("screen sound: a scene's tunes behind a screen beside a cut-scene's, under the share; a tune whose time goes back begins again") {
+    // Part 6г5б of docs/models/сцены-модель.md.
+    const std::filesystem::path dir = sound_folder();
+    audio::Mixer mixer;
+    audio::ScreenSounds s;
+    s.attach(&mixer, dir);
+    f32 volume = 0;
+    double seconds = 0;
+    s.screen_tunes({{1, "мелодия меню.wav", 0, 0.8f}});
+    CHECK(mixer.voices() == 1);
+    const audio::Voice behind = s.screen_tune_voice(1);
+    REQUIRE(behind);
+    REQUIRE(mixer.heard(behind, volume, seconds));
+    CHECK(volume == doctest::Approx(0.8));
+    CHECK(seconds == doctest::Approx(0).epsilon(0.01));
+    CHECK_FALSE(s.music_playing());
+    // A cut-scene's music by a call of the same number: a set of its own, the screen's tunes go on under its share.
+    s.tunes({{1, "мелодия окна.wav", 0, 1}});
+    CHECK(mixer.voices() == 2);
+    CHECK(s.tune_voice(1) != behind);
+    CHECK(s.screen_tune_voice(1) == behind);
+    s.set_share(0.5f);
+    REQUIRE(mixer.heard(behind, volume, seconds));
+    CHECK(volume == doctest::Approx(0.4));
+    REQUIRE(mixer.heard(s.tune_voice(1), volume, seconds));
+    CHECK(volume == 1);
+    // Louder under the share; its time on, or a little behind (a frame's rounding): the same voice.
+    auto started = mixer.started();
+    s.screen_tunes({{1, "мелодия меню.wav", 1.5, 1.0f}});
+    s.screen_tunes({{1, "мелодия меню.wav", 1.47, 1.0f}});
+    CHECK(mixer.started() == started);
+    CHECK(s.screen_tune_voice(1) == behind);
+    REQUIRE(mixer.heard(behind, volume, seconds));
+    CHECK(volume == doctest::Approx(0.5));
+    REQUIRE(s.screen_tunes().size() == 1);
+    CHECK(s.screen_tunes()[0].since == 1.5);
+    // Its scene began again: its time back to the start, a voice of its own from there.
+    s.screen_tunes({{1, "мелодия меню.wav", 0.02, 1.0f}});
+    CHECK(mixer.started() == started + 1);
+    const audio::Voice again = s.screen_tune_voice(1);
+    REQUIRE(again);
+    CHECK(again != behind);
+    CHECK_FALSE(mixer.playing(behind));
+    REQUIRE(mixer.heard(again, volume, seconds));
+    CHECK(volume == doctest::Approx(0.5));
+    CHECK(seconds == doctest::Approx(0.02).epsilon(0.01));
+    CHECK(mixer.voices() == 2);
+    // A cut-scene's begun again too.
+    started = mixer.started();
+    const audio::Voice cut = s.tune_voice(1);
+    s.tunes({{1, "мелодия окна.wav", 0.7, 1}});
+    s.tunes({{1, "мелодия окна.wav", 0, 1}});
+    CHECK(mixer.started() == started + 1);
+    CHECK(s.tune_voice(1) != cut);
+    // The share back: the screen's tunes at their own volume. None wanted: they stop, the cut-scene's go on.
+    s.set_share(1);
+    REQUIRE(mixer.heard(again, volume, seconds));
+    CHECK(volume == 1);
+    s.screen_tunes({});
+    CHECK_FALSE(mixer.playing(again));
+    CHECK(s.screen_tunes().empty());
+    CHECK(mixer.voices() == 1);
+    s.screen_tunes({{2, "мелодия игры.wav", 0, 1}});
+    CHECK(mixer.voices() == 2);
+    s.detach();
+    CHECK(mixer.voices() == 0);
+    CHECK(s.screen_tunes().empty());
+    CHECK(s.tunes().empty());
+}
+
 TEST_CASE("screen sound: the page says what plays") {
     const std::string html = d::screen_html(menu_screen());
     CHECK(html.find("forge-screen=\"menu\"") != std::string::npos);

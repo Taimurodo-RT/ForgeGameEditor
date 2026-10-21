@@ -17,6 +17,7 @@ void ScreenSounds::attach(Mixer* mixer, std::filesystem::path folder) {
 void ScreenSounds::detach() {
     stop_music();
     tunes({});
+    screen_tunes({});
     mixer_ = nullptr;
 }
 
@@ -74,32 +75,48 @@ void ScreenSounds::music(const std::string& name) {
     }
 }
 
-void ScreenSounds::tunes(const std::vector<Tune>& want) {
-    for (usize i = tunes_.size(); i-- > 0;)
-        if (std::none_of(want.begin(), want.end(), [&](const Tune& t) { return t.call == tunes_[i].call && t.name == tunes_[i].name; })) {
-            if (mixer_) mixer_->stop(tune_voices_[i]);
-            tunes_.erase(tunes_.begin() + static_cast<std::ptrdiff_t>(i));
-            tune_voices_.erase(tune_voices_.begin() + static_cast<std::ptrdiff_t>(i));
+void ScreenSounds::play_tunes(Tunes& on, const std::vector<Tune>& want, f32 scale) {
+    // A tune's time a little behind where it was is the same play; going back further, its scene began again.
+    constexpr f64 kBack = 0.05;
+    for (usize i = on.list.size(); i-- > 0;) {
+        const Tune& o = on.list[i];
+        if (std::none_of(want.begin(), want.end(), [&](const Tune& t) { return t.call == o.call && t.name == o.name && t.since + kBack >= o.since; })) {
+            if (mixer_) mixer_->stop(on.voices[i]);
+            on.list.erase(on.list.begin() + static_cast<std::ptrdiff_t>(i));
+            on.voices.erase(on.voices.begin() + static_cast<std::ptrdiff_t>(i));
         }
+    }
     for (const Tune& t : want) {
-        const auto on = std::find_if(tunes_.begin(), tunes_.end(), [&](const Tune& o) { return o.call == t.call; });
-        if (on != tunes_.end()) {
-            if (on->volume != t.volume) {
-                on->volume = t.volume;
-                if (mixer_) mixer_->set(tune_voices_[static_cast<usize>(on - tunes_.begin())], t.volume, 0);
+        const auto o = std::find_if(on.list.begin(), on.list.end(), [&](const Tune& x) { return x.call == t.call; });
+        if (o != on.list.end()) {
+            o->since = std::max(o->since, t.since);
+            if (o->volume != t.volume) {
+                o->volume = t.volume;
+                if (mixer_) mixer_->set(on.voices[static_cast<usize>(o - on.list.begin())], t.volume * scale, 0);
             }
             continue;
         }
         Voice v;
-        if (ClipPtr c = mixer_ ? clip(t.name) : nullptr) v = mixer_->play(c, {.volume = t.volume, .loop = true, .bus = Bus::Music, .from = t.since});
-        tunes_.push_back(t);
-        tune_voices_.push_back(v);
+        if (ClipPtr c = mixer_ ? clip(t.name) : nullptr)
+            v = mixer_->play(c, {.volume = t.volume * scale, .loop = true, .bus = Bus::Music, .from = t.since});
+        on.list.push_back(t);
+        on.voices.push_back(v);
     }
 }
 
+void ScreenSounds::tunes(const std::vector<Tune>& want) { play_tunes(tunes_, want, 1); }
+
+void ScreenSounds::screen_tunes(const std::vector<Tune>& want) { play_tunes(screen_tunes_, want, share_); }
+
 Voice ScreenSounds::tune_voice(u32 call) const {
-    for (usize i = 0; i < tunes_.size(); ++i)
-        if (tunes_[i].call == call) return tune_voices_[i];
+    for (usize i = 0; i < tunes_.list.size(); ++i)
+        if (tunes_.list[i].call == call) return tunes_.voices[i];
+    return {};
+}
+
+Voice ScreenSounds::screen_tune_voice(u32 call) const {
+    for (usize i = 0; i < screen_tunes_.list.size(); ++i)
+        if (screen_tunes_.list[i].call == call) return screen_tunes_.voices[i];
     return {};
 }
 
@@ -107,6 +124,8 @@ void ScreenSounds::set_share(f32 share) {
     if (share == share_) return;
     share_ = share;
     if (mixer_ && voice_) mixer_->set(voice_, share_, 0);
+    if (mixer_)
+        for (usize i = 0; i < screen_tunes_.list.size(); ++i) mixer_->set(screen_tunes_.voices[i], screen_tunes_.list[i].volume * share_, 0);
 }
 
 void ScreenSounds::click(const std::string& name) {

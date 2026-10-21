@@ -557,6 +557,8 @@ private:
         if (project_has_edits && project_edits_error.empty() && !project_edits.sw_scene.empty()) build_scene_waits(s);
         // Part 6г4: scenes one after the other, with their ways in and out.
         if (project_has_edits && project_edits_error.empty() && !project_edits.st_first.empty()) build_scene_transitions(s);
+        // Part 6г5б: a scene behind the game's main menu and behind a window.
+        if (project_has_edits && project_edits_error.empty() && !project_edits.sb_menu.empty()) build_scene_behind(s);
         steps_.push_back({"игра из папки автора", 5, [&s, this](u32 f) {
             if (f < 2) return false;
             std::error_code ec;
@@ -10230,9 +10232,10 @@ private:
     // 6г4): where the tab's is solid (a pixel and its eight neighbours one colour), the game's within 6 of it over black
     // (where a transition leaves its frames clear); where it is the grey of «то, что было» and `old` is given, the game's
     // is that frame there, where it is solid too (the scene before, standing in its last pose). Empty when they agree;
-    // why not, and the game's frame kept beside the tab's, when not. `said`: what was compared.
+    // why not, and the game's frame kept beside the tab's, when not. `said`: what was compared. `skip` (x0, y0, x1, y1,
+    // past the last): a box not compared (a screen's button over a scene behind it, part 6г5б).
     std::string screen_frame_differs(Shell& s, const assets::CookedTexture& ref, const assets::CookedTexture* old, const std::filesystem::path& keep,
-                                     std::string& said) {
+                                     std::string& said, const std::array<u32, 4>* skip = nullptr) {
         std::vector<u8> px;
         u32 W = 0, H = 0;
         if (!frame_pixels(s, px, W, H) || W != ref.width || H != ref.height || ref.rgba8.size() != px.size())
@@ -10251,6 +10254,7 @@ private:
         std::string why;
         for (u32 y = 1; y + 1 < H; ++y)
             for (u32 x = 1; x + 1 < W; ++x) {
+                if (skip && x >= (*skip)[0] && x < (*skip)[2] && y >= (*skip)[1] && y < (*skip)[3]) continue;
                 if (!solid(ref.rgba8, x, y)) continue;
                 const int a = at(ref.rgba8, x, y, 3);
                 bool grey = a == 255;
@@ -10281,6 +10285,322 @@ private:
         img.rgba8 = std::move(px);
         if (assets::encode_image(img, ".png", png) && write_file_atomic(keep, png)) FORGE_INFO("кадр игры записан: %s", path_to_utf8(keep).c_str());
         return std::to_string(off) + " сплошных пикселей расходятся (" + why + ")";
+    }
+
+    // Part 6г5б: the box round the pixels of a frame of the colour rgb (within 10): x0, y0, x1, y1 (past the last);
+    // how many there are (none: 0).
+    static usize colour_box(const std::vector<u8>& px, u32 W, u32 H, const std::array<int, 3>& rgb, std::array<u32, 4>& box) {
+        usize n = 0;
+        box = {W, H, 0, 0};
+        for (u32 y = 0; y < H; ++y)
+            for (u32 x = 0; x < W; ++x) {
+                const usize i = (static_cast<usize>(y) * W + x) * 4;
+                if (std::abs(px[i] - rgb[0]) > 10 || std::abs(px[i + 1] - rgb[1]) > 10 || std::abs(px[i + 2] - rgb[2]) > 10) continue;
+                ++n;
+                box = {std::min(box[0], x), std::min(box[1], y), std::max(box[2], x + 1), std::max(box[3], y + 1)};
+            }
+        return n;
+    }
+
+    // A scene behind the game's own main menu and behind a window that stops the world (--edits sb_*, the editor's
+    // self-test pixel-scene-i; part 6г5б of docs/models/сцены-модель.md). The screens go by a clock of the frames here
+    // (GameScreens::set_clock: a frame's part of a second a frame), so a scene's moments are frames'. The main menu up:
+    // sb_scene from its start right under it, round and round, the cut-scenes' player standing; its frames at sb_frames
+    // (through a round's end too) the tab's without its ways in and out, the menu's button of sb_button_color over it;
+    // its waits passing at once, no end of it for the logic. The menu has no music: the scene's is the menu's, from its
+    // start each round. The button «Новая игра»: the menu, its scene and its music go. In the game (the logic's
+    // cut-scenes at the start skipped): the window sb_window stops the world, sb_window_scene right under it going on by
+    // the screens' clock, the game saved meanwhile; a scene the logic could show comes over everything, the one behind
+    // going on under it; the window closed, its scene stops and the world goes again. On 1920 × 1080 (sb_wide): the time
+    // of a frame with the scene behind the menu, then «Новая игра». The time of a frame in the log.
+    void build_scene_behind(Shell& s) {
+        struct Seen {
+            std::vector<assets::CookedTexture> refs;
+            std::array<int, 3> button{};
+            Rml::Vector2f press{-1, -1};
+            u64 frames = 0, last_ns = 0;
+            u64 begun = 0; // the frame (of `frames`) a scene behind began at
+            u32 stage = 0, at = 0, quiet = 0, rounds = 0;
+            usize next = 0;
+            u32 call = 0; // the scene's tune
+            audio::Voice voice;
+            f64 last_t = -1, world_t = 0, hero_x = 0, hero_y = 0, ends = 0;
+            u64 cut = 0;
+            std::vector<f64> frame_ms;
+            bool skip_ms = false;
+        };
+        auto st = std::make_shared<Seen>();
+        auto at_moment = [](f64 t, f64 want) { return std::fabs(t - want) < 1e-6; };
+        // The screens' clock: a 144th of a second a frame on a screen of 144 Hz, to the nanosecond.
+        auto tick = [st] { ++st->frames; };
+        auto clock = [this, st] { return 1'000'000'000ULL + static_cast<u64>(std::llround(static_cast<f64>(st->frames) * 1e9 / screen_hz)); };
+        // Where the scene of a round of `length` should be, `frames` since it began.
+        auto due = [this](u64 frames, f64 length) { return std::fmod(static_cast<f64>(frames) / screen_hz, length); };
+        auto near_due = [](f64 t, f64 want, f64 length) { return std::fabs(t - want) < 1e-6 || std::fabs(std::fabs(t - want) - length) < 1e-6; };
+        // The documents drawn, back to front.
+        auto drawn = [&s] {
+            std::vector<Rml::ElementDocument*> out;
+            for (int i = 0; i < s.context()->GetNumDocuments(); ++i)
+                if (Rml::ElementDocument* d = s.context()->GetDocument(i); d->IsVisible()) out.push_back(d);
+            return out;
+        };
+        // A scene's documents right under its page.
+        auto right_under = [drawn](Rml::ElementDocument* page, const GameScene* scene) {
+            if (!page || !scene) return false;
+            const std::vector<Rml::ElementDocument*> all = drawn(), docs = scene->documents();
+            const auto at = std::find(all.begin(), all.end(), page) - all.begin();
+            if (docs.empty() || at < static_cast<std::ptrdiff_t>(docs.size())) return false;
+            for (usize k = 0; k < docs.size(); ++k)
+                if (all[static_cast<usize>(at) - docs.size() + k] != docs[k]) return false;
+            return true;
+        };
+        auto timed = [st] {
+            const u64 now = time_now_ns();
+            if (st->last_ns && !st->skip_ms) st->frame_ms.push_back(static_cast<f64>(now - st->last_ns) * 1e-6);
+            st->skip_ms = false;
+            st->last_ns = now;
+        };
+        auto log_ms = [st](const char* where) {
+            std::vector<f64> sorted = st->frame_ms;
+            std::sort(sorted.begin(), sorted.end());
+            f64 sum = 0;
+            for (f64 v : sorted) sum += v;
+            FORGE_INFO("self-test: сцена позади %s: %zu кадров, в среднем %.2f мс, p99 %.2f мс, худший %.2f мс", where, sorted.size(),
+                       sum / std::max<f64>(static_cast<f64>(sorted.size()), 1.0), sorted.empty() ? 0.0 : sorted[sorted.size() * 99 / 100],
+                       sorted.empty() ? 0.0 : sorted.back());
+            st->frame_ms.clear();
+        };
+        // The scene's tune (one) as the screens say it and the game plays it.
+        auto tune = [this, &s](const std::string& file, f64& since, u32& call) {
+            const std::vector<SceneTune>& tunes = s.screens().scene_music();
+            if (tunes.size() != 1 || tunes[0].file != file) return audio::Voice{};
+            since = tunes[0].since;
+            call = tunes[0].call;
+            const audio::Voice v = g_.sounds().screens().screen_tune_voice(call);
+            return v && g_.sounds().mixer().playing(v) ? v : audio::Voice{};
+        };
+        steps_.push_back({"сцена позади главного меню", 3000, [&s, this, st, at_moment, tick, clock, due, near_due, right_under, timed, log_ms, tune](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScreens& sc = s.screens();
+            tick();
+            if (f == 0) {
+                if (!check_ok(!e.sb_menu.empty() && !e.sb_scene.empty() && !e.sb_button.empty() && e.sb_button_color.size() == 7 &&
+                                  e.sb_button_color[0] == '#' && !e.sb_music.empty() && !e.sb_window.empty() && !e.sb_window_scene.empty() &&
+                                  e.sb_length > 0 && e.sb_window_length > 0 &&
+                                  (e.sb_wide || (!e.sb_frames.empty() && e.sb_frames.size() == e.sb_files.size())),
+                              "правки сцены позади полны"))
+                    return true;
+                for (int c = 0; c < 3; ++c) st->button[static_cast<usize>(c)] = std::stoi(e.sb_button_color.substr(1 + 2 * static_cast<usize>(c), 2), nullptr, 16);
+                if (!e.sb_wide)
+                    for (const std::string& file : e.sb_files) {
+                        std::vector<u8> bytes;
+                        check(read_file(utf8_path(file), bytes) && assets::decode_image(bytes, st->refs.emplace_back()), "кадр вкладки читается: " + file);
+                    }
+                std::string why;
+                vector::SceneMotion scene, window;
+                check(game::read_scene_folder(s.game_dir() / "scenes" / utf8_path(e.sb_scene), scene, why) &&
+                          game::read_scene_folder(s.game_dir() / "scenes" / utf8_path(e.sb_window_scene), window, why),
+                      "папки сцен читаются: " + why);
+                const std::vector<vector::SceneTransition>& ways = scene.file.transitions;
+                check(std::fabs(scene.file.length - e.sb_length) < 1e-9 && ways.size() == 2 && !ways[0].leave && ways[1].leave && !scene.file.stops.empty() &&
+                          !scene.file.music.empty(),
+                      "у «" + e.sb_scene + "» вход, уход, ожидания и музыка, её длина, как у вкладки");
+                check(std::fabs(window.file.length - e.sb_window_length) < 1e-9, "у «" + e.sb_window_scene + "» её длина, как у вкладки");
+                check(sc.scene_behind_name(e.sb_menu) == e.sb_scene && sc.scene_behind_name(e.sb_window) == e.sb_window_scene,
+                      "экраны знают свои сцены позади: «" + sc.scene_behind_name(e.sb_menu) + "», «" + sc.scene_behind_name(e.sb_window) + "»");
+                check(sc.has_menu(), "у игры своё главное меню «" + e.sb_menu + "»");
+                sc.set_clock(clock);
+                st->ends = s.vars().get(e.sg_ends).number();
+                s.to_main_menu();
+                return false;
+            }
+            const GameScene* behind = sc.scene_behind(e.sb_menu);
+            if (st->stage == 0) { // the menu up: its scene from its start, right under it, its music the menu's
+                if (!behind) {
+                    check(f < 30, "под меню нет сцены позади");
+                    return f >= 30;
+                }
+                check(s.screen() == Screen::Main && sc.shown(e.sb_menu), "главное меню игры — «" + e.sb_menu + "»");
+                check(behind->how().behind && behind->time() == 0, "под меню с начала идёт «" + e.sb_scene + "»");
+                check(behind->name() == e.sb_scene && !s.scene().going(), "это «" + behind->name() + "»; кат-сцены нет");
+                check(right_under(sc.document(e.sb_menu), behind), "сцена сразу под меню");
+                check(sc.music().empty(), "у меню своей музыки нет: «" + sc.music() + "»");
+                f64 since = -1;
+                st->voice = tune(e.sb_music, since, st->call);
+                check(st->voice && since == 0, "музыка сцены «" + e.sb_music + "» играет как музыка меню, с начала");
+                st->begun = st->frames - 1;
+                st->last_t = 0;
+                st->stage = 1;
+                return false;
+            }
+            if (st->stage == 1) { // round and round
+                if (!check_ok(behind && behind->going() && sc.shown(e.sb_menu), "сцена позади идёт, пока меню показано")) return true;
+                const f64 t = behind->time();
+                check(near_due(t, due(st->frames - 1 - st->begun, e.sb_length), e.sb_length),
+                      "сцена по часам экранов: " + std::to_string(t) + " с при " + std::to_string(due(st->frames - 1 - st->begun, e.sb_length)));
+                check(behind->waiting() == nullptr && !behind->wants_backdrop() && !s.scene().going(), "ожидания проходят сразу, кадра мира ей не нужно");
+                timed();
+                if (t < st->last_t) { // a new round: its music from its start again
+                    ++st->rounds;
+                    f64 since = -1;
+                    u32 call = 0;
+                    const audio::Voice v = tune(e.sb_music, since, call);
+                    check(v && since < 0.05 && v != st->voice, "новый круг: музыка сцены снова с начала (" + std::to_string(since) + " с)");
+                    st->voice = v;
+                    st->call = call;
+                } else {
+                    f64 since = -1;
+                    u32 call = 0;
+                    check(tune(e.sb_music, since, call) == st->voice, "музыка сцены идёт тем же голосом посреди круга");
+                }
+                st->last_t = t;
+                if (!e.sb_wide && st->next < e.sb_frames.size() && at_moment(t, e.sb_frames[st->next])) {
+                    const usize k = st->next++;
+                    std::vector<u8> px;
+                    u32 W = 0, H = 0;
+                    std::array<u32, 4> box{};
+                    const usize n = frame_pixels(s, px, W, H) ? colour_box(px, W, H, st->button, box) : 0;
+                    const usize area = n ? static_cast<usize>(box[2] - box[0]) * (box[3] - box[1]) : 0;
+                    check(n >= 2000 && n * 2 >= area && box[2] - box[0] < W / 2 && box[3] - box[1] < H / 4,
+                          "кнопка меню цвета " + e.sb_button_color + " над сценой: " + std::to_string(n) + " пикселей");
+                    st->press = {(box[0] + box[2]) * 0.5f, (box[1] + box[3]) * 0.5f};
+                    const std::array<u32, 4> skip{box[0] > 3 ? box[0] - 3 : 0, box[1] > 3 ? box[1] - 3 : 0, box[2] + 3, box[3] + 3};
+                    std::string said;
+                    const std::string what = "сцена позади " + std::to_string(k + 1) + " (" + std::to_string(st->rounds + 1) + "-й круг)";
+                    const std::string why = screen_frame_differs(s, st->refs[k], nullptr, utf8_path(e.sb_files[k]).parent_path() / utf8_path("игра " + what + ".png"),
+                                                                 said, n ? &skip : nullptr);
+                    check(why.empty(), "кадр игры " + what + " — кадр вкладки без переходов: " + why);
+                    FORGE_INFO("self-test: кадр %s в %.4f с: %s", what.c_str(), t, said.c_str());
+                    st->skip_ms = true;
+                }
+                const bool seen = e.sb_wide ? st->rounds >= 2 : st->next == e.sb_frames.size();
+                if (!seen) return false;
+                check(st->rounds >= 1, "сцена прошла конец круга");
+                check(s.vars().get(e.sg_ends).number() == st->ends, "логика не слышит конца сцены позади");
+                log_ms(e.sb_wide ? "главного меню на 1920 × 1080" : "главного меню");
+                if (e.sb_wide) { // the button found on the frame
+                    std::vector<u8> px;
+                    u32 W = 0, H = 0;
+                    std::array<u32, 4> box{};
+                    check(frame_pixels(s, px, W, H) && colour_box(px, W, H, st->button, box) >= 2000, "кнопка меню на экране 1920 × 1080");
+                    st->press = {(box[0] + box[2]) * 0.5f, (box[1] + box[3]) * 0.5f};
+                }
+                check(st->press.x >= 0 && click_at(s, st->press), "«Новая игра» нажата");
+                st->stage = 2;
+                st->at = f;
+                return false;
+            }
+            // «Новая игра»: the menu goes, its scene and its music with it.
+            if (s.screen() != Screen::Playing) {
+                check(f - st->at < 600, "новая игра не началась");
+                return f - st->at >= 600;
+            }
+            check(!sc.shown(e.sb_menu) && sc.scene_behind(e.sb_menu) == nullptr, "в новой игре меню нет, и сцены под ним нет");
+            check(sc.scene_music().empty() && !g_.sounds().screens().screen_tune_voice(st->call), "музыки сцены позади нет");
+            return true;
+        }});
+        if (project_edits.sb_wide) {
+            steps_.push_back({"часы экранов снова настоящие", 2, [&s](u32) {
+                s.screens().set_clock(nullptr);
+                return true;
+            }});
+            return;
+        }
+        steps_.push_back({"окно со сценой позади: мир стоит, сцена идёт, игра сохраняется", 2400,
+                          [&s, this, st, tick, due, near_due, right_under, drawn, timed, log_ms](u32 f) {
+            const ProjectEdits& e = project_edits;
+            GameScreens& sc = s.screens();
+            GameScene& cut = s.scene();
+            tick();
+            const GameScene* behind = sc.scene_behind(e.sb_window);
+            switch (st->stage) {
+            case 2: // the logic's scenes at the start skipped
+                if (cut.going()) {
+                    if (cut.serial() != st->cut) cut.skip();
+                    st->cut = cut.serial();
+                    st->quiet = 0;
+                } else if (++st->quiet >= 30) {
+                    check(sc.show(e.sb_window, true), "окно «" + e.sb_window + "» открыто");
+                    st->stage = 3;
+                    st->at = f;
+                    st->rounds = 0;
+                    st->last_t = -1;
+                }
+                check(f < 1200, "сцены логики при старте не кончились");
+                return f >= 1200;
+            case 3: { // the window up: the world stands, its scene goes
+                if (st->last_t < 0 && !behind) {
+                    check(f - st->at < 30, "под окном нет сцены позади");
+                    return f - st->at >= 30;
+                }
+                if (st->last_t < 0) {
+                    check(behind && behind->how().behind && behind->time() == 0 && behind->name() == e.sb_window_scene, "под окном с начала идёт «" + e.sb_window_scene + "»");
+                    check(sc.pauses(), "окно ставит мир на паузу");
+                    st->begun = st->frames - 1;
+                    st->world_t = g_.script_time();
+                    st->hero_x = g_.hero_x();
+                    st->hero_y = g_.hero_y();
+                } else if (!check_ok(behind && behind->going(), "сцена под окном идёт"))
+                    return true;
+                const f64 t = behind ? behind->time() : 0;
+                check(near_due(t, due(st->frames - 1 - st->begun, e.sb_window_length), e.sb_window_length), "сцена под окном по часам экранов: " + std::to_string(t));
+                check(right_under(sc.document(e.sb_window), behind), "сцена сразу под окном");
+                check(g_.script_time() == st->world_t && g_.hero_x() == st->hero_x && g_.hero_y() == st->hero_y, "мир стоит под окном");
+                if (st->last_t >= 0 && t < st->last_t) ++st->rounds;
+                st->last_t = t;
+                timed();
+                const u32 in = f - st->at;
+                if (in == screen_hz / 2) {
+                    const usize before = s.slots().list().size();
+                    const std::string slot = s.slots().new_id();
+                    check(s.save(slot, "Сцена позади", false) && s.slots().info(slot).has_value(), "под окном со сценой позади игра сохраняется");
+                    check(s.slots().list().size() == before + 1, "сохранение одно");
+                }
+                if (st->rounds < 1) return false;
+                // A scene the logic shows: over everything, the one behind going on under it.
+                std::string why;
+                check(s.play_scene(e.sb_scene, {true, true}, why), "«Показать сцену» под открытым окном: " + why);
+                st->stage = 4;
+                st->at = f;
+                return false;
+            }
+            case 4: {
+                if (!check_ok(behind && behind->going(), "сцена под окном идёт, пока идёт кат-сцена")) return true;
+                const f64 t = behind->time();
+                check(near_due(t, due(st->frames - 1 - st->begun, e.sb_window_length), e.sb_window_length), "сцена под окном по часам экранов: " + std::to_string(t));
+                const std::vector<Rml::ElementDocument*> all = drawn();
+                const auto pos = [&all](Rml::ElementDocument* d) { return std::find(all.begin(), all.end(), d) - all.begin(); };
+                check(cut.going() && !cut.documents().empty() && pos(cut.documents().back()) > pos(sc.document(e.sb_window)) &&
+                          pos(sc.document(e.sb_window)) > pos(behind->documents().back()),
+                      "кат-сцена над окном, сцена позади под ним");
+                if (f - st->at < screen_hz / 2) return false;
+                cut.skip();
+                check(sc.show(e.sb_window, false), "окно закрыто");
+                st->stage = 5;
+                st->at = f;
+                return false;
+            }
+            default: { // the window closed: its scene stops, the world goes again
+                if (cut.going() || sc.shown(e.sb_window) || sc.document(e.sb_window)->IsVisible()) {
+                    if (cut.going() && cut.serial() != st->cut) {
+                        cut.skip();
+                        st->cut = cut.serial();
+                    }
+                    check(f - st->at < 600, "окно не закрылось");
+                    return f - st->at >= 600;
+                }
+                check(behind == nullptr, "окно закрыто: сцены под ним нет");
+                if (f - st->at < 60) return false;
+                check(g_.script_time() > st->world_t, "мир снова идёт");
+                log_ms("под окном");
+                const std::string unplanned = errors_but(e.sg_scheme_error);
+                check(unplanned.empty(), "других ошибок скриптов нет:" + unplanned);
+                check(s.data_errors().empty(), "данные игры читаются без ошибок");
+                sc.set_clock(nullptr);
+                return true;
+            }
+            }
+        }});
     }
 
     // Scenes of «Векторная» one after the other, with their ways in and out (--edits st_*, the editor's self-test
