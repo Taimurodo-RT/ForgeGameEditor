@@ -298,6 +298,26 @@ std::vector<MotionPartPose> motion_pose(const MotionFile& file, const MotionClip
 // A part's `moves` and matrix from its values and `has`, as it stands in drawing `drawing` (as motion_pose makes them);
 // a blend of clips (part 5е) poses its mixed values so.
 void motion_part_pose(const MotionFile& file, MotionPartPose& pp, std::string_view drawing = kMotionMainDrawing);
+// What a clip shows at a moment (motion_clip_pose): its parts as they stand in the drawing shown, its copies drawn, its
+// order's steps up to then, the drawing shown and, in a swap, the parts as they stand in the one it comes from. One with
+// no parts is the character at rest.
+struct MotionClipPose {
+    std::vector<MotionPartPose> parts;
+    std::vector<MotionCopy> copies;
+    std::vector<MotionOrderStep> order;
+    MotionShown shown;
+    std::vector<MotionPartPose> from_parts;
+    bool operator==(const MotionClipPose&) const = default;
+};
+MotionClipPose motion_clip_pose(const MotionFile& file, const MotionClip& clip, f64 t);
+// A blend of clips (part 5е of docs/models/движение-модель.md, a scene's actors' in part 6г5а of сцены-модель.md): the
+// pose `k` of the way from `from` (the old clip's pose, or what the character showed) to `to` (the new clip's), the
+// parts posed in `file`. Each prop of each part mixed as the file's transitions mix it (motion_mix; one only one side
+// has is at rest on the other), held props and the order's steps as `from`'s until k is 1; a copy only one side draws
+// fades out by 1 − k or in by k where that side has it; of the drawings, each weighed (1 − k) of its share in `from` and
+// k in `to`, the one `to` shows on top of the heaviest other, as a swap. k 0 and 1 give `from` and `to` themselves.
+MotionClipPose motion_blend(const MotionFile& file, const MotionClipPose& from, const MotionClipPose& to, f64 k);
+
 // The first part of the picture a clip's calls name that the picture has not (part 5г): a mask part, a carrier, a part
 // of the order and its neighbour, a copy's source; what names it beside ("маска «eye»", "крепление «eye»", "порядок
 // «eye»", "копия «искра[1]»"). A part is the first element with the id that draws (g, use or a shape). False when the

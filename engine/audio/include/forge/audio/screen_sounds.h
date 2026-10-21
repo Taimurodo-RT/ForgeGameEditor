@@ -43,7 +43,8 @@ public:
     void stop_music() { music({}); }
     // A scene's music (part 6г2 of docs/models/сцены-модель.md): each tune by the call of the scene that began it, a
     // file of the folder from `since` seconds in, looped on the music bus. What is not wanted any more stops, what
-    // goes on takes its volume, what is new begins.
+    // goes on takes its volume, what is new begins; one whose `since` went back (its scene began again, part 6г5б)
+    // begins again from there.
     struct Tune {
         u32 call = 0;
         std::string name;
@@ -52,9 +53,14 @@ public:
         bool operator==(const Tune&) const = default;
     };
     void tunes(const std::vector<Tune>& want);
-    const std::vector<Tune>& tunes() const { return tunes_; }
+    const std::vector<Tune>& tunes() const { return tunes_.list; }
     // The voice of the tune a call began (none when its file is missing or it is not playing), for checks.
     Voice tune_voice(u32 call) const;
+    // Part 6г5б: the music of a scene behind a screen, as the screens' music (none of music() then): tunes as above,
+    // a set of their own beside a cut-scene's, as loud as their volume by the share.
+    void screen_tunes(const std::vector<Tune>& want);
+    const std::vector<Tune>& screen_tunes() const { return screen_tunes_.list; }
+    Voice screen_tune_voice(u32 call) const;
     // How loud the screens' music is under a scene's: 1 as it is, 0 silent.
     void set_share(f32 share);
     f32 share() const { return share_; }
@@ -83,8 +89,15 @@ private:
     std::unordered_map<std::string, ClipPtr> clips_, put_;
     std::string music_, last_click_;
     Voice voice_;
-    std::vector<Tune> tunes_;
-    std::vector<Voice> tune_voices_; // by tunes_
+    // Tunes playing (each as it began: `since` the place it began from) and their voices (by list), at volume × scale;
+    // the latest time each was wanted at, to tell a scene begun again.
+    struct Tunes {
+        std::vector<Tune> list;
+        std::vector<Voice> voices;
+        std::vector<f64> latest;
+    };
+    void play_tunes(Tunes& on, const std::vector<Tune>& want, f32 scale);
+    Tunes tunes_, screen_tunes_;
     f32 share_ = 1;
     u32 music_starts_ = 0, clicks_ = 0;
     std::vector<std::string> problems_;

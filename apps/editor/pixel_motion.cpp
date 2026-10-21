@@ -798,9 +798,18 @@ void PixelEditor::lay_actor_clips() {
                 if (p.kind == Kind::Play) title += ", " + seconds_words(p.length) + " с";
                 if (p.kind == Kind::Loop) title += " по кругу до " + seconds_words(next) + " с";
                 if (p.speed != 1) title += ", speed " + number_words(p.speed);
+                // Part 6г5а: its blend, a wedge from its start as long as the blend lasts in the scene.
+                const f64 lasts = p.kind == Kind::Stop || !(p.clip_length > 0) ? 0 : (p.kind == Kind::Loop ? p.blend : std::min(p.blend, p.clip_length)) / p.speed;
+                std::string wedge;
+                if (lasts > 0) {
+                    title += ", плавно " + seconds_words(lasts) + " с";
+                    char wd[48];
+                    std::snprintf(wd, sizeof wd, "width: %.1fdevpx;", std::clamp(tv_.x(start + lasts) - tv_.x(start), dp, std::max(dp, x1 - x0)));
+                    wedge = wd;
+                }
                 title += ": левый край тянет начало по кадрам, двойной щелчок — к коду";
                 m_plays_.push_back({static_cast<int>(i), place(x0, x1 - x0) + " " + top, label, title, static_cast<i32>(i) == play_, p.kind == Kind::Loop,
-                                    p.kind == Kind::Stop});
+                                    p.kind == Kind::Stop, wedge});
             }
             ++row;
         }

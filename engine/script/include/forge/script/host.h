@@ -259,9 +259,9 @@ public:
     // forge.scene.* (part 6г2 of docs/models/сцены-модель.md): a scene of the game's begins (serial: its play's number),
     // false with why («нет сцены «X»: …», «идёт сцена «X»»); whether the play with that number is over and whether it was
     // skipped; the logic skips the scene going; the name of the one going (false: none). A bridge that shows no scenes
-    // says so.
-    virtual bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) {
-        (void)name, (void)pause, (void)skip, (void)serial;
+    // says so. Part 6г6: the values of the scene's parameters, by name (a name it has not: false with why).
+    virtual bool scene_play(std::string_view name, bool pause, bool skip, const std::map<std::string, f64>& params, u64& serial, std::string& why) {
+        (void)name, (void)pause, (void)skip, (void)params, (void)serial;
         why = "сцены показывает только игра";
         return false;
     }

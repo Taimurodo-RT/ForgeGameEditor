@@ -5,16 +5,20 @@
 #include "forge/core/path.h"
 #include "forge/game/screens.h"
 #include "forge/ui/live_svg.h"
+#include "forge/ui/ui.h"
 #include "forge/vector/motion_file.h"
 #include "forge/vector/svg.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/PictureScale.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <map>
 #include <set>
+#include <sstream>
+#include <utility>
 
 namespace forge::game {
 
@@ -51,14 +55,23 @@ std::string transform_of(const vector::MotionMatrix& m) {
 }
 
 constexpr const char* kStyle = "body { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; pointer-events: none; }"
-                               "div, img { display: block; position: absolute; left: 0px; top: 0px; pointer-events: none;"
+                               "div, img, backdrop { display: block; position: absolute; left: 0px; top: 0px; pointer-events: none;"
                                " transform-origin: 0px 0px 0px; }"
+                               // Part 6г4: the frames of a transition, each the whole screen, posed round its middle; their
+                               // masks and a picture's or an actor's stretched over them.
+                               ".full { width: 100%; height: 100%; }"
+                               ".move { transform-origin: 50% 50% 0px; }"
+                               ".wrap, .item { mask-size: 100% 100%; }"
+                               "#black { background-color: #000000; }"
                                // Always: its layers are moved by transforms, which the layout does not count as overflow (a scene
                                // fitted larger than its canvas spilled over the bars).
                                "#frame { overflow: hidden; clip: always; }"
                                // The bars over it: the frame's edge on whole pixels of the window (the software Vulkan lets
                                // a column of a scissor's edge through with MSAA).
                                "#bars { width: 100%; height: 100%; box-sizing: border-box; border-width: 0px; }";
+
+// The picture a play's <backdrop> takes of the game's frame under it (part 6г4), and the masks it makes.
+std::string game_picture(u64 serial) { return "scene-" + std::to_string(serial) + "-game"; }
 
 // How long the scene's music goes out, and the game's comes back, after its end.
 constexpr f64 kMusicBack = 1.0;
@@ -112,6 +125,15 @@ std::vector<std::string> scene_names(const fs::path& game_dir) {
     return out;
 }
 
+std::vector<vector::MotionParam> scene_params(const fs::path& game_dir, std::string_view name) {
+    const std::string n(name);
+    if (n.empty() || n == "." || n == ".." || n.find_first_of("/\\:") != std::string::npos) return {};
+    std::string text, why;
+    vector::SceneFile file;
+    if (!read_text_file(game_dir / "scenes" / utf8_path(n) / "scene.json", text) || !vector::read_scene_file(text, file, why)) return {};
+    return file.params;
+}
+
 std::string scene_sound_file(const fs::path& sounds, std::string_view name) {
     if (name.empty() || sounds.empty() || name.find_first_of("/\\") != std::string_view::npos) return {};
     const std::string n(name);
@@ -131,6 +153,10 @@ struct GameScene::Impl {
         std::string key;               // a picture's or an actor's group
         usize item = 0;                // in the scene's pictures or actors
         Rml::Element* element = nullptr;
+        // Part 6г4: a picture's or an actor's own layer, its mask by a shape of the stage on it (its box, the picture, or
+        // hidden: what was set); its element's place in it.
+        Rml::Element* wrap = nullptr;
+        std::string wrapped, inside;
         ui::SvgPose posed; // what the run or the actor shows
         bool has_pose = false;
         std::string transform;
@@ -159,18 +185,47 @@ struct GameScene::Impl {
     u64 serial = 0, serials = 0;
     std::map<u64, bool> ends; // the plays over: skipped?
 
-    Rml::ElementDocument* doc = nullptr;
-    Rml::Element* frame = nullptr;
-    Rml::Element* camera = nullptr;
-    Rml::Element* bars = nullptr;
+    // A frame of a transition (part 6г4): its wrap the whole screen, faded and masked; in it the frame in its pose. What was
+    // set, so that only a change is set.
+    struct Frame {
+        Rml::Element* wrap = nullptr;
+        Rml::Element* move = nullptr;
+        std::string transform, filter, mask;
+        bool shown = false;
+    };
+    // A play's document on the screen: the snapshot of the game's frame under it, black, the game's frame below the
+    // scene's, the scene's (its background all round, the camera's frame cut at its edge, the bars) and the game's above.
+    struct Shown {
+        Rml::ElementDocument* doc = nullptr;
+        u64 serial = 0;
+        Rml::Element* backdrop = nullptr;
+        Rml::Element* black = nullptr;
+        Rml::Element* bg = nullptr;
+        Rml::Element* frame = nullptr;
+        Rml::Element* camera = nullptr;
+        Rml::Element* bars = nullptr;
+        Frame below, look, above;
+        bool backdrop_on = false, black_on = false;
+        vector::ScenePhase phase = vector::ScenePhase::Scene;
+        // Its pictures made by code (/gpu/…) and what each was made of.
+        std::map<std::string, std::string> pictures;
+    };
+    // The one playing; the one before it standing as its old frame while it comes in; the last frame of the one just over,
+    // held till the logic has run after its end (and the one standing under it then).
+    Shown cur, prev, last, last_prev;
+    // How many times the game's logic has run (logic_ran; untold, the updates), and how many at the last end.
+    u64 runs = 0, end_runs = 0;
+    bool runs_told = false;
+    ui::Ui* ui = nullptr;
     ui::SvgPlaces places;
     std::vector<Layer> layers;
     std::string structure;
     int fit_w = -1, fit_h = -1;
     f32 fit_dp = 0;
-    f64 fit_scale = 1;
+    f64 fit_scale = 1, fit_left = 0, fit_top = 0;
     std::string camera_transform;
     u64 run_poses = 0;
+    f64 alpha = 1; // part 6г5б: how much of it shows (set_alpha)
 
     // The music: what on_music last heard; after the end, the scene's going out over kMusicBack.
     std::vector<SceneTune> tunes;
@@ -191,14 +246,36 @@ struct GameScene::Impl {
 
     const std::string& scene_word() const { return name; }
 
-    void close() {
-        if (doc && context) context->UnloadDocument(doc);
-        doc = nullptr;
-        frame = camera = bars = nullptr;
+    // A picture made by code goes from the GPU and from RmlUi's textures (an element shows it by either path).
+    void forget(const std::string& picture) {
+        if (ui) ui->drop_gpu_image(picture);
+        Rml::ReleaseTexture("/gpu/" + picture);
+        Rml::ReleaseTexture("gpu/" + picture);
+    }
+
+    void close(Shown& s) {
+        if (s.doc) {
+            if (context) context->UnloadDocument(s.doc);
+            for (const auto& [picture, made] : s.pictures) forget(picture);
+            forget(game_picture(s.serial));
+        }
+        s = {};
+    }
+
+    // What the play drew goes with it (its document stays as the last frame, held by finish).
+    void forget_play() {
         layers.clear();
         structure.clear();
         camera_transform.clear();
         fit_w = fit_h = -1;
+    }
+
+    void close_all() {
+        close(cur);
+        close(prev);
+        close(last);
+        close(last_prev);
+        forget_play();
     }
 
     void hear(std::vector<SceneTune> want, f64 game_share) {
@@ -295,12 +372,44 @@ struct GameScene::Impl {
 
     void fire(const vector::SceneMark& mk) {
         if (!mk.sound) {
-            if (self->on_message) self->on_message(mk.name);
+            if (self->on_message && !how.behind) self->on_message(mk.name);
             return;
         }
         const std::string file = scene_sound_file(sounds, mk.name);
         if (file.empty()) say("сцена «" + name + "»: звука «" + mk.name + "» нет в звуках игры");
         else if (self->on_sound) self->on_sound(file);
+    }
+
+    // Part 6г5б: dt seconds of a scene behind a screen pass, round and round: its waits and talks pass at once (its time
+    // goes on as if it had not stood at them), the marks it passes sound (fire: its messages do not go to the logic), at its
+    // end it begins again from its start (the frame of its length is its first), and its music with it: a tune's time
+    // going back starts it again.
+    void round_on(f64 dt) {
+        const f64 length = scene.file.length;
+        auto sound = [&](const vector::SceneAt* from, const vector::SceneAt& to) {
+            std::vector<vector::SceneMark> passed;
+            std::string why;
+            if (!vector::scene_marks_between(scene, from, to, passed, why)) say("сцена «" + name + "»: " + why);
+            else
+                for (const vector::SceneMark& mk : passed) fire(mk);
+        };
+        f64 ahead = clock + dt;
+        if (!(length > 0)) ahead = 0;
+        else if (std::round(ahead * 1e9) / 1e9 >= length) {
+            vector::SceneAt end = at();
+            end.t = length;
+            sound(has_was ? &was : nullptr, end);
+            has_was = false;
+            ahead = std::fmod(ahead, length);
+            if (std::round(ahead * 1e9) / 1e9 >= length) ahead = 0;
+        }
+        clock = ahead;
+        t = std::min(std::round(clock * 1e9) / 1e9, length);
+        const vector::SceneAt now = at();
+        sound(has_was ? &was : nullptr, now);
+        was = now;
+        has_was = true;
+        music_now();
     }
 
     // Its talk open now closes (it is skipped or dropped).
@@ -328,7 +437,14 @@ struct GameScene::Impl {
         }
         close_talk();
         going = false;
-        close();
+        // Its last frame stays (part 6г4) till the logic has heard its end, at its next run: the next scene comes in over
+        // it.
+        close(last);
+        close(last_prev);
+        last = std::exchange(cur, {});
+        last_prev = std::exchange(prev, {});
+        end_runs = runs;
+        forget_play();
         ends[me] = skipped;
         while (ends.size() > 64) ends.erase(ends.begin());
         if (!scene.file.music.empty()) {
@@ -351,6 +467,10 @@ struct GameScene::Impl {
         const f64 cw = scene.file.width, ch = scene.file.height;
         const ScreenFit f = fit_screen("fit", static_cast<f32>(cw), static_cast<f32>(ch), static_cast<f32>(w) / dp, static_cast<f32>(h) / dp);
         fit_scale = f.sx;
+        fit_left = f.left;
+        fit_top = f.top;
+        Rml::Element* frame = cur.frame;
+        Rml::Element* bars = cur.bars;
         frame->SetProperty("left", px(f.left));
         frame->SetProperty("top", px(f.top));
         frame->SetProperty("width", px(cw * f.sx));
@@ -362,17 +482,24 @@ struct GameScene::Impl {
         bars->SetProperty("border-top-width", px(y0 / dp));
         bars->SetProperty("border-right-width", px(std::max(0.0, w - x1) / dp));
         bars->SetProperty("border-bottom-width", px(std::max(0.0, h - y1) / dp));
-        camera->SetProperty("width", px(cw));
-        camera->SetProperty("height", px(ch));
+        cur.camera->SetProperty("width", px(cw));
+        cur.camera->SetProperty("height", px(ch));
         camera_transform.clear();
     }
 
-    Rml::Element* add(const char* tag, const std::string& src, f64 w, f64 h) {
-        Rml::ElementPtr e = doc->CreateElement(tag);
-        if (!src.empty()) e->SetAttribute("src", src);
+    Rml::Element* add(Rml::Element* into, const std::string& src, f64 w, f64 h) {
+        Rml::ElementPtr e = cur.doc->CreateElement("img");
+        e->SetAttribute("src", src);
         e->SetProperty("width", px(w));
         e->SetProperty("height", px(h));
-        return camera->AppendChild(std::move(e));
+        return into->AppendChild(std::move(e));
+    }
+    // A picture or an actor in its own layer (part 6г4: its mask by a shape of the stage).
+    Rml::Element* add_item(Layer& l, const std::string& src, f64 w, f64 h) {
+        Rml::ElementPtr wrap = cur.doc->CreateElement("div");
+        wrap->SetClass("item", true);
+        l.wrap = cur.camera->AppendChild(std::move(wrap));
+        return add(l.wrap, src, w, h);
     }
 
     // The box an actor is drawn in: where its drawing reaches, else its picture's own.
@@ -423,16 +550,20 @@ struct GameScene::Impl {
         }
         if (words == structure) return;
         structure = words;
+        Rml::Element* camera = cur.camera;
         while (camera->GetNumChildren() > 0) camera->RemoveChild(camera->GetChild(camera->GetNumChildren() - 1));
+        for (const auto& [picture, made] : cur.pictures)
+            if (picture.find("-item") != std::string::npos) forget(picture);
+        std::erase_if(cur.pictures, [](const auto& p) { return p.first.find("-item") != std::string::npos; });
         for (Layer& l : want) {
-            if (l.kind == Layer::Kind::Run) l.element = add("img", "stage.svg", f.width, f.height);
+            if (l.kind == Layer::Kind::Run) l.element = add(camera, "stage.svg", f.width, f.height);
             else if (l.kind == Layer::Kind::Picture) {
                 const vector::ScenePicture& pic = f.pictures[l.item];
-                l.element = add("img", pic.file, pic.w, pic.h);
+                l.element = add_item(l, pic.file, pic.w, pic.h);
             } else {
                 const vector::SceneActor& a = f.actors[l.item];
                 const vector::SceneBox b = box_of(a);
-                l.element = add("img", a.picture, b.w, b.h);
+                l.element = add_item(l, a.picture, b.w, b.h);
             }
         }
         layers = std::move(want);
@@ -457,9 +588,159 @@ struct GameScene::Impl {
         }
     }
 
+    static void show(Rml::Element* e, bool on, bool& was) {
+        if (!e || on == was) return;
+        was = on;
+        if (on) e->RemoveProperty("display");
+        else e->SetProperty("display", "none");
+    }
+
+    bool is_item(std::string_view id) const {
+        const vector::SceneFile& f = scene.file;
+        return std::any_of(f.pictures.begin(), f.pictures.end(), [&](const vector::ScenePicture& p) { return p.id == id; }) ||
+               std::any_of(f.actors.begin(), f.actors.end(), [&](const vector::SceneActor& a) { return a.id == id; });
+    }
+
+    // A part's mask as the game draws it (part 6г4): by a shape of the stage, its shape and whether it shows outside it.
+    // None by a picture or an actor («маска по актёру или картинке», named once at play).
+    bool mask_of(const vector::MotionPartPose& pp, std::string& target, bool& invert) const {
+        const usize m = static_cast<usize>(vector::MotionProp::Mask);
+        if (!pp.has[m] || !(pp.values[m].v > 0) || pp.values[m].target.empty() || is_item(pp.values[m].target)) return false;
+        target = pp.values[m].target;
+        invert = pp.values[m].v > 1.5;
+        return true;
+    }
+
+    // Picture `name` of code: shape `target`'s area as the tab's mask takes it, drawn w × h through m (outside it when
+    // invert), white with its alpha premultiplied; made again only when what it shows changed. It is used this frame.
+    void make_mask(const std::string& name, const std::string& target, const vector::MotionMatrix& m, u32 w, u32 h, bool invert,
+                   std::set<std::string>& used) {
+        used.insert(name);
+        char buf[240];
+        std::snprintf(buf, sizeof buf, "%.9g %.9g %.9g %.9g %.9g %.9g %u %u %d|", m.a, m.b, m.c, m.d, m.e, m.f, w, h, invert ? 1 : 0);
+        const std::string made = buf + places.area_shapes(target);
+        std::string& was = cur.pictures[name];
+        if (was == made) return;
+        was = made;
+        if (!ui) return;
+        std::vector<u8> cover;
+        if (!places.area(target, m, w, h, cover)) cover.assign(static_cast<usize>(w) * h, 0); // no shape: nothing inside it
+        std::vector<u8> rgba(cover.size() * 4);
+        for (usize i = 0; i < cover.size(); ++i) {
+            const u8 c = invert ? static_cast<u8>(255 - cover[i]) : cover[i];
+            std::fill_n(rgba.begin() + static_cast<std::ptrdiff_t>(i * 4), 4, c);
+        }
+        ui->set_gpu_image(name, rgba.data(), w, h);
+    }
+
+    // A frame of a transition, shown or not, in its track's pose (pp null: where it stands, whole): moved by its x, y in
+    // the canvas's units as the screen is to the canvas, turned and scaled round the screen's middle; faded and masked
+    // as a whole on its wrap, so the mask stands while the frame moves.
+    // fade: how much of the scene shows (part 6г5б), over the frame's own.
+    void set_frame(Frame& fr, bool shown, const vector::MotionPartPose* pp, const std::string& mask, f64 fade = 1) {
+        show(fr.wrap, shown, fr.shown);
+        if (!shown) return;
+        using vector::MotionProp;
+        auto value = [&](MotionProp p) {
+            const usize i = static_cast<usize>(p);
+            const f64 v = pp && pp->has[i] ? pp->values[i].v : vector::motion_rest(p).v;
+            return std::isfinite(v) ? v : vector::motion_rest(p).v;
+        };
+        const f64 x = value(MotionProp::X), y = value(MotionProp::Y), rot = value(MotionProp::Rot), scale = value(MotionProp::Scale);
+        const f64 opacity = std::clamp(value(MotionProp::Opacity), 0.0, 1.0) * std::clamp(fade, 0.0, 1.0);
+        std::string tr;
+        if (x != 0 || y != 0 || rot != 0 || scale != 1) {
+            const f64 dp = fit_dp > 0 ? fit_dp : 1.0;
+            char buf[200];
+            std::snprintf(buf, sizeof buf, "translate(%.4fpx, %.4fpx) rotate(%.6fdeg) scale(%.7f)", x * fit_w / dp / scene.file.width,
+                          y * fit_h / dp / scene.file.height, rot, scale);
+            tr = buf;
+        }
+        if (tr != fr.transform) {
+            fr.transform = tr;
+            if (tr.empty()) fr.move->RemoveProperty("transform");
+            else fr.move->SetProperty("transform", tr);
+        }
+        std::string filter;
+        if (opacity < 1) {
+            char buf[40];
+            std::snprintf(buf, sizeof buf, "opacity(%.5f)", opacity);
+            filter = buf;
+        }
+        // A filter fades it as one picture (an element's own opacity would fade each of its layers over the others).
+        if (filter != fr.filter) {
+            fr.filter = filter;
+            if (filter.empty()) fr.wrap->RemoveProperty("filter");
+            else fr.wrap->SetProperty("filter", filter);
+        }
+        if (mask != fr.mask) {
+            fr.mask = mask;
+            if (mask.empty()) fr.wrap->RemoveProperty("mask-image");
+            else fr.wrap->SetProperty("mask-image", mask);
+        }
+    }
+
+    // A picture's or an actor's mask by a shape of the stage (part 6г4), in the camera's layer: its wrap the shape's box
+    // as far as the camera sees (outside the shape: all the camera sees), the area's picture over it at its size on the
+    // screen (in steps of the raster's scale, as a picture of live SVG), the layer in its place inside. Unmasked, as 6г2.
+    void mask_item(Layer& l, usize index, const vector::MotionPartPose* pp, const f64 view[4], f64 zoom, std::set<std::string>& used) {
+        std::string target, wrapped, inside;
+        bool invert = false;
+        if (pp && mask_of(*pp, target, invert)) {
+            f64 bx = view[0], by = view[1], bw = view[2] - view[0], bh = view[3] - view[1];
+            if (!invert) {
+                f64 x = 0, y = 0, w = 0, h = 0;
+                if (places.area_box(target, x, y, w, h)) {
+                    bx = std::max(x, view[0]), by = std::max(y, view[1]);
+                    bw = std::min(x + w, view[2]) - bx, bh = std::min(y + h, view[3]) - by;
+                } else bw = bh = 0;
+            }
+            if (bw > 0 && bh > 0 && std::isfinite(bw) && std::isfinite(bh)) {
+                f64 k = Rml::PictureScale::Step(static_cast<float>(fit_scale * (fit_dp > 0 ? fit_dp : 1.0f) * zoom));
+                if (std::max(bw, bh) * k > 4096) k = 4096 / std::max(bw, bh);
+                const u32 rw = static_cast<u32>(std::clamp(std::ceil(bw * k - 1e-6), 1.0, 4096.0));
+                const u32 rh = static_cast<u32>(std::clamp(std::ceil(bh * k - 1e-6), 1.0, 4096.0));
+                bw = rw / k, bh = rh / k;
+                const std::string name = "scene-" + std::to_string(cur.serial) + "-item" + std::to_string(index);
+                make_mask(name, target, {k, 0, 0, k, -bx * k, -by * k}, rw, rh, invert, used);
+                wrapped = px(bx) + " " + px(by) + " " + px(bw) + " " + px(bh) + " " + name;
+                inside = px(-bx) + " " + px(-by);
+            } else wrapped = "none"; // nothing of it is seen
+        }
+        if (wrapped != l.wrapped) {
+            l.wrapped = wrapped;
+            Rml::Element* w = l.wrap;
+            if (wrapped == "none") w->SetProperty("display", "none");
+            else w->RemoveProperty("display");
+            if (wrapped.empty() || wrapped == "none") {
+                for (const char* p : {"left", "top", "width", "height", "mask-image"}) w->RemoveProperty(p);
+            } else {
+                std::istringstream in(wrapped);
+                std::string x, y, ww, hh, name;
+                in >> x >> y >> ww >> hh >> name;
+                w->SetProperty("left", x);
+                w->SetProperty("top", y);
+                w->SetProperty("width", ww);
+                w->SetProperty("height", hh);
+                w->SetProperty("mask-image", "url(/gpu/" + name + ")");
+            }
+        }
+        if (inside != l.inside) {
+            l.inside = inside;
+            if (inside.empty()) {
+                l.element->RemoveProperty("left");
+                l.element->RemoveProperty("top");
+            } else {
+                const usize at = inside.find(' ');
+                l.element->SetProperty("left", inside.substr(0, at));
+                l.element->SetProperty("top", inside.substr(at + 1));
+            }
+        }
+    }
+
     // The scene's frame at its moment t.
     void draw(int width, int height) {
-        if (!doc) return;
+        if (!cur.doc) return;
         fit(width, height);
         const vector::SceneFile& f = scene.file;
         const vector::SceneAt now = at();
@@ -470,7 +751,7 @@ struct GameScene::Impl {
                       cam.b, cam.c, cam.d);
         if (camera_transform != buf) {
             camera_transform = buf;
-            camera->SetProperty("transform", camera_transform);
+            cur.camera->SetProperty("transform", camera_transform);
         }
 
         ui::SvgPose stage;
@@ -478,17 +759,37 @@ struct GameScene::Impl {
         stage.parts = pose.stage;
         stage.copies = pose.copies;
         stage.order = pose.order;
-        // A mask of a picture or an actor by a shape of the stage: part 6г4.
+        // Part 6г4: the areas of shapes this frame masks by, its transition's frames' and its pictures' and actors' (and
+        // their copies').
+        std::map<std::string, const vector::MotionPartPose*> parts;
+        for (const vector::MotionPartPose& pp : pose.stage) parts[pp.id] = &pp;
+        std::vector<std::string> areas;
+        auto want = [&](const vector::MotionPartPose& pp) {
+            std::string target;
+            bool invert = false;
+            if (mask_of(pp, target, invert) && std::find(areas.begin(), areas.end(), target) == areas.end()) areas.push_back(target);
+        };
+        for (const vector::MotionPartPose& fr : pose.frames) want(fr);
         for (const vector::MotionPartPose& pp : pose.stage) {
-            const usize mask = static_cast<usize>(vector::MotionProp::Mask);
-            if (!pp.has[mask] || !(pp.values[mask].v > 0)) continue;
-            const bool item = std::any_of(f.pictures.begin(), f.pictures.end(), [&](const vector::ScenePicture& p) { return p.id == pp.id; }) ||
-                              std::any_of(f.actors.begin(), f.actors.end(), [&](const vector::SceneActor& a) { return a.id == pp.id; });
-            if (item) say("сцена «" + name + "»: маска «" + pp.id + "» по фигуре сцены в игре пока не рисуется, «" + pp.id + "» виден целиком");
+            bool item = is_item(pp.id);
+            for (const vector::MotionCopy& c : pose.copies)
+                if (c.id == pp.id) item = item || is_item(c.source);
+            if (item) want(pp);
         }
-        const std::vector<ui::SvgPlace> top = places.place(stage);
+        const std::vector<ui::SvgPlace> top = places.place(stage, areas);
         build(top);
-        for (Layer& l : layers) {
+        // What the camera sees, in the stage's units: the box round the canvas brought back through it.
+        const vector::MotionMatrix back = vector::inverse(cam);
+        f64 view[4] = {INFINITY, INFINITY, -INFINITY, -INFINITY};
+        for (const vector::Point c : {vector::Point{0, 0}, vector::Point{f.width, 0}, vector::Point{0, f.height}, vector::Point{f.width, f.height}}) {
+            const vector::Point q = back.apply(c);
+            view[0] = std::min(view[0], q.x), view[1] = std::min(view[1], q.y);
+            view[2] = std::max(view[2], q.x), view[3] = std::max(view[3], q.y);
+        }
+        const f64 zoom = std::hypot(cam.a, cam.b);
+        std::set<std::string> used;
+        for (usize li = 0; li < layers.size(); ++li) {
+            Layer& l = layers[li];
             if (l.kind == Layer::Kind::Run) {
                 ui::SvgPose run = places.run_pose(stage, l.keys);
                 if (!l.has_pose || run != l.posed) {
@@ -501,6 +802,11 @@ struct GameScene::Impl {
             }
             const auto at = std::find_if(top.begin(), top.end(), [&](const ui::SvgPlace& p) { return p.key == l.key; });
             if (at == top.end()) continue;
+            const std::string id = l.key[0] == 'c'                     ? l.key.substr(1)
+                                   : l.kind == Layer::Kind::Picture ? f.pictures[l.item].id
+                                                                    : f.actors[l.item].id;
+            const auto part = parts.find(id);
+            mask_item(l, li, part != parts.end() ? part->second : nullptr, view, zoom, used);
             if (l.kind == Layer::Kind::Picture) {
                 place_item(l, *at, at->m);
                 continue;
@@ -532,12 +838,57 @@ struct GameScene::Impl {
                 ui::svg_pose(l.element, std::move(sp));
             }
         }
+
+        // Part 6г4: the frames of its transition by its phase. Coming in, over the game's frame (its snapshot) or over the
+        // last frame of the scene before it, which stands as the old frame till it is in; going out, the game's live frame
+        // over it; after its leave, nothing of it.
+        using Phase = vector::ScenePhase;
+        // A scene behind a screen (part 6г5б) draws its frame all its time: none of its transitions.
+        const Phase phase = how.behind ? Phase::Scene : pose.phase;
+        cur.phase = phase;
+        if (prev.doc && phase != Phase::Enter) close(prev);
+        const bool over_prev = prev.doc != nullptr;
+        const bool enter = phase == Phase::Enter, leave = phase == Phase::Leave;
+        const bool game = (enter && !over_prev) || leave;
+        auto mask = [&](usize i) -> std::string {
+            std::string target;
+            bool invert = false;
+            if (fit_w <= 0 || fit_h <= 0 || !mask_of(pose.frames[i], target, invert)) return {};
+            // The shape as the camera sees it on the screen, in its pixels.
+            const f64 dp = fit_dp > 0 ? fit_dp : 1.0, k = fit_scale * dp;
+            const vector::MotionMatrix screen = vector::MotionMatrix{k, 0, 0, k, fit_left * dp, fit_top * dp} * cam;
+            const std::string name = "scene-" + std::to_string(cur.serial) + "-frame" + std::to_string(i);
+            make_mask(name, target, screen, static_cast<u32>(fit_w), static_cast<u32>(fit_h), invert, used);
+            return "url(/gpu/" + name + ")";
+        };
+        show(cur.backdrop, game, cur.backdrop_on);
+        show(cur.black, game, cur.black_on);
+        set_frame(cur.below, enter && !over_prev, &pose.frames[0], enter && !over_prev ? mask(0) : std::string());
+        set_frame(cur.look, phase != Phase::Gone, enter ? &pose.frames[1] : leave ? &pose.frames[2] : nullptr,
+                  enter ? mask(1) : leave ? mask(2) : std::string(), alpha);
+        set_frame(cur.above, leave, &pose.frames[3], leave ? mask(3) : std::string());
+        if (over_prev) {
+            show(prev.backdrop, false, prev.backdrop_on);
+            show(prev.black, true, prev.black_on);
+            set_frame(prev.below, false, nullptr, {});
+            set_frame(prev.above, false, nullptr, {});
+            set_frame(prev.look, true, &pose.frames[0], mask(0));
+        }
+        // The pictures of code this frame does not show go.
+        for (auto it = cur.pictures.begin(); it != cur.pictures.end();) {
+            if (used.count(it->first)) {
+                ++it;
+                continue;
+            }
+            forget(it->first);
+            it = cur.pictures.erase(it);
+        }
     }
 };
 
 GameScene::GameScene() : impl_(std::make_unique<Impl>()) { impl_->self = this; }
 
-GameScene::~GameScene() { impl_->close(); }
+GameScene::~GameScene() { impl_->close_all(); }
 
 bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::string_view name, const SceneHow& how, std::string& why) {
     Impl& im = *impl_;
@@ -550,6 +901,10 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     vector::SceneMotion scene;
     std::string err;
     if (!read_scene_folder(dir, scene, err)) return why = "сцена «" + n + "»: " + err, false;
+    // Part 6г6: its numbers at the values given; a parameter a game does not change, a line once.
+    std::vector<std::string> fixed;
+    if (!vector::scene_with_params(scene, how.params, fixed, why)) return false;
+    for (const std::string& line : fixed) im.say("сцена «" + n + "»: " + line);
     std::vector<std::vector<ui::SvgDrawing>> drawings(scene.actors.size());
     for (usize a = 0; a < scene.actors.size(); ++a) {
         const fs::path beside = (dir / utf8_path(scene.file.actors[a].picture)).parent_path();
@@ -569,25 +924,54 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
 
     // The music of the one before going out after its end goes now.
     im.tail = false;
-    im.close();
+    im.close(im.cur);
+    im.close(im.prev);
+    im.forget_play();
     std::string url = path_to_utf8(dir / "scene.rml");
     std::replace(url.begin(), url.end(), '\\', '/');
     std::replace(url.begin(), url.end(), ':', '|');
-    const std::string rml = std::string("<rml><head><title>Сцена</title><style>") + kStyle +
-                            "</style></head><body><div id=\"frame\"><div id=\"camera\"></div></div><div id=\"bars\"></div></body></rml>";
+    // Part 6г4: the snapshot of the game's frame under it, black, the game's frame below the scene's, the scene's (its
+    // background all round, the camera's frame, the bars) and the game's frame above it: only the scene's is shown out of
+    // a transition.
+    const u64 serial = im.serials + 1;
+    const std::string game = game_picture(serial);
+    const std::string game_frame = "<div class=\"full move\"><img class=\"full\" src=\"/gpu/" + game + "\"></img></div>";
+    const std::string rml = std::string("<rml><head><title>Сцена</title><style>") + kStyle + "</style></head><body>" +
+                            "<backdrop id=\"backdrop\" class=\"full\" name=\"" + game + "\" style=\"display: none;\"></backdrop>" +
+                            "<div id=\"black\" class=\"full\" style=\"display: none;\"></div>" +
+                            "<div id=\"below\" class=\"full wrap\" style=\"display: none;\">" + game_frame + "</div>" +
+                            "<div id=\"look-wrap\" class=\"full wrap\"><div id=\"look\" class=\"full move\"><div id=\"bg\" class=\"full\"></div>" +
+                            "<div id=\"frame\"><div id=\"camera\"></div></div><div id=\"bars\"></div></div></div>" +
+                            "<div id=\"above\" class=\"full wrap\" style=\"display: none;\">" + game_frame + "</div></body></rml>";
     im.context = context;
-    im.doc = context ? context->LoadDocumentFromMemory(rml, url) : nullptr;
-    if (!im.doc) return why = "сцена «" + n + "»: её документ не построился", false;
-    im.frame = im.doc->GetElementById("frame");
-    im.camera = im.doc->GetElementById("camera");
-    im.bars = im.doc->GetElementById("bars");
+    Impl::Shown& s = im.cur;
+    s.doc = context ? context->LoadDocumentFromMemory(rml, url) : nullptr;
+    if (!s.doc) return why = "сцена «" + n + "»: её документ не построился", false;
+    s.serial = serial;
+    s.backdrop = s.doc->GetElementById("backdrop");
+    s.black = s.doc->GetElementById("black");
+    s.bg = s.doc->GetElementById("bg");
+    s.frame = s.doc->GetElementById("frame");
+    s.camera = s.doc->GetElementById("camera");
+    s.bars = s.doc->GetElementById("bars");
+    s.below = {s.doc->GetElementById("below"), s.doc->GetElementById("below")->GetChild(0)};
+    s.look = {s.doc->GetElementById("look-wrap"), s.doc->GetElementById("look")};
+    s.look.shown = true;
+    s.above = {s.doc->GetElementById("above"), s.doc->GetElementById("above")->GetChild(0)};
     if (!scene.file.background.empty()) {
-        im.doc->SetProperty("background-color", scene.file.background);
-        im.bars->SetProperty("border-color", scene.file.background);
+        s.bg->SetProperty("background-color", scene.file.background);
+        s.bars->SetProperty("border-color", scene.file.background);
     } else {
-        im.bars->SetProperty("display", "none");
+        s.bg->SetProperty("display", "none");
+        s.bars->SetProperty("display", "none");
     }
-    im.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+    s.doc->Show(Rml::ModalFlag::None, Rml::FocusFlag::None);
+    // The last frame of the one just over is its old frame when it comes in from its start and that one did not go out to
+    // the game; else it goes now.
+    im.close(im.last_prev);
+    if (im.last.doc && vector::scene_phase(scene.file, 0) == vector::ScenePhase::Enter && im.last.phase != vector::ScenePhase::Gone)
+        im.prev = std::exchange(im.last, {});
+    else im.close(im.last);
 
     im.dir = dir;
     im.sounds = game_dir / "sounds";
@@ -603,7 +987,8 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     im.has_was = false;
     im.going = true;
     im.fresh = true;
-    im.serial = ++im.serials;
+    im.serial = ++im.serials; // the document's
+
     im.run_poses = 0;
     // What the game will not draw of it, once.
     std::string left;
@@ -616,6 +1001,12 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
 void GameScene::update(f64 dt, int width, int height) {
     Impl& im = *impl_;
     if (!std::isfinite(dt) || dt < 0) dt = 0;
+    // Part 6г4: the last frame of the one over was held till the logic ran; nothing came in over it.
+    if (!im.runs_told) ++im.runs;
+    if (im.last.doc && im.runs != im.end_runs) {
+        im.close(im.last);
+        im.close(im.last_prev);
+    }
     if (im.tail) {
         im.tail_t += dt;
         const f64 k = std::clamp(im.tail_t / kMusicBack, 0.0, 1.0);
@@ -632,6 +1023,11 @@ void GameScene::update(f64 dt, int width, int height) {
     if (im.fresh) {
         im.fresh = false;
         dt = 0;
+    }
+    if (im.how.behind) {
+        im.round_on(dt);
+        im.draw(width, height);
+        return;
     }
     const u64 me = im.serial;
     // A frame of no time (the pause menu up) does not come to the next stop either: a talk could not open over the menu.
@@ -666,7 +1062,7 @@ void GameScene::drop() {
         im.ends[im.serial] = false;
         im.going = false;
     }
-    im.close();
+    im.close_all();
     im.tail = false;
     im.hear({}, 1);
 }
@@ -692,7 +1088,25 @@ bool GameScene::skipped(u64 serial) const {
     const auto it = impl_->ends.find(serial);
     return it != impl_->ends.end() && it->second;
 }
-Rml::ElementDocument* GameScene::document() const { return impl_->doc; }
+Rml::ElementDocument* GameScene::document() const { return impl_->cur.doc ? impl_->cur.doc : impl_->last.doc; }
+std::vector<Rml::ElementDocument*> GameScene::documents() const {
+    std::vector<Rml::ElementDocument*> out;
+    for (const Impl::Shown* s : {&impl_->last_prev, &impl_->last, &impl_->prev, &impl_->cur})
+        if (s->doc) out.push_back(s->doc);
+    return out;
+}
+bool GameScene::wants_backdrop() const {
+    for (const Impl::Shown* s : {&impl_->last_prev, &impl_->last, &impl_->prev, &impl_->cur})
+        if (s->doc && s->backdrop_on) return true;
+    return false;
+}
+void GameScene::set_ui(ui::Ui* ui) { impl_->ui = ui; }
+void GameScene::set_alpha(f64 alpha) { impl_->alpha = std::isfinite(alpha) ? std::clamp(alpha, 0.0, 1.0) : 1.0; }
+bool GameScene::has_music() const { return impl_->going && !impl_->scene.file.music.empty(); }
+void GameScene::logic_ran(u64 runs) {
+    impl_->runs_told = true;
+    impl_->runs = runs;
+}
 const std::vector<std::string>& GameScene::problems() const { return impl_->problems; }
 u64 GameScene::run_poses() const { return impl_->run_poses; }
 

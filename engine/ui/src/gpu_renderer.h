@@ -36,8 +36,30 @@ public:
 
     // A texture drawn by the app (a UI context drawn offscreen), shown by
     // documents as <img src="/gpu/<name>"/>. The renderer never releases it.
+    // Elements show the texture the name has when they are drawn: one the app
+    // makes again (of another size) keeps its name, and a name without a
+    // texture yet draws nothing.
     void set_external_texture(const std::string& name, SDL_GPUTexture* texture, u32 width, u32 height);
     void drop_external_texture(const std::string& name);
+
+    // Part 6г4 of docs/models/сцены-модель.md. The world drawn this frame:
+    // a texture the frame's size the app drew it into (the window's frame
+    // cannot be read), for backdrops; null: none, black there.
+    void set_world(SDL_GPUTexture* world) { world_ = world; }
+    // While a context is recorded: at this place the frame so far (black,
+    // the world over it, then what the context drew up to here) goes into a
+    // texture of the renderer's own of the frame's size, shown as
+    // /gpu/<name> by the elements after it. <backdrop name="…"/> calls it.
+    void backdrop(const std::string& name);
+    // The renderer recording now (between begin_frame and end_frame).
+    static GpuRenderer* recording();
+    // A picture made by code in a texture of the renderer's own, shown as
+    // /gpu/<name> (a scene's mask): RGBA with alpha premultiplied, rows top
+    // to bottom, uploaded with the next frame; into the same texture while
+    // its size is the same. drop_image forgets it, a backdrop too.
+    void set_image(const std::string& name, const u8* rgba, u32 width, u32 height);
+    void drop_image(const std::string& name);
+    usize images() const { return owned_.size(); }
     // Clears texture to transparent, for drawing a context into it.
     void clear_texture(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture);
 
@@ -104,7 +126,8 @@ private:
         PopLayer,
         Composite,
         SaveTexture,
-        SaveMask
+        SaveMask,
+        Backdrop
     };
     struct Op {
         OpType type;
@@ -124,6 +147,8 @@ private:
         Texture* texture = nullptr;
         u32 offset = 0; // in the staging bytes
         u32 size = 0;
+        SDL_GPUTexture* image = nullptr; // set_image's, of image_w × image_h
+        u32 image_w = 0, image_h = 0;
     };
 
     bool create_pipelines();
@@ -164,10 +189,17 @@ private:
         u32 vertex_uniforms_size = 0;
         const void* fragment_uniforms = nullptr;
         u32 fragment_uniforms_size = 0;
+        // Forge: the target cleared first (a filter's picture: nothing of an earlier one outside the scissor).
+        bool clear = false;
     };
     void fullscreen(const FullscreenDraw& draw);
     void blit(SDL_GPUTexture* source, Rml::Rectanglei from, SDL_GPUTexture* destination, Rml::Rectanglei to);
     void copy_texture(SDL_GPUTexture* source, Rml::Rectanglei from, SDL_GPUTexture* destination);
+    void render_backdrop(SDL_GPUTexture* into);
+    // The texture an element shows now: an app's by its name (null: none yet), else its own.
+    SDL_GPUTexture* texture_now(const Texture& texture) const;
+    // A texture of the renderer's own by name (set_image, backdrop), made again when its size or use changes.
+    SDL_GPUTexture* own_texture(const std::string& name, u32 width, u32 height, bool target);
     Rml::Rectanglei window_rect() const; // the scissor region, or the whole viewport
 
     SDL_GPUDevice* device_ = nullptr;
@@ -228,6 +260,14 @@ private:
         u32 width, height;
     };
     std::unordered_map<std::string, External> external_;
+    struct Owned {
+        SDL_GPUTexture* texture = nullptr;
+        u32 width = 0, height = 0;
+        bool target = false; // a backdrop's: drawn into
+    };
+    std::unordered_map<std::string, Owned> owned_; // also in external_
+    SDL_GPUTexture* world_ = nullptr;
+    std::vector<SDL_GPUTexture*> backdrops_; // this frame's Backdrop ops' textures
     TargetSet take_targets();
     void put_targets(TargetSet&& set);
     void release_targets(TargetSet& set);

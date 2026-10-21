@@ -277,6 +277,7 @@ Screen template_preview(const Template& t, Color background) {
     s.safe = 0;
     s.music.clear();
     s.button_sound.clear();
+    s.scene_behind.clear();
     s.library = false;
     return s;
 }

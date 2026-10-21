@@ -38,6 +38,7 @@
 #include "forge/pixel/script.h"
 #include "forge/vector/scene_file.h"
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -166,9 +167,17 @@ bool load_character(const SceneFiles& files, const std::string& file, SceneChara
 // the seconds the scene waited at each of rec.stops, or none; a clip goes on while the scene waits, so its moment is
 // ahead by the waits after its start up to t (a stop at its start counts when made before it). `waiting`: the stop of
 // rec.stops the scene stands at now (-1: none), what was made after it at its moment not begun yet.
+// Part 6г5а: while a play's blend goes, `blend` is what the actor shows, as vector::SceneActorMoment's: the first step
+// at rest (null play) or a clip at its moment, each next blended in over it by its k (blend_pose), the last this play.
+struct ActorBlendStep {
+    const ActorPlay* play = nullptr;
+    f64 time = 0;
+    f64 k = 1;
+};
 struct ActorMoment {
     const ActorPlay* play = nullptr;
     f64 time = 0;
+    std::vector<ActorBlendStep> blend; // empty when no blend goes
 };
 ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
 
@@ -252,6 +261,8 @@ public:
 
     const Stage& stage() const;
     const SceneDoc& doc() const;
+    // The code it was loaded with (part 6г6: the gift loads it again at other values of its parameters).
+    const std::string& code() const;
     PoseScript& script();
     Rig& rig();
     const Rig& rig() const;
@@ -260,6 +271,8 @@ public:
     // Part 6г2: where an actor's drawing reaches as the last frame() or pose() left it, in its picture's units (Rig::reach):
     // x0, y0, x1, y1. False for no such actor or one that draws nothing.
     bool actor_reach(std::string_view id, f64 out[4]);
+    // Part 6г6: the same of each shape of the actor's pictures (Rig::reach_each); false for no such actor.
+    bool actor_reach_each(std::string_view id, std::vector<std::array<f64, 4>>& out);
     // An actor's character as read; null for none.
     const SceneCharacter* character(std::string_view actor) const;
     // Part 6г1: the code of an actor's character that records the clip of a play, and the values it records it with

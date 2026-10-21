@@ -18,12 +18,24 @@
 // the time it lived (its waits counted) passes them: an emit to on_message, a sound (name, name.wav or name.ogg of the
 // game's sounds) to on_sound. Its music: the tunes it plays now and how loud the game's own is under them, to on_music.
 // At its end, or skipped, on_end.
+//
+// Part 6г4: it comes in and goes out by its transitions, each frame of one the whole screen in its track's pose, its
+// mask a shape of the stage as the camera sees it; the game's frame is a snapshot of what is drawn under the scene (the
+// shell draws the world into a texture for it: wants_backdrop). A scene played by the logic that heard the end of the one
+// before comes in over that one's last frame, which is held till the game's logic has run once after the end
+// (logic_ran). A picture's or an actor's mask by a shape of the stage is drawn.
+//
+// Part 6г5б: a scene behind a screen of the game (forge-scene-behind, screens.h) is a player of its own with
+// SceneHow::behind: round and round from its start, its frame all its time (no transitions drawn), its waits and talks
+// passing at once, its messages not going to the logic (its sounds sound), its music beginning again with each round, as
+// much of it showing as its screen does (set_alpha).
 
 #include "forge/core/types.h"
 #include "forge/vector/scene_file.h"
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -34,12 +46,21 @@ class Context;
 class ElementDocument;
 } // namespace Rml
 
+namespace forge::ui {
+class Ui;
+}
+
 namespace forge::game {
 
 // How a scene plays (forge.scene.play's options, the node's fields).
 struct SceneHow {
     bool pause = true; // the world stands and does not hear the player while it plays
     bool skip = true;  // the pause menu has «Пропустить сцену»
+    // Part 6г5б: a scene behind a screen, not a cut-scene: round and round, its frame all its time, waits and talks
+    // passing at once, no messages to the logic, never ending (drop stops it).
+    bool behind = false;
+    // Part 6г6: the values of its parameters, by name (vector::scene_with_params); one not given: the file's.
+    std::map<std::string, f64> params;
 };
 
 // A tune of the scene's music now (vector::scene_music_at): the file of the game's sounds it plays, by the call
@@ -56,6 +77,9 @@ struct SceneTune {
 bool read_scene_folder(const std::filesystem::path& dir, vector::SceneMotion& out, std::string& why);
 // The scenes a game has: the folders of game_dir/scenes with a scene.json, by name.
 std::vector<std::string> scene_names(const std::filesystem::path& game_dir);
+// Part 6г6: the parameters of a scene a game has, by name, at the values it was given at (its scene.json's); empty for
+// none, or a scene that is not there or does not read.
+std::vector<vector::MotionParam> scene_params(const std::filesystem::path& game_dir, std::string_view name);
 // A sound's file in the game's sounds folder as «Векторная» finds it: name, else name.wav, else name.ogg; empty when
 // none is there or the name is no file of the folder.
 std::string scene_sound_file(const std::filesystem::path& sounds, std::string_view name);
@@ -96,11 +120,27 @@ public:
     void note(const std::string& line);
     // Each play's own number (from 1): on_end's, and over() for the logic waiting on it.
     u64 serial() const;
-    // The play with this number has ended (or never began).
+    // The play with this number has ended (or never began): so too while its last frame is held.
     bool over(u64 serial) const;
     // Whether the play with this number was skipped (when over).
     bool skipped(u64 serial) const;
+    // The one on the screen at the top: the one playing, else the last frame held of the one over (part 6г4).
     Rml::ElementDocument* document() const;
+    // All of them, bottom to top (the one before standing under the one coming in, part 6г4): the shell pulls them over
+    // the game's screens in this order.
+    std::vector<Rml::ElementDocument*> documents() const;
+    // Part 6г4: whether a transition shows the game's frame now, and the shell is to draw the world into a texture for it.
+    bool wants_backdrop() const;
+    // The UI whose renderer takes the masks it makes (none: they are not made).
+    void set_ui(ui::Ui* ui);
+    // Part 6г5б: how much of it shows, 0..1, faded as one picture (a scene behind a screen comes and goes with it).
+    void set_alpha(f64 alpha);
+    // Whether its scene has music (a call of `music`): a screen without music of its own plays it.
+    bool has_music() const;
+    // Part 6г4: how many times the game's logic has run so far (its ticks), each frame before update: the last frame of
+    // the one over stays till this changes after its end, so the scene the logic begins on hearing it comes in over it
+    // (on a screen of 144 Hz the logic's next tick may be two frames on). Not told, each update is taken for a run.
+    void logic_ran(u64 runs);
 
     std::function<void(const std::string& message)> on_message;
     std::function<void(const std::string& file)> on_sound;

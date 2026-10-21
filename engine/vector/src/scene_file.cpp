@@ -1,5 +1,6 @@
 #include "forge/vector/scene_file.h"
 
+#include "forge/vector/timing.h"
 #include "json_text.h"
 
 #include <yyjson.h>
@@ -81,6 +82,7 @@ bool hex_color(std::string_view s) {
 struct Reader {
     SceneFile& f;
     std::string& why;
+    u64 version = 0;
 
     bool fail(const std::string& where, const std::string& what) {
         why = where + ": " + what;
@@ -146,6 +148,24 @@ struct Reader {
                               number(yyjson_arr_get(r, 1), a.reach.y) && number(yyjson_arr_get(r, 2), a.reach.w) && number(yyjson_arr_get(r, 3), a.reach.h);
             if (!four || !(a.reach.w > 0) || !(a.reach.h > 0)) return fail(at, "reach: нужна рамка рисунка в сцене [x, y, w, h], w и h больше 0");
         }
+        if (yyjson_val* rb = yyjson_obj_get(v, "reach_by")) {
+            if (version < 3) return fail(at, "reach_by: параметры сцены — в файле версии 3");
+            if (!yyjson_is_obj(rb)) return fail(at, "reach_by: нужен объект {\"параметр\": [слева, сверху, справа, снизу]}");
+            usize i, n;
+            yyjson_val *key, *edges;
+            yyjson_obj_foreach(rb, i, n, key, edges) {
+                const std::string name(yyjson_get_str(key), yyjson_get_len(key));
+                const std::string where = at + ": reach_by." + name;
+                if (!f.param(name)) return fail(where, "у сцены нет такого параметра");
+                if (f.fixed.count(name)) return fail(where, "этот параметр из игры не меняется");
+                std::array<f64, 4> e{};
+                const bool four = yyjson_is_arr(edges) && yyjson_arr_size(edges) == 4 && number(yyjson_arr_get(edges, 0), e[0]) &&
+                                  number(yyjson_arr_get(edges, 1), e[1]) && number(yyjson_arr_get(edges, 2), e[2]) && number(yyjson_arr_get(edges, 3), e[3]);
+                if (!four || std::any_of(e.begin(), e.end(), [](f64 x) { return !(x >= 0); }))
+                    return fail(where, "нужно, на сколько уходит каждый край на единицу: [слева, сверху, справа, снизу], от 0");
+                a.reach_by[name] = e;
+            }
+        }
         f.actors.push_back(std::move(a));
         return true;
     }
@@ -168,6 +188,11 @@ struct Reader {
             if (!number(s, p.speed) || !(p.speed > 0)) return fail(at, "speed: нужно число больше 0");
         } else if (!stop) return fail(at, "speed: нужна скорость клипа");
         if (!order(yyjson_obj_get(v, "order"), p.order)) return fail(at, "order: нужен номер вызова, целое от 0");
+        if (yyjson_val* b = yyjson_obj_get(v, "blend")) {
+            if (stop) return fail(at, "blend: у stop смены нет");
+            if (version < 2) return fail(at, "blend: смена клипов — в файле версии 2");
+            if (!number(b, p.blend) || !(p.blend >= 0)) return fail(at, "blend: нужны секунды смены от 0");
+        }
         f.plays.push_back(std::move(p));
         return true;
     }
@@ -212,6 +237,41 @@ struct Reader {
         return true;
     }
 
+    // Part 6г6: the scene's parameters and those a game does not change.
+    bool params(yyjson_val* r) {
+        yyjson_val* ps = yyjson_obj_get(r, "params");
+        yyjson_val* fx = yyjson_obj_get(r, "fixed");
+        if ((ps || fx) && version < 3) return why = std::string(ps ? "params" : "fixed") + ": параметры сцены — в файле версии 3", false;
+        if (ps) {
+            if (!yyjson_is_arr(ps)) return why = "params: нужен список параметров [{\"name\": …, \"value\": …}]", false;
+            usize i, n;
+            yyjson_val* item;
+            yyjson_arr_foreach(ps, i, n, item) {
+                const std::string at = "params[" + std::to_string(i) + "]";
+                MotionParam prm;
+                if (!yyjson_is_obj(item)) return fail(at, "нужен объект {\"name\": …, \"value\": …}");
+                if (!text(yyjson_obj_get(item, "name"), prm.name) || prm.name.empty()) return fail(at, "name: нужно имя параметра строкой");
+                if (!number(yyjson_obj_get(item, "value"), prm.value)) return fail(at, "value: нужно число — с ним вкладка отдала сцену");
+                if (f.param(prm.name)) return fail(at, "параметр «" + prm.name + "» дважды");
+                if (!f.params.empty() && !(f.params.back().name < prm.name)) return fail(at, "параметры идут по имени");
+                f.params.push_back(std::move(prm));
+            }
+        }
+        if (fx) {
+            if (!yyjson_is_obj(fx)) return why = "fixed: нужен объект {\"параметр\": \"почему не меняется\"}", false;
+            usize i, n;
+            yyjson_val *key, *v;
+            yyjson_obj_foreach(fx, i, n, key, v) {
+                const std::string name(yyjson_get_str(key), yyjson_get_len(key));
+                std::string reason;
+                if (!f.param(name)) return fail("fixed." + name, "у сцены нет такого параметра");
+                if (!text(v, reason) || reason.empty()) return fail("fixed." + name, "нужно, почему он из игры не меняется, строкой");
+                f.fixed[name] = std::move(reason);
+            }
+        }
+        return true;
+    }
+
     bool root(yyjson_val* r) {
         if (!yyjson_is_obj(r)) return why = "в файле не объект JSON", false;
         std::string kind;
@@ -222,6 +282,7 @@ struct Reader {
             return why = "version " + std::to_string(yyjson_get_uint(ver)) + ": сцену отдал редактор новее этой игры (она читает " +
                          std::to_string(kSceneFileVersion) + ")",
                    false;
+        version = yyjson_get_uint(ver);
         if (!text(yyjson_obj_get(r, "name"), f.name) || f.name.empty()) return why = "name: нужно имя сцены строкой", false;
         if (!text(yyjson_obj_get(r, "from"), f.from)) return why = "from: нужен файл сцены в «Ресурсах» строкой", false;
         if (!pair(yyjson_obj_get(r, "canvas"), f.width, f.height) || !(f.width > 0) || !(f.height > 0))
@@ -229,6 +290,7 @@ struct Reader {
         if (yyjson_val* bg = yyjson_obj_get(r, "background"); bg && (!text(bg, f.background) || !hex_color(f.background)))
             return why = "background: нужен цвет \"#rrggbb\" (без background сцена прозрачна)", false;
         if (!number(yyjson_obj_get(r, "length"), f.length) || f.length < 0) return why = "length: нужна длина сцены от 0", false;
+        if (!params(r)) return false;
         auto bind = [this](auto method) { return [this, method](yyjson_val* v, const std::string& at) { return (this->*method)(v, at); }; };
         if (!list(r, "pictures", "{\"id\": …, \"file\": …, \"x\": …}", bind(&Reader::picture))) return false;
         if (!list(r, "actors", "{\"id\": …, \"picture\": …, \"motion\": …}", bind(&Reader::actor))) return false;
@@ -304,6 +366,12 @@ const SceneActor* SceneFile::actor(std::string_view id) const {
     return nullptr;
 }
 
+const MotionParam* SceneFile::param(std::string_view name) const {
+    for (const MotionParam& p : params)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
 bool read_scene_file(std::string_view json, SceneFile& out, std::string& why) {
     out = {};
     why.clear();
@@ -321,7 +389,10 @@ bool read_scene_file(std::string_view json, SceneFile& out, std::string& why) {
 }
 
 std::string write_scene_file(const SceneFile& f) {
-    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(kSceneFileVersion) + ",\n  \"name\": ";
+    // Version 3 only with parameters (part 6г6), 2 only with a blend (part 6г5а): a game made before reads the rest.
+    const bool blends = std::any_of(f.plays.begin(), f.plays.end(), [](const ScenePlay& p) { return p.blend > 0; });
+    const u32 version = !f.params.empty() ? 3 : blends ? 2 : 1;
+    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(version) + ",\n  \"name\": ";
     put_string(out, f.name);
     out += ",\n  \"from\": ";
     put_string(out, f.from);
@@ -333,6 +404,24 @@ std::string write_scene_file(const SceneFile& f) {
     }
     out += ",\n  \"length\": ";
     put_number(out, f.length);
+    if (!f.params.empty()) {
+        out += ",\n  \"params\": [";
+        for (usize i = 0; i < f.params.size(); ++i) {
+            out += i ? ", {\"name\": " : "{\"name\": ";
+            put_string(out, f.params[i].name);
+            out += ", \"value\": ";
+            put_number(out, f.params[i].value);
+            out += '}';
+        }
+        out += "],\n  \"fixed\": {";
+        for (const auto& [name, reason] : f.fixed) {
+            if (out.back() != '{') out += ", ";
+            put_string(out, name);
+            out += ": ";
+            put_string(out, reason);
+        }
+        out += '}';
+    }
     out += ",\n";
     put_list(out, "pictures", f.pictures, [&](const ScenePicture& p) {
         out += "{\"id\": ";
@@ -368,6 +457,20 @@ std::string write_scene_file(const SceneFile& f) {
             }
             out += ']';
         }
+        if (!a.reach_by.empty()) {
+            out += ", \"reach_by\": {";
+            for (const auto& [name, edges] : a.reach_by) {
+                if (out.back() != '{') out += ", ";
+                put_string(out, name);
+                out += ": [";
+                for (usize i = 0; i < 4; ++i) {
+                    if (i) out += ", ";
+                    put_number(out, edges[i]);
+                }
+                out += ']';
+            }
+            out += '}';
+        }
         out += '}';
     });
     put_list(out, "plays", f.plays, [&](const ScenePlay& p) {
@@ -381,7 +484,9 @@ std::string write_scene_file(const SceneFile& f) {
         }
         put_field(out, "at", p.at);
         if (p.kind != ScenePlay::Kind::Stop) put_field(out, "speed", p.speed);
-        out += ", \"order\": " + std::to_string(p.order) + '}';
+        out += ", \"order\": " + std::to_string(p.order);
+        if (p.kind != ScenePlay::Kind::Stop && p.blend > 0) put_field(out, "blend", p.blend);
+        out += '}';
     });
     put_list(out, "music", f.music, [&](const SceneMusicCall& m) {
         out += "{\"at\": ";
@@ -434,50 +539,130 @@ bool check_scene(const SceneMotion& s, std::string& why) {
         if (!s.actors[static_cast<usize>(a)].clip(p.clip))
             return why = "актёр «" + p.actor + "»: в " + s.file.actors[static_cast<usize>(a)].motion + " нет клипа «" + p.clip + "»", false;
     }
+    // Part 6г6: the motion files have the scene's parameters, the values the scene was given at.
+    if (s.stage.params != s.file.params) return why = "stage.motion.json: параметры не те, что у сцены", false;
+    for (usize a = 0; a < s.actors.size(); ++a)
+        if (!s.file.actors[a].motion.empty() && s.actors[a].params != s.file.params)
+            return why = s.file.actors[a].motion + ": параметры не те, что у сцены", false;
     return true;
 }
 
+bool scene_with_params(SceneMotion& s, const std::map<std::string, f64>& values, std::vector<std::string>& notes, std::string& why) {
+    if (values.empty()) return true;
+    const SceneFile& f = s.file;
+    std::vector<MotionParam> given;
+    for (const auto& [name, v] : values) {
+        if (!f.param(name)) {
+            if (f.params.empty()) return why = "у сцены «" + f.name + "» нет параметров", false;
+            std::string have;
+            for (const MotionParam& p : f.params) have += (have.empty() ? "" : ", ") + p.name;
+            return why = "в сцене «" + f.name + "» нет параметра «" + name + "»: есть " + have, false;
+        }
+        if (!std::isfinite(v)) return why = "параметр " + name + ": нужно число", false;
+    }
+    for (const auto& [name, v] : values) {
+        const MotionParam& own = *f.param(name);
+        if (v == own.value) continue;
+        if (const auto it = f.fixed.find(name); it != f.fixed.end()) {
+            notes.push_back("параметр " + name + " из игры не меняется: " + it->second);
+            continue;
+        }
+        given.push_back({name, v});
+    }
+    if (given.empty()) return true;
+    for (MotionClip& c : s.stage.clips) c = motion_clip_with(s.stage, c, given);
+    for (MotionFile& m : s.actors)
+        for (MotionClip& c : m.clips) c = motion_clip_with(m, c, given);
+    for (SceneActor& a : s.file.actors) {
+        f64 out[4] = {};
+        for (const MotionParam& g : given)
+            if (const auto it = a.reach_by.find(g.name); it != a.reach_by.end())
+                for (usize i = 0; i < 4; ++i) out[i] += it->second[i] * std::abs(g.value - f.param(g.name)->value);
+        if (!(out[0] > 0 || out[1] > 0 || out[2] > 0 || out[3] > 0)) continue;
+        const SceneBox b = a.reach.w > 0 ? a.reach : SceneBox{a.origin.x, a.origin.y, a.w, a.h};
+        const f64 x0 = std::floor(b.x - out[0]), y0 = std::floor(b.y - out[1]);
+        const f64 x1 = std::ceil(b.x + b.w + out[2]), y1 = std::ceil(b.y + b.h + out[3]);
+        a.reach = {x0, y0, x1 - x0, y1 - y0};
+    }
+    return true;
+}
+
+namespace {
+
+// An actor's calls by start, then as made, and what it shows when one of them is the last begun.
+struct ActorCalls {
+    const SceneMotion& s;
+    std::span<const f64> held;
+    i32 actor = -1;
+    std::vector<i32> mine; // indices of file.plays
+
+    const ScenePlay& play(i64 k) const { return s.file.plays[static_cast<usize>(mine[static_cast<usize>(k)])]; }
+
+    f64 clip_length(const ScenePlay& p) const {
+        const MotionClip* clip = static_cast<usize>(actor) < s.actors.size() ? s.actors[static_cast<usize>(actor)].clip(p.clip) : nullptr;
+        return clip ? clip->length : 0;
+    }
+
+    // What the actor shows at t (the scene's waits up to then, of those at t made before `until`) when call k is the last
+    // begun: empty at rest. A stop holds what the one before it showed at its start.
+    std::vector<SceneBlendStep> shows(i64 k, f64 t, u32 until) const {
+        while (k >= 0 && play(k).kind == ScenePlay::Kind::Stop) {
+            t = play(k).at;
+            until = play(k--).order;
+        }
+        if (k < 0) return {};
+        const ScenePlay& p = play(k);
+        // The clip went on while the scene waited after its start.
+        f64 waited = 0;
+        for (usize i = 0; i < held.size() && i < s.file.stops.size(); ++i) {
+            const SceneStop& w = s.file.stops[i];
+            const bool after = w.at > p.at || (w.at == p.at && w.order > p.order);
+            const bool by_then = w.at < t || (w.at == t && w.order < until);
+            if (after && by_then) waited += held[i];
+        }
+        const f64 length = clip_length(p);
+        const f64 x = (t - p.at + waited) * p.speed;
+        SceneBlendStep step;
+        step.play = mine[static_cast<usize>(k)];
+        if (p.kind == ScenePlay::Kind::Play) step.time = std::min(x, length);
+        else step.time = length > 0 ? std::fmod(x, length) : 0;
+        step.time = std::max(0.0, step.time);
+        // Part 6г5а: its blend, over its clip's play, no longer than the clip when it is no loop.
+        const f64 blend = !(length > 0) ? 0 : p.kind == ScenePlay::Kind::Loop ? p.blend : std::min(p.blend, length);
+        if (blend > 0 && x < blend) step.k = timing(Timing::Smooth, std::max(0.0, x) / blend);
+        if (step.k >= 1) return {step};
+        // From what it showed at the play's start: the call before going on by its own time, or that held (a stop, a
+        // blend going on then, the character at rest).
+        std::vector<SceneBlendStep> out = shows(k - 1, p.at, p.order);
+        if (out.size() == 1 && out[0].play == mine[static_cast<usize>(k - 1)]) out = shows(k - 1, t, until);
+        if (out.empty()) out.push_back({});
+        out.push_back(step);
+        return out;
+    }
+};
+
+} // namespace
+
 SceneActorMoment scene_actor_moment(const SceneMotion& s, std::string_view actor, f64 t, std::span<const f64> held, i32 waiting) {
     const SceneFile& f = s.file;
-    const i32 ai = actor_index(f, actor);
-    if (ai < 0) return {};
-    std::vector<i32> mine;
+    ActorCalls calls{s, held, actor_index(f, actor), {}};
+    if (calls.actor < 0) return {};
     for (usize i = 0; i < f.plays.size(); ++i)
-        if (f.plays[i].actor == actor) mine.push_back(static_cast<i32>(i));
-    std::stable_sort(mine.begin(), mine.end(), [&](i32 a, i32 b) {
+        if (f.plays[i].actor == actor) calls.mine.push_back(static_cast<i32>(i));
+    std::stable_sort(calls.mine.begin(), calls.mine.end(), [&](i32 a, i32 b) {
         const ScenePlay &x = f.plays[static_cast<usize>(a)], &y = f.plays[static_cast<usize>(b)];
         return x.at != y.at ? x.at < y.at : x.order < y.order;
     });
-    auto play = [&](i64 k) -> const ScenePlay& { return f.plays[static_cast<usize>(mine[static_cast<usize>(k)])]; };
     const SceneStop* at = stop_of(f, waiting);
     i64 k = -1;
-    for (usize i = 0; i < mine.size(); ++i)
-        if (begun(play(static_cast<i64>(i)).at, play(static_cast<i64>(i)).order, t, at)) k = static_cast<i64>(i);
-    // A stop holds the moment the one before it showed at its start: the scene's waits up to then, of those made before it
-    // if at its start.
-    u32 until = std::numeric_limits<u32>::max();
-    while (k >= 0 && play(k).kind == ScenePlay::Kind::Stop) {
-        t = play(k).at;
-        until = play(k--).order;
-    }
-    if (k < 0) return {};
-    const ScenePlay& p = play(k);
-    // The clip went on while the scene waited after its start.
-    f64 waited = 0;
-    for (usize i = 0; i < held.size() && i < f.stops.size(); ++i) {
-        const SceneStop& w = f.stops[i];
-        const bool after = w.at > p.at || (w.at == p.at && w.order > p.order);
-        const bool by_then = w.at < t || (w.at == t && w.order < until);
-        if (after && by_then) waited += held[i];
-    }
-    const MotionClip* clip = static_cast<usize>(ai) < s.actors.size() ? s.actors[static_cast<usize>(ai)].clip(p.clip) : nullptr;
-    const f64 length = clip ? clip->length : 0;
-    const f64 x = (t - p.at + waited) * p.speed;
+    for (usize i = 0; i < calls.mine.size(); ++i)
+        if (begun(calls.play(static_cast<i64>(i)).at, calls.play(static_cast<i64>(i)).order, t, at)) k = static_cast<i64>(i);
+    std::vector<SceneBlendStep> steps = calls.shows(k, t, std::numeric_limits<u32>::max());
+    if (steps.empty()) return {};
     SceneActorMoment m;
-    m.play = mine[static_cast<usize>(k)];
-    if (p.kind == ScenePlay::Kind::Play) m.time = std::min(x, length);
-    else m.time = length > 0 ? std::fmod(x, length) : 0;
-    m.time = std::max(0.0, m.time);
+    m.play = steps.back().play;
+    m.time = steps.back().time;
+    if (steps.size() > 1) m.blend = std::move(steps);
     return m;
 }
 
@@ -631,15 +816,21 @@ ScenePose scene_pose(const SceneMotion& s, f64 t, std::span<const f64> held, i32
         // Where its parts stand: by its file, or by the stage's for one that plays no clip.
         const MotionFile* records = f.actors[a].motion.empty() ? &s.stage : file;
         ap.moment = scene_actor_moment(s, ap.id, t, held, waiting);
-        const MotionClip* clip = file && ap.moment.play >= 0 ? file->clip(f.plays[static_cast<usize>(ap.moment.play)].clip) : nullptr;
-        if (clip) {
-            ap.shown = motion_shown(*file, *clip, ap.moment.time);
-            ap.parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.drawing);
-            if (ap.shown.swap) ap.from_parts = motion_pose(*file, *clip, ap.moment.time, ap.shown.from);
-            for (const MotionCopy& c : clip->copies)
-                if (motion_copy_drawn(c, ap.moment.time)) ap.copies.push_back(c);
-            ap.order = motion_order_at(*clip, ap.moment.time);
+        // A step's clip at its moment; the character at rest without one.
+        auto clip_pose = [&](const SceneBlendStep& st) {
+            const MotionClip* clip = file && st.play >= 0 ? file->clip(f.plays[static_cast<usize>(st.play)].clip) : nullptr;
+            return clip ? motion_clip_pose(*file, *clip, st.time) : MotionClipPose{};
+        };
+        MotionClipPose shown = clip_pose({ap.moment.play, ap.moment.time});
+        if (file && !ap.moment.blend.empty()) {
+            shown = clip_pose(ap.moment.blend.front());
+            for (usize i = 1; i < ap.moment.blend.size(); ++i) shown = motion_blend(*file, shown, clip_pose(ap.moment.blend[i]), ap.moment.blend[i].k);
         }
+        ap.parts = std::move(shown.parts);
+        ap.copies = std::move(shown.copies);
+        ap.order = std::move(shown.order);
+        ap.shown = std::move(shown.shown);
+        ap.from_parts = std::move(shown.from_parts);
         // The scene's over the clip's, in the drawing shown and, in a swap, in the one it comes from.
         auto put_over = [&](std::vector<MotionPartPose>& parts, std::string_view drawing) {
             for (const MotionPartPose& sp : over[a]) {

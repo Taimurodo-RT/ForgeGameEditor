@@ -1600,7 +1600,7 @@
                     <div class="px-tracks-in" data-attr-style="px_actor_rows_height">
                         <div data-for="r : px_actor_rows" class="px-track-name" data-attr-id="'px-actor-row-' + it_index" data-attr-style="r.style">{{ r.label }}</div>
                         <div class="px-blocks">
-                            <div data-for="b : px_plays" class="px-block px-play" data-attr-id="'px-play-' + b.index" data-class-selected="b.selected" data-class-loop="b.loop" data-class-stop="b.stop" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_actor_clip(b.index)" data-event-dblclick="px_actor_clip_code(b.index)">{{ b.label }}</div>
+                            <div data-for="b : px_plays" class="px-block px-play" data-attr-id="'px-play-' + b.index" data-class-selected="b.selected" data-class-loop="b.loop" data-class-stop="b.stop" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_actor_clip(b.index)" data-event-dblclick="px_actor_clip_code(b.index)"><div class="px-play-blend" data-if="b.blend != ''" data-attr-style="b.blend"/>{{ b.label }}</div>
                         </div>
                     </div>
                 </div>
@@ -2332,6 +2332,14 @@
                             </select></div>
                         <div class="ue-note ue-warn" data-if="ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
                     </div>
+                    <div class="ue-sec" data-if="ue_s.root">
+                        <div class="ue-sec-title">Сцена позади <span class="muted">из «Векторной»</span></div>
+                        <div class="ue-line row"><span class="ue-key">Сцена</span>
+                            <select id="ue-s-scene" class="ue-select grow" data-event-change="ue_spick('scene_behind')">
+                                <option value="">Нет</option><option data-for="sc : ue_scenes" data-attr-value="sc.value">{{ sc.name }}</option>
+                            </select></div>
+                        <div id="ue-s-scene-note" class="ue-note" data-class-ue-warn="ue_p.scene_missing">{{ ue_p.scene_note }}</div>
+                    </div>
 
                     <div class="ue-sec" data-if="ue_s.bar">
                         <div class="ue-sec-title">Полоска <span class="muted">длина по данным игры</span></div>
@@ -2457,6 +2465,14 @@
                             </select></div>
                         <div class="ue-note ue-warn" data-if="ue_p.sound_note != ''">{{ ue_p.sound_note }}</div>
                         <div class="ue-note">Музыка играет, пока экран открыт; если открыт и экран поверх со своей музыкой, звучит его. «Кнопки» — звук нажатия всех кнопок экрана, если у кнопки не задан свой. Громкость — из настроек игры.</div>
+                    </div>
+                    <div class="ue-sec ue-game" data-if="ue_p.root">
+                        <div class="ue-sec-title">Сцена позади <span class="muted">из «Векторной»</span></div>
+                        <div class="ue-line row"><span class="ue-key">Сцена</span>
+                            <select id="ue-screen-scene" class="ue-select grow" data-event-change="ue_pick('screen.scene_behind')">
+                                <option value="">Нет</option><option data-for="sc : ue_scenes" data-attr-value="sc.value">{{ sc.name }}</option>
+                            </select></div>
+                        <div id="ue-scene-note" class="ue-note" data-class-ue-warn="ue_p.scene_missing">{{ ue_p.scene_note }}</div>
                     </div>
 
                     <!-- The layer in the game: what a click does, a bar, when it shows -->

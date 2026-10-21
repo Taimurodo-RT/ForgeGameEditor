@@ -1564,6 +1564,15 @@ tvg::Scene* host_scene(std::string_view id, tvg::Paint* paint, std::string& why)
 
 } // namespace
 
+void Rig::uncut() {
+    // ThorVG puts the SVG in a scene cut at its viewport (the picture, its scene, the viewport's clip, the SVG).
+    auto off = [](Impl& m) {
+        if (tvg::Paint* view = m.doc ? const_cast<tvg::Paint*>(m.doc->parent()) : nullptr) view->clip(nullptr);
+    };
+    off(*impl_);
+    for (auto& [name, d] : impl_->drawings) off(*d.impl_);
+}
+
 bool Rig::host(std::string_view id, Rig& actor, std::string& why) {
     Impl& m = *impl_;
     const i32 pi = part(id);
@@ -1577,7 +1586,9 @@ bool Rig::host(std::string_view id, Rig& actor, std::string& why) {
     bool drawn = alone(a);
     for (const auto& [name, d] : a.drawings) drawn = drawn || alone(*d.impl_);
     if (drawn) return why = "рисунок актёра «" + std::string(id) + "» уже рисовался сам или в другой сцене", false;
-    // Each picture in the actor's units: ThorVG's viewport back to them.
+    // Each picture in the actor's units: ThorVG's viewport back to them, and not cut at it (part 6г2 of the scenes model:
+    // an actor's drawing is not held to its canvas in a scene; the game draws it in its reach).
+    actor.uncut();
     auto put = [&](Rig& r) {
         r.impl_->hosted = true;
         r.impl_->pic->transform(to_tvg(inverse(r.impl_->doc_matrix)));
@@ -1853,15 +1864,20 @@ void Rig::bounds(i32 part, const Affine& px, f64 out[4]) {
     out[0] = b.x0, out[1] = b.y0, out[2] = b.x1, out[3] = b.y1;
 }
 
-bool Rig::reach(const Affine& px, f64 out[4]) {
-    out[0] = out[1] = out[2] = out[3] = 0;
-    Box box;
+void Rig::reach_each(const Affine& px, std::vector<std::array<f64, 4>>& out) {
+    out.clear();
+    // The pictures the pose shows, as draw() and the scene's frame take them (not as the last frame drawn left them).
+    const Rig& to = shown();
+    const Rig* from = impl_->swap ? drawing(impl_->swap_from) : nullptr;
     auto add = [&](const Rig& r) {
         const Impl& m = *r.impl_;
-        if (m.pic && !m.pic->visible()) return; // a drawing the pose does not show
+        const bool drawn = &r == &to || &r == from; // a drawing the pose does not show
         for (const Leaf& l : m.leaves) {
-            bool shown = true;
-            for (const tvg::Paint* p = l.shape; p && shown; p = p->parent()) shown = p->visible();
+            std::array<f64, 4>& b = out.emplace_back(std::array<f64, 4>{1, 1, 0, 0});
+            // Each picture's own paint shows as the last frame drawn left it: whether it is drawn is the pose's.
+            bool shown = drawn;
+            for (const tvg::Paint* p = l.shape; p && shown; p = p->parent())
+                if (p != m.pic) shown = p->visible();
             if (!shown) continue;
             u8 fa = 0, sa = 0, rr = 0, gg = 0, bb = 0;
             l.shape->fill(&rr, &gg, &bb, &fa);
@@ -1876,12 +1892,23 @@ bool Rig::reach(const Affine& px, f64 out[4]) {
             // The stroke all round, its whole width (a miter's point beyond half of it), in the units the matrix scales to.
             const f64 k = std::sqrt(std::max(g.a * g.a + g.b * g.b, g.c * g.c + g.d * g.d));
             const f64 pad = stroked ? width * k : 0;
-            box.add({own.x0 - pad, own.y0 - pad});
-            box.add({own.x1 + pad, own.y1 + pad});
+            b = {own.x0 - pad, own.y0 - pad, own.x1 + pad, own.y1 + pad};
         }
     };
     add(*this);
     for (const auto& [name, d] : impl_->drawings) add(d);
+}
+
+bool Rig::reach(const Affine& px, f64 out[4]) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    std::vector<std::array<f64, 4>> each;
+    reach_each(px, each);
+    Box box;
+    for (const std::array<f64, 4>& b : each)
+        if (b[0] <= b[2]) {
+            box.add({b[0], b[1]});
+            box.add({b[2], b[3]});
+        }
     if (box.empty()) return false;
     out[0] = box.x0, out[1] = box.y0, out[2] = box.x1, out[3] = box.y1;
     return true;

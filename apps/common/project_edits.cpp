@@ -222,6 +222,41 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("sw_frames", &forge::edits::ProjectEdits::sw_frames);
     t.field("sw_frame_files", &forge::edits::ProjectEdits::sw_frame_files);
     t.field("sw_heard", &forge::edits::ProjectEdits::sw_heard);
+    t.field("st_first", &forge::edits::ProjectEdits::st_first);
+    t.field("st_scene", &forge::edits::ProjectEdits::st_scene);
+    t.field("st_last_file", &forge::edits::ProjectEdits::st_last_file);
+    t.field("st_first_in", &forge::edits::ProjectEdits::st_first_in);
+    t.field("st_first_length", &forge::edits::ProjectEdits::st_first_length);
+    t.field("st_in", &forge::edits::ProjectEdits::st_in);
+    t.field("st_length", &forge::edits::ProjectEdits::st_length);
+    t.field("st_out", &forge::edits::ProjectEdits::st_out);
+    t.field("st_first_frames", &forge::edits::ProjectEdits::st_first_frames);
+    t.field("st_in_frames", &forge::edits::ProjectEdits::st_in_frames);
+    t.field("st_frames", &forge::edits::ProjectEdits::st_frames);
+    t.field("st_holds", &forge::edits::ProjectEdits::st_holds);
+    t.field("st_out_frames", &forge::edits::ProjectEdits::st_out_frames);
+    t.field("st_out_x", &forge::edits::ProjectEdits::st_out_x);
+    t.field("st_first_files", &forge::edits::ProjectEdits::st_first_files);
+    t.field("st_in_files", &forge::edits::ProjectEdits::st_in_files);
+    t.field("st_files", &forge::edits::ProjectEdits::st_files);
+    t.field("st_out_files", &forge::edits::ProjectEdits::st_out_files);
+    t.field("st_wide", &forge::edits::ProjectEdits::st_wide);
+    t.field("st_blend_frames", &forge::edits::ProjectEdits::st_blend_frames);
+    t.field("st_blend_files", &forge::edits::ProjectEdits::st_blend_files);
+    t.field("st_param", &forge::edits::ProjectEdits::st_param);
+    t.field("st_param_value", &forge::edits::ProjectEdits::st_param_value);
+    t.field("sb_menu", &forge::edits::ProjectEdits::sb_menu);
+    t.field("sb_scene", &forge::edits::ProjectEdits::sb_scene);
+    t.field("sb_button", &forge::edits::ProjectEdits::sb_button);
+    t.field("sb_button_color", &forge::edits::ProjectEdits::sb_button_color);
+    t.field("sb_music", &forge::edits::ProjectEdits::sb_music);
+    t.field("sb_window", &forge::edits::ProjectEdits::sb_window);
+    t.field("sb_window_scene", &forge::edits::ProjectEdits::sb_window_scene);
+    t.field("sb_length", &forge::edits::ProjectEdits::sb_length);
+    t.field("sb_window_length", &forge::edits::ProjectEdits::sb_window_length);
+    t.field("sb_frames", &forge::edits::ProjectEdits::sb_frames);
+    t.field("sb_files", &forge::edits::ProjectEdits::sb_files);
+    t.field("sb_wide", &forge::edits::ProjectEdits::sb_wide);
 }
 
 namespace forge::edits {

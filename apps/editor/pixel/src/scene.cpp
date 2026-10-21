@@ -536,16 +536,12 @@ bool begun(f64 start, u32 order, f64 t, const SceneStop* at) {
 
 } // namespace
 
-ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held, i32 waiting) {
-    if (actor.empty()) return {};
-    const std::vector<const ActorPlay*> mine = plays_of(rec, actor);
-    const SceneStop* at = stop_of(rec, waiting);
-    i64 k = -1;
-    for (usize i = 0; i < mine.size(); ++i)
-        if (begun(mine[i]->start, mine[i]->order, t, at)) k = static_cast<i64>(i);
-    // A stop holds the moment the one before it showed at its start: the scene's waits up to then, of those made before
-    // it if at its start.
-    u32 until = std::numeric_limits<u32>::max();
+namespace {
+
+// What an actor shows at t (the scene's waits up to then, of those at t made before `until`) when its call k is the last
+// begun: empty at rest; a stop holds what the one before it showed at its start; a play's blend (part 6г5а) from what it
+// showed at its start, as vector::scene_actor_moment.
+std::vector<ActorBlendStep> shows(const Recording& rec, const std::vector<const ActorPlay*>& mine, std::span<const f64> held, i64 k, f64 t, u32 until) {
     while (k >= 0 && mine[static_cast<usize>(k)]->kind == ActorPlay::Kind::Stop) {
         t = mine[static_cast<usize>(k)]->start;
         until = mine[static_cast<usize>(k--)]->order;
@@ -561,11 +557,39 @@ ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, st
         if (after && by_then) waited += held[i];
     }
     const f64 s = (t - p.start + waited) * p.speed;
+    ActorBlendStep step;
+    step.play = &p;
+    if (p.kind == ActorPlay::Kind::Play) step.time = std::min(s, p.clip_length);
+    else step.time = p.clip_length > 0 ? std::fmod(s, p.clip_length) : 0;
+    step.time = std::max(0.0, step.time);
+    // Its blend, over its clip's play, no longer than the clip when it is no loop.
+    const f64 blend = !(p.clip_length > 0) ? 0 : p.kind == ActorPlay::Kind::Loop ? p.blend : std::min(p.blend, p.clip_length);
+    if (blend > 0 && s < blend) step.k = vector::timing(vector::Timing::Smooth, std::max(0.0, s) / blend);
+    if (step.k >= 1) return {step};
+    // From what it showed at its start: the call before going on by its own time, or that held (a stop, a blend going on
+    // then, the character at rest).
+    std::vector<ActorBlendStep> out = shows(rec, mine, held, k - 1, p.start, p.order);
+    if (out.size() == 1 && out[0].play == mine[static_cast<usize>(k - 1)]) out = shows(rec, mine, held, k - 1, t, until);
+    if (out.empty()) out.push_back({});
+    out.push_back(step);
+    return out;
+}
+
+} // namespace
+
+ActorMoment actor_moment(const Recording& rec, std::string_view actor, f64 t, std::span<const f64> held, i32 waiting) {
+    if (actor.empty()) return {};
+    const std::vector<const ActorPlay*> mine = plays_of(rec, actor);
+    const SceneStop* at = stop_of(rec, waiting);
+    i64 k = -1;
+    for (usize i = 0; i < mine.size(); ++i)
+        if (begun(mine[i]->start, mine[i]->order, t, at)) k = static_cast<i64>(i);
+    std::vector<ActorBlendStep> steps = shows(rec, mine, held, k, t, std::numeric_limits<u32>::max());
+    if (steps.empty()) return {};
     ActorMoment m;
-    m.play = &p;
-    if (p.kind == ActorPlay::Kind::Play) m.time = std::min(s, p.clip_length);
-    else m.time = p.clip_length > 0 ? std::fmod(s, p.clip_length) : 0;
-    m.time = std::max(0.0, m.time);
+    m.play = steps.back().play;
+    m.time = steps.back().time;
+    if (steps.size() > 1) m.blend = std::move(steps);
     return m;
 }
 
@@ -688,6 +712,7 @@ bool actor_marks(const Recording& rec, SceneMarkSource& clips, std::vector<Mark>
 // ---- the scene ----
 
 struct Scene::Impl {
+    std::string code;
     SceneDoc doc;
     SceneFiles files;
     PoseScript script;
@@ -880,15 +905,26 @@ struct Scene::Impl {
         for (const auto& a : actors) {
             Pose& pose = out.actors[a->id];
             const ActorMoment m = by ? actor_moment(*by, a->id, t, held, waiting) : ActorMoment{};
-            if (m.play) {
-                const std::map<std::string, f64> v = values(*a, *m.play);
+            // A clip at its moment; the character at rest without one.
+            auto clip_pose = [&](const ActorPlay* play, f64 time, Pose& out) {
+                out = {};
+                if (!play) return true;
+                const std::map<std::string, f64> v = values(*a, *play);
                 PoseScript* s = script_for(*a->character, v, why);
+                if (s && s->pose(a->character->rig, time, play->clip, v, a->character->doc.seed, out)) return true;
+                return fail("актёр «" + a->id + "», клип «" + play->clip + "»: " + (s ? s->error() : why));
+            };
+            if (m.play) {
                 Pose clip;
-                if (s && s->pose(a->character->rig, m.time, m.play->clip, v, a->character->doc.seed, clip)) {
-                    pose = prefix_pose(clip, a->id);
-                } else {
-                    posed = fail("актёр «" + a->id + "», клип «" + m.play->clip + "»: " + (s ? s->error() : why));
+                bool ok = m.blend.empty() ? clip_pose(m.play, m.time, clip) : clip_pose(m.blend.front().play, m.blend.front().time, clip);
+                // Part 6г5а: in a blend, each step's clip blended in over the ones before it.
+                for (usize i = 1; ok && i < m.blend.size(); ++i) {
+                    Pose next;
+                    ok = clip_pose(m.blend[i].play, m.blend[i].time, next);
+                    if (ok) clip = blend_pose(a->character->rig, clip, next, m.blend[i].k);
                 }
+                if (ok) pose = prefix_pose(clip, a->id);
+                else posed = false;
             }
             if (const auto o = over.find(a->id); o != over.end()) {
                 for (const auto& [id, pp] : o->second.parts) over_part(pose.parts[id], pp);
@@ -907,6 +943,7 @@ Scene::~Scene() = default;
 bool Scene::load(std::string_view code, const SceneDoc& doc, const SceneFiles& files) {
     impl_ = std::make_unique<Impl>();
     Impl& im = *impl_;
+    im.code = std::string(code);
     im.doc = doc;
     im.files = files;
     im.make_hooks();
@@ -1082,6 +1119,7 @@ assets::CookedTexture Scene::draw_frame(u32 w, u32 h) {
 
 const Stage& Scene::stage() const { return impl_->stage; }
 const SceneDoc& Scene::doc() const { return impl_->doc; }
+const std::string& Scene::code() const { return impl_->code; }
 PoseScript& Scene::script() { return impl_->script; }
 Rig& Scene::rig() { return impl_->rig; }
 const Rig& Scene::rig() const { return impl_->rig; }
@@ -1106,6 +1144,14 @@ bool Scene::actor_reach(std::string_view id, f64 out[4]) {
     Impl::Actor* a = impl_->actor(id);
     if (!a) return out[0] = out[1] = out[2] = out[3] = 0, false;
     return a->rig.reach({}, out);
+}
+
+bool Scene::actor_reach_each(std::string_view id, std::vector<std::array<f64, 4>>& out) {
+    out.clear();
+    Impl::Actor* a = impl_->actor(id);
+    if (!a) return false;
+    a->rig.reach_each({}, out);
+    return true;
 }
 
 const SceneCharacter* Scene::character(std::string_view actor) const {

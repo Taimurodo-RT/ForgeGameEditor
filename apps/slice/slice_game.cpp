@@ -1,5 +1,6 @@
 #include "slice_game.h"
 
+#include "scene_tunes.h"
 #include "slice_art.h"
 
 #include "forge/core/file.h"
@@ -417,8 +418,8 @@ public:
     }
     bool anim_going(flecs::entity_t thing, std::string_view mark) override { return g_.anim_going(thing, mark); }
     // The game's scenes (part 6г2 of docs/models/сцены-модель.md): the shell shows them.
-    bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) override {
-        if (!s_.play_scene(name, {pause, skip}, why)) return false;
+    bool scene_play(std::string_view name, bool pause, bool skip, const std::map<std::string, f64>& params, u64& serial, std::string& why) override {
+        if (!s_.play_scene(name, {pause, skip, false, params}, why)) return false;
         serial = s_.scene().serial();
         return true;
     }
@@ -1295,6 +1296,8 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     // The game's screens: the music of the one up, a button's sound when pressed.
     shell.screens().on_music = [this](const std::string& name) { sounds_.screens().music(name); };
     shell.screens().on_sound = [this](const std::string& name) { sounds_.screens().click(name); };
+    // Part 6г5б: a screen's scene behind plays its music as the screen's.
+    shell.screens().on_scene_music = [this](const std::vector<game::SceneTune>& tunes) { sounds_.screens().screen_tunes(screen_tunes_of(tunes)); };
     logic_ = std::make_unique<SliceLogic>(*this);
     bridge_ = std::make_unique<ShellBridge>(*this, shell, level_screens_);
     // A button's «Сообщение логике» goes to every scheme listening nearby (a scene's emits too).
@@ -1303,10 +1306,7 @@ bool SliceGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureFo
     };
     // A scene's music over the screens', and its end for the schemes' «Сцена кончилась».
     shell.scene().on_music = [this](const std::vector<game::SceneTune>& tunes, f64 game_share) {
-        std::vector<audio::ScreenSounds::Tune> want;
-        want.reserve(tunes.size());
-        for (const game::SceneTune& t : tunes) want.push_back({t.call, t.file, t.since, static_cast<f32>(t.volume)});
-        sounds_.screens().tunes(want);
+        sounds_.screens().tunes(screen_tunes_of(tunes));
         sounds_.screens().set_share(static_cast<f32>(game_share));
     };
     shell.scene().on_end = [this](const std::string& name, bool skipped, u64) {
@@ -2330,7 +2330,9 @@ void SliceGame::update(f64 dt, bool playing, bool input) {
     }
     const u64 t0 = time_now_ns();
     sync_doors(*level_->scene);
-    level_->sim->update(live ? dt : 0.0, focus());
+    logic_runs_ += level_->sim->update(live ? dt : 0.0, focus());
+    // Over (won or lost), the schemes run no more: a scene's end is heard by nobody.
+    if (ended_ != Ending::None) ++logic_runs_;
     sim_ms_ = ns_to_ms(time_now_ns() - t0);
     settle(); // what the ticks left: no hearts, back after spikes
     do_deeds();

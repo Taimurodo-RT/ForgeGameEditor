@@ -13,6 +13,8 @@
 
 #include "forge/vector/motion_file.h"
 
+#include <array>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
@@ -38,7 +40,8 @@ struct SceneBox {
 // its size there (the stage's group of it stands so that they fall where the actor is). An actor that plays no clip has
 // no file of clips: the parts of it the scene moves stand by the stage's records (stage.motion.json), in its main
 // drawing. Part 6г2: where its drawing reaches in the scene beyond that box, when it does (the game draws it in this
-// box, not cut at its own); w 0: within its box.
+// box, not cut at its own); w 0: within its box. Part 6г6: how far each edge of that reach (left, top, right, bottom)
+// goes out per unit of a parameter of the scene, away from the file's value either way; 0: not at all.
 struct SceneActor {
     std::string id;
     std::string character; // its file in «Ресурсы», for messages: "персонажи/Ёжик"
@@ -47,11 +50,13 @@ struct SceneActor {
     Point origin;
     f64 w = 0, h = 0;
     SceneBox reach;
+    std::map<std::string, std::array<f64, 4>> reach_by;
     bool operator==(const SceneActor&) const = default;
 };
 
 // play, loop and stop of an actor: from `at` of the scene its clip `clip` (one of its motion file's) at `speed`; of two
 // at one moment the one with the greater `order` is seen, and a wait at that moment with a smaller one does not move it.
+// Part 6г5а: a play or loop with a `blend` comes in over that many seconds of its clip's play from what the actor showed.
 struct ScenePlay {
     enum class Kind : u8 { Play, Loop, Stop };
     Kind kind = Kind::Play;
@@ -59,6 +64,7 @@ struct ScenePlay {
     std::string clip; // empty for a stop
     f64 at = 0, speed = 1;
     u32 order = 0;
+    f64 blend = 0; // 0: at once
     bool operator==(const ScenePlay&) const = default;
 };
 
@@ -103,12 +109,19 @@ struct SceneFile {
     std::vector<SceneStop> stops;       // by time
     std::vector<SceneTransition> transitions;
     std::vector<std::string> not_drawn; // kMotionNotDrawn's words, and "mask_by_item"
+    // Part 6г6: the parameters of the scene's code, by name, at the values the tab gave it at (each of its motion files
+    // has them too); a parameter a game does not change, with why («длина сцены»).
+    std::vector<MotionParam> params;
+    std::map<std::string, std::string> fixed;
     bool operator==(const SceneFile&) const = default;
 
     const SceneActor* actor(std::string_view id) const;
+    const MotionParam* param(std::string_view name) const;
 };
 
-inline constexpr u32 kSceneFileVersion = 1;
+// The newest version a game reads. A file with parameters (part 6г6) is version 3, one with a blend (part 6г5а) 2, one
+// with neither 1, so a game made before reads what it can.
+inline constexpr u32 kSceneFileVersion = 3;
 // The parts of the stage's tracks that are the camera and the transitions' frames, not shapes of its picture.
 inline constexpr const char* kSceneCamera = "camera";
 inline constexpr const char* kSceneFrames[4] = {"camera/in-old", "camera/in-new", "camera/out-old", "camera/out-new"};
@@ -126,16 +139,38 @@ struct SceneMotion {
     MotionFile stage; // its clip "scene"
     std::vector<MotionFile> actors;
 };
-// Whether they fit together: the stage's clip "scene", a file for each actor, each play's clip in its actor's. False with
-// why.
+// Whether they fit together: the stage's clip "scene", a file for each actor, each play's clip in its actor's, each motion
+// file with the scene's parameters (part 6г6). False with why.
 bool check_scene(const SceneMotion& scene, std::string& why);
 
+// Part 6г6: the scene at the values given of its parameters, by name: each clip of the stage's and the actors' files with
+// its numbers at them (motion_clip_with), each actor's reach wider by its reach_by × |value − the file's|, outward to
+// whole units (its box when it had no reach). A name the scene has not, or a value that is no number: false with why («в
+// сцене «Вступление» нет параметра «heigth»: есть h, n», «у сцены «Вступление» нет параметров»), the scene as it was. A
+// parameter a game does not change (`fixed`) given another value than the file's: a line in `notes` («параметр n из
+// игры не меняется: длина сцены») and the file's numbers.
+bool scene_with_params(SceneMotion& scene, const std::map<std::string, f64>& values, std::vector<std::string>& notes, std::string& why);
+
+// One clip of what an actor shows in a blend (part 6г5а): play (an index of file.plays; -1: the character at rest) at its
+// moment `time`, coming in by k over what the steps before it show.
+struct SceneBlendStep {
+    i32 play = -1;
+    f64 time = 0;
+    f64 k = 1;
+    bool operator==(const SceneBlendStep&) const = default;
+};
 // Which play an actor shows at t of the scene (an index of file.plays; -1: at rest) and its moment in that clip: the play
 // begun last, a stop holding the moment the one before it showed; a clip that is no loop held at its end, a loop round
 // and round; ahead by the scene's waits after its start.
+// Part 6г5а: while a play's blend goes (k = smooth of its clip's play over its blend, held to the clip's length when it
+// is no loop), `blend` is what the actor shows, the first step at rest or a clip at its moment, each next blended in
+// over it, the last this play. The first: the call before it going on by its own time; that call's pose at the play's
+// start, held, when it was a stop or itself in a blend then; the character at rest when there was none. Empty when no
+// blend goes.
 struct SceneActorMoment {
     i32 play = -1;
     f64 time = 0;
+    std::vector<SceneBlendStep> blend;
     bool operator==(const SceneActorMoment&) const = default;
 };
 SceneActorMoment scene_actor_moment(const SceneMotion& scene, std::string_view actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
@@ -163,9 +198,10 @@ void scene_over(MotionPartPose& clip, const MotionPartPose& scene);
 // on its group of the stage.
 bool scene_actor_look(MotionProp p);
 
-// An actor at t: its clip's pose at its moment with the scene's over it, each part as it stands in the drawing shown;
-// the scene's looks of the whole actor on its picture's group (the part with the actor's id); its copies drawn, its
-// order's steps (the clip's, then the scene's of its parts) and the drawing it shows.
+// An actor at t: its clip's pose at its moment (in a blend, its steps' poses blended one into the next: motion_blend)
+// with the scene's over it, each part as it stands in the drawing shown; the scene's looks of the whole actor on its
+// picture's group (the part with the actor's id); its copies drawn, its order's steps (the clip's, then the scene's of
+// its parts) and the drawing it shows.
 struct SceneActorPose {
     std::string id;
     SceneActorMoment moment;

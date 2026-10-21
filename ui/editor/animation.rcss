@@ -312,6 +312,8 @@
 .px-block.px-play.loop { border-style: dashed; }
 .px-block.px-play.stop { padding-left: 0px; background-color: var(--outline); }
 .px-block.px-play.selected { border-color: var(--primary); background-color: var(--primary); color: var(--on-primary); }
+/* Part 6г5а: a play's blend, a light wedge from its start as long as the blend lasts. */
+.px-play-blend { position: absolute; left: 0px; top: 0px; bottom: 0px; decorator: linear-gradient(to right, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0)); }
 .px-pause.px-transition { background-color: var(--secondary-container); color: var(--on-secondary-container); }
 .px-pause.px-transition.selected { background-color: var(--primary); color: var(--on-primary); }
 /* Part 6в: the scene's music (a block a file plays, its wave in it, its fade a light wedge from its start, a call of the
