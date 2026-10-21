@@ -30610,6 +30610,7 @@ return {
     // In an editor for «Движение А» after pixel-scene-h (--self-test pixel-scene-i).
     bool pixel_scene_i_step() {
         namespace fs = std::filesystem;
+        namespace d = editor::design;
         std::error_code ec;
         const fs::path a = pjw().config().root, game = a / "game";
         const std::string note_ok2 = "Играет под экраном в «Проверить» и в игре · 3 с по кругу",

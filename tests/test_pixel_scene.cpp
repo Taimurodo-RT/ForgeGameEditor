@@ -5045,7 +5045,7 @@ TEST_CASE("Сцена позади (6г5б): по кругу с начала —
         std::string why;
         REQUIRE(scene.play(context, game_dir, "Заставка", how, why));
         CHECK(scene.how().behind);
-        const u64 serial = scene.serial();
+        u64 serial = scene.serial(); // the play going now (another when it is played again)
         // Each frame: at its time, a frame of the scene (none of its transitions), not standing anywhere, its music from the
         // start of the round.
         auto as_it_should = [&](f64 want) {
@@ -5108,6 +5108,8 @@ TEST_CASE("Сцена позади (6г5б): по кругу с начала —
         CHECK(ends == 0);
         heard.clear();
         REQUIRE(scene.play(context, game_dir, "Заставка", how, why));
+        CHECK(scene.serial() != serial);
+        serial = scene.serial();
         scene.update(1.0 / 64, 160, 120);
         as_it_should(0);
         CHECK(heard == std::vector<std::string>{"звук бум.ogg"});
@@ -5257,10 +5259,11 @@ TEST_CASE("Сцена позади (6г5б): под экраном, пока о�
         tunes_since(34 / 64.0);
         // The window going: its scene goes with it, fading as it does; gone, it stops, the menu's music again.
         REQUIRE(screens.show("окно", false));
-        to(185);
+        to(186); // a quarter of its going (it begins going at the next frame, 178)
         REQUIRE(screens.scene_behind("окно"));
         CHECK(look_opacity(*screens.scene_behind("окно")) == doctest::Approx(0.75 * 0.75 * 0.75).epsilon(1e-4));
-        CHECK(time_of("окно") == doctest::Approx(42 / 64.0));
+        CHECK(window_root->GetLocalProperty(Rml::PropertyId::Opacity)->Get<float>() == doctest::Approx(0.75 * 0.75 * 0.75).epsilon(1e-4));
+        CHECK(time_of("окно") == doctest::Approx(43 / 64.0));
         to(210);
         CHECK(screens.scene_behind("окно") == nullptr);
         tunes_since(std::fmod(210 / 64.0, 2.0));

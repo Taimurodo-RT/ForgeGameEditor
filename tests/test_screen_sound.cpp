@@ -441,7 +441,7 @@ TEST_CASE("screen sound: the scene behind a screen survives saving and is in its
     d::Screen s = menu_screen();
     s.scene_behind = "Заставка";
     const std::string json = d::save_screen(s);
-    CHECK(json.find("\"scene_behind\":\"Заставка\"") != std::string::npos);
+    CHECK(json.find("\"scene_behind\": \"Заставка\"") != std::string::npos);
     d::Screen back;
     REQUIRE(d::load_screen(json, back));
     CHECK(back.scene_behind == "Заставка");
