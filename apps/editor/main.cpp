@@ -2877,9 +2877,21 @@ private:
     // tab of a panel or the folded «Пиксели». The self-test first clicks the switch that shows it with the mouse, as the
     // author would; an element the page has not made (data-if) or one outside the tab is left alone. A check that
     // something is not shown (`!shown`) clicks too: there «not shown» is of the element itself, not of its panel.
+    // The timeline lays its rows out by its width, so while another tab of the bottom panel is shown it has none: an id of
+    // one of them (a frame, a block, a sound's row and the like, numbered) is revealed by «Таймлайн» before it is made.
+    static bool px_timeline_row(std::string_view id) {
+        for (std::string_view row : {"px-frame-", "px-flag-", "px-mark-", "px-pause-", "px-block-", "px-track-", "px-wave-", "px-sound-",
+                                     "px-music-", "px-music-mark-", "px-stop-", "px-transition-", "px-actor-row-", "px-play-"}) {
+            if (id.size() <= row.size() || id.substr(0, row.size()) != row) continue;
+            const std::string_view n = id.substr(row.size());
+            if (std::all_of(n.begin(), n.end(), [](char c) { return c >= '0' && c <= '9'; })) return true;
+        }
+        return false;
+    }
     void px_reveal(const char* id) {
         for (int round = 0; round < 4; ++round) {
             Rml::Element* e = ed_.find_element(id);
+            if (!e && px_timeline_row(id)) e = ed_.find_element("px-tl");
             if (!e || e->IsVisible(true)) return;
             Rml::Element* body = nullptr;
             for (Rml::Element* a = e; a && !body; a = a->GetParentNode())
