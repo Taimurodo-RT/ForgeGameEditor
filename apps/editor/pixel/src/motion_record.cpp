@@ -2057,7 +2057,8 @@ const char* actor_id(lua_State* L, int idx, const char* what) {
     return id;
 }
 
-// actor("ёжик"):play("walk"[, { speed, params }]), :loop(…), :stop(): an actor's clip from the moment it is laid out.
+// actor("ёжик"):play("walk"[, { speed, params, blend }]), :loop(…), :stop(): an actor's clip from the moment it is laid
+// out.
 // Its length is the recording's of the character's clip with the actor's parameters (and these over them): asked now,
 // so a clip that does not record is an error at this line.
 bool play_task(Impl& im, lua_State* L, MotionState& ms, const char* id, ActorPlay::Kind kind, u32& task) {
@@ -2071,7 +2072,7 @@ bool play_task(Impl& im, lua_State* L, MotionState& ms, const char* id, ActorPla
     if (kind == ActorPlay::Kind::Stop) {
         if (lua_gettop(L) > 1) return call_error(ms, "stop() — без аргументов: актёр стоит в позе, которую показывал");
     } else {
-        const std::string call = std::string(what) + "(\"walk\"[, { speed = 1, params = { … } }])";
+        const std::string call = std::string(what) + "(\"walk\"[, { speed = 1, params = { … }, blend = 0.3 }])";
         if (lua_type(L, 2) != LUA_TSTRING || !*lua_tostring(L, 2)) return call_error(ms, call + ": первым — имя клипа персонажа");
         p.clip = lua_tostring(L, 2);
         if (lua_gettop(L) > 3) return call_error(ms, call + ": имя клипа и таблица — не больше");
@@ -2096,12 +2097,13 @@ bool play_task(Impl& im, lua_State* L, MotionState& ms, const char* id, ActorPla
                         lua_pop(L, 1);
                     }
                     why = "params — таблица чисел по именам параметров персонажа: params = { height = 14 }";
-                } else if (key == "blend") {
-                    ok = false;
-                    why = "blend — в части 6г сцен, вместе с игрой";
+                } else if (key == "blend") { // part 6г5а
+                    p.blend = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : -1;
+                    ok = std::isfinite(p.blend) && p.blend >= 0;
+                    why = "blend — число секунд, 0 или больше";
                 } else {
                     ok = false;
-                    why = "поля «" + key + "» нет (есть speed, params)";
+                    why = "поля «" + key + "» нет (есть speed, params, blend)";
                 }
                 if (!ok) {
                     lua_settop(L, 3);

@@ -101,6 +101,7 @@ void PixelEditor::bind_scene(Rml::DataModelConstructor& model) {
         s.RegisterMember("selected", &PlayRow::selected);
         s.RegisterMember("loop", &PlayRow::loop);
         s.RegisterMember("stop", &PlayRow::stop);
+        s.RegisterMember("blend", &PlayRow::blend);
     }
     model.RegisterArray<std::vector<PlayRow>>();
     model.Bind("px_scenes", &m_scenes_);
@@ -639,6 +640,23 @@ void PixelEditor::rebuild_actor_clip() {
             info = "«" + p.actor + "» · клип «" + p.clip + "»" + (p.kind == Kind::Loop ? " по кругу" : "") + "\nначало " + seconds_words(p.start) +
                    " с, длина " + seconds_words(p.length) + " с" + (p.speed != 1 ? " (клип " + seconds_words(p.clip_length) + " с, speed " + number_words(p.speed) + ")" : "");
             if (p.kind == Kind::Loop) info += "\nидёт до следующего клипа актёра или конца сцены";
+            // Part 6г5а: what its blend comes from, as the player shows it at its start.
+            const f64 lasts = !(p.clip_length > 0) ? 0 : p.kind == Kind::Loop ? p.blend : std::min(p.blend, p.clip_length);
+            if (lasts > 0) {
+                const pixel::ActorMoment m = pixel::actor_moment(rec_, p.actor, p.start);
+                std::string from = "от позы";
+                if (m.play == &p && m.blend.size() == 2 && !m.blend.front().play) from = "от покоя";
+                else if (m.play == &p && m.blend.size() == 2 && m.blend.front().play->kind != Kind::Stop) {
+                    // The call before it going on, when no stop came between.
+                    const pixel::ActorPlay* before = nullptr;
+                    for (const pixel::ActorPlay& o : rec_.plays)
+                        if (o.actor == p.actor && &o != &p && (o.start < p.start || (o.start == p.start && o.order < p.order)) &&
+                            (!before || o.start > before->start || (o.start == before->start && o.order > before->order)))
+                            before = &o;
+                    if (before == m.blend.front().play) from = "от «" + before->clip + "»";
+                }
+                info += "\nплавно " + seconds_words(lasts / p.speed) + " с " + from;
+            }
             std::string params;
             for (const auto& [k, v] : p.params) params += (params.empty() ? "" : ", ") + k + " = " + number_words(v);
             if (!params.empty()) info += "\nпараметры: " + params;

@@ -1600,7 +1600,7 @@
                     <div class="px-tracks-in" data-attr-style="px_actor_rows_height">
                         <div data-for="r : px_actor_rows" class="px-track-name" data-attr-id="'px-actor-row-' + it_index" data-attr-style="r.style">{{ r.label }}</div>
                         <div class="px-blocks">
-                            <div data-for="b : px_plays" class="px-block px-play" data-attr-id="'px-play-' + b.index" data-class-selected="b.selected" data-class-loop="b.loop" data-class-stop="b.stop" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_actor_clip(b.index)" data-event-dblclick="px_actor_clip_code(b.index)">{{ b.label }}</div>
+                            <div data-for="b : px_plays" class="px-block px-play" data-attr-id="'px-play-' + b.index" data-class-selected="b.selected" data-class-loop="b.loop" data-class-stop="b.stop" data-attr-style="b.style" data-attr-title="b.title" data-event-click="px_actor_clip(b.index)" data-event-dblclick="px_actor_clip_code(b.index)"><div class="px-play-blend" data-if="b.blend != ''" data-attr-style="b.blend"/>{{ b.label }}</div>
                         </div>
                     </div>
                 </div>

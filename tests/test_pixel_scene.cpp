@@ -31,7 +31,9 @@
 #include "forge/pixel/screen.h"
 #include "forge/pixel/script.h"
 #include "forge/pixel/timeline.h"
+#include "forge/render/offscreen.h"
 #include "forge/ui/live_svg.h"
+#include "forge/ui/ui.h"
 #include "forge/vector/motion_file.h"
 #include "forge/vector/scene_file.h"
 #include "forge/vector/svg.h"
@@ -46,8 +48,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <numbers>
+#include <set>
 #include <span>
 #include <ostream> // doctest's INFO prints a string_view through it; MSVC needs the whole class
 #include <string>
@@ -554,7 +558,8 @@ TEST_CASE("Сцена: что сцене нельзя — со строкой") 
         {"    actor(\"лес\"):play(\"walk\")", "на сцене нет актёра «лес»"},
         {"    actor(\"нет\"):to({ x = 1 }, 0)", "на сцене нет актёра «нет»"},
         {"    actor(\"ёжик\"):play(\"walk\", { speed = 0 })", "speed — число больше 0"},
-        {"    actor(\"ёжик\"):play(\"walk\", { blend = 0.2 })", "blend — в части 6г"},
+        {"    actor(\"ёжик\"):play(\"walk\", { blend = -1 })", "play: blend — число секунд, 0 или больше"},
+        {"    actor(\"ёжик\"):loop(\"walk\", { blend = \"x\" })", "loop: blend — число секунд, 0 или больше"},
         {"    actor(\"ёжик\"):play(\"walk\", { pace = 1 })", "поля «pace» нет"},
         {"    actor(\"ёжик\"):play(\"walk\", { params = { len = \"x\" } })", "params — таблица чисел"},
         {"    actor(\"ёжик\"):play()", "первым — имя клипа"},
@@ -813,7 +818,7 @@ TEST_CASE("Сцена: кадр — фон, картинка и актёры, н
     wait(0.4))");
     record(s);
     CHECK(s.recording()->length == doctest::Approx(1.2));
-    // The characters drawn alone, as their own tabs draw them.
+    // The characters drawn alone, as their own tabs draw them, not cut at their canvases (as in a scene: part 6г2).
     struct Alone {
         const char* id;
         const char* file;
@@ -825,6 +830,7 @@ TEST_CASE("Сцена: кадр — фон, картинка и актёры, н
         std::string why;
         REQUIRE(load_character(files.scene(), a.file, a.c, why));
         REQUIRE(a.code.load(a.c.code));
+        a.c.rig.uncut();
     }
     for (const f64 t : {0.0, 0.1, 0.35, 0.45, 1.0, 1.2}) {
         CAPTURE(t);
@@ -2090,6 +2096,13 @@ const std::string* gift_file(const SceneGift& g, std::string_view path) {
     return nullptr;
 }
 
+// The element a layer of the scene in the game draws with: a run's itself, a picture's or an actor's inside its own
+// layer (part 6г4: its mask by a shape of the stage).
+Rml::Element* layer_element(Rml::Element* camera, int i) {
+    Rml::Element* e = camera ? camera->GetChild(i) : nullptr;
+    return e && e->GetTagName() == "div" ? e->GetChild(0) : e;
+}
+
 // A part's value as the game poses it, at rest without a track.
 vector::MotionValue game_value_of(const std::vector<vector::MotionPartPose>& parts, std::string_view id, vector::MotionProp p) {
     for (const vector::MotionPartPose& pp : parts)
@@ -2172,7 +2185,7 @@ TEST_CASE("Сцена в игре: scene.json — каждое поле туда
     };
     const Bad bad[] = {
         {"\"forge\": \"scene\"", "\"forge\": \"screen\"", "forge: "},
-        {"\"version\": 1", "\"version\": 2", "version 2: сцену отдал редактор новее этой игры"},
+        {"\"version\": 1", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
         {"\"name\": \"Вступление\"", "\"name\": \"\"", "name: "},
         {"\"canvas\": [160, 120]", "\"canvas\": [160, 0]", "canvas: "},
         {"\"background\": \"#203040\"", "\"background\": \"red\"", "background: "},
@@ -3127,6 +3140,16 @@ TEST_CASE("Сцена в игре: рамка актёра — куда дотя
     CHECK(r[2] == doctest::Approx(46));
     CHECK(r[3] == doctest::Approx(58));
     CHECK_FALSE(s.actor_reach("лиса", r));
+    // The tab does not cut it at its canvas either: the head above it is drawn (over the sky).
+    {
+        const assets::CookedTexture frame = s.draw(160, 120);
+        const vector::Point above = (s.rig().to_pixels(160, 120) * s.rig().global_matrix(s.rig().part("ёжик"))).apply({32, -3});
+        CAPTURE(above.x);
+        CAPTURE(above.y);
+        REQUIRE(above.x >= 0);
+        REQUIRE(above.y >= 0);
+        CHECK(near(pixel_at(frame, static_cast<u32>(above.x), static_cast<u32>(above.y)), Rgba8{0xc0, 0x90, 0x60, 255}));
+    }
     // The game draws it in that box: the head above its canvas is there.
     const vector::ScenePose pose = vector::scene_pose(gift.motion, 0.25);
     ui::SvgPose hog;
@@ -3315,7 +3338,9 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
             CHECK_FALSE(scene.going());
             CHECK(scene.over(serial));
             CHECK_FALSE(scene.skipped(serial));
-            CHECK(scene.document() == nullptr);
+            // Its last frame stays till the game's logic has run after its end (part 6г4; untold, the next update), then
+            // it goes.
+            CHECK(scene.document() != nullptr);
             REQUIRE(!ends.empty());
             CHECK(ends.back().name == "Вступление");
             CHECK_FALSE(ends.back().skipped);
@@ -3333,6 +3358,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
             for (int k = 1; k <= 60; ++k) {
                 scene.update(1.0 / 60, 400, 240);
                 CHECK(share == doctest::Approx(k / 60.0));
+                if (k == 1) CHECK(scene.document() == nullptr);
             }
             scene.update(1.0 / 60, 400, 240);
             CHECK(tunes.empty());
@@ -3351,7 +3377,8 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         Rml::ElementDocument* doc = scene.document();
         REQUIRE(doc);
         context->Update();
-        const Rml::Property* bg = doc->GetLocalProperty("background-color");
+        REQUIRE(doc->GetElementById("bg"));
+        const Rml::Property* bg = doc->GetElementById("bg")->GetLocalProperty("background-color");
         REQUIRE(bg);
         CHECK(bg->Get<Rml::Colourb>() == Rml::Colourb(32, 48, 64, 255));
         Rml::Element* frame = doc->GetElementById("frame");
@@ -3371,7 +3398,9 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Top) == 0);
         CHECK(bars->GetBox().GetEdge(Rml::BoxArea::Border, Rml::BoxEdge::Bottom) == 0);
         CHECK(bars->GetBox().GetSize(Rml::BoxArea::Border).x == doctest::Approx(400));
-        CHECK(doc->GetChild(doc->GetNumChildren() - 1) == bars);
+        Rml::Element* look = doc->GetElementById("look");
+        REQUIRE(look);
+        CHECK(look->GetChild(look->GetNumChildren() - 1) == bars);
         const std::vector<std::string> first = {"run " + key("небо"),
                                                 "picture лес " + key("лес"),
                                                 "picture лес cлес[1]",
@@ -3385,7 +3414,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(camera->GetNumChildren() == static_cast<int>(first.size()));
         for (int k = 0; k < 15; ++k) scene.update(1.0 / 60, 400, 240);
         CHECK(scene.time() == doctest::Approx(0.25));
-        Rml::Element* hog = camera->GetChild(5);
+        Rml::Element* hog = layer_element(camera, 5);
         REQUIRE(hog);
         CHECK(hog->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg");
         CHECK(hog->GetLocalProperty("width")->Get<float>() == doctest::Approx(64));
@@ -3409,7 +3438,7 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         // At 0.35 s the beetle swaps to its flat drawing: its layer shows the swap, the parts of both drawings.
         for (int k = 0; k < 6; ++k) scene.update(1.0 / 60, 400, 240);
         CHECK(scene.time() == doctest::Approx(0.35));
-        const ui::SvgPose* bug = ui::svg_posed(camera->GetChild(7));
+        const ui::SvgPose* bug = ui::svg_posed(layer_element(camera, 7));
         REQUIRE(bug);
         CHECK(bug->picture == "жук.svg");
         CHECK(bug->swap);
@@ -3439,6 +3468,10 @@ TEST_CASE("Сцена в игре: на экране игры — слои, ме
         CHECK(scene.skipped(3));
         CHECK(ends.back().serial == 3);
         CHECK(ends.back().skipped);
+        // Skipped between frames, its last frame stays till the game's logic has run (part 6г4; untold, an update is a
+        // run), then it goes: nothing came in over it.
+        CHECK(scene.document() != nullptr);
+        scene.update(1.0 / 60, 400, 240);
         CHECK(scene.document() == nullptr);
         CHECK(scene.layers().empty());
 
@@ -3498,7 +3531,7 @@ TEST_CASE("Сцена в игре: прозрачность картинки и 
             const std::vector<std::string> layers = scene.layers();
             for (usize i = 0; i < layers.size(); ++i)
                 if (layers[i].rfind(layer, 0) == 0) {
-                    const Rml::Property* p = camera->GetChild(static_cast<int>(i))->GetLocalProperty("opacity");
+                    const Rml::Property* p = layer_element(camera, static_cast<int>(i))->GetLocalProperty("opacity");
                     return p ? static_cast<f64>(p->Get<float>()) : -1.0;
                 }
             return -2.0;
@@ -3798,7 +3831,7 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
             Rml::Element* camera = scene.document() ? scene.document()->GetElementById("camera") : nullptr;
             REQUIRE(camera);
             for (int i = 0; i < camera->GetNumChildren(); ++i)
-                if (camera->GetChild(i)->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg") return ui::svg_posed(camera->GetChild(i));
+                if (layer_element(camera, i)->GetAttribute<Rml::String>("src", "") == "actors/ёжик.svg") return ui::svg_posed(layer_element(camera, i));
             return nullptr;
         };
         auto head = [](const std::vector<vector::MotionPartPose>& parts) { return game_value_of(parts, "ёжик/head", vector::MotionProp::Y).v; };
@@ -3993,4 +4026,877 @@ TEST_CASE("Сцена в игре: ожидание и разговор на э�
     Rml::Shutdown();
     std::error_code ec;
     fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена в игре: площадь фигуры для маски — как у вкладки (Rig::area), разница только на краях") {
+    // Filled, only outlined, hidden (only outlined: all of it, as ThorVG reads a hidden shape without its paints) and
+    // faded shapes, one turned by the scene, through a camera that moves, zooms and turns, on a screen twice the canvas.
+    Files files;
+    project(files);
+    Scene s;
+    const char* stage = R"(    canvas(160, 120)
+    background("#203040")
+    rect("плита", { x = 20, y = 20, w = 50, h = 30, fill = "#ff0000" })
+    circle("кольцо", { x = 110, y = 40, r = 20, fill = "none", stroke = "#00ff00", stroke_width = 6 })
+    rect("тайник", { x = 30, y = 70, w = 30, h = 30, fill = "none", stroke = "#0000ff", stroke_width = 4, hidden = true })
+    ellipse("дымка", { x = 110, y = 90, rx = 25, ry = 12, fill = "#ffffff", opacity = 0.3 })
+    rect("пол", { x = 0, y = 110, w = 160, h = 10, fill = "#405060" }))";
+    load(s, files, R"(    part("плита").rot(30)
+    camera().x(10)
+    camera().zoom(1.25)
+    camera().rot(8)
+    wait(1))",
+         stage);
+    record(s);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    ui::SvgPlaces places;
+    std::string why;
+    REQUIRE(places.load("/сцена/stage.svg", *gift_file(gift, "stage.svg"), why));
+    REQUIRE(s.frame(0.5));
+    const vector::ScenePose pose = vector::scene_pose(m, 0.5);
+    const std::vector<std::string> ids = {"плита", "кольцо", "тайник", "дымка"};
+    places.place(stage_pose(pose), ids);
+    const vector::MotionMatrix cam = vector::scene_camera_matrix(pose.camera, m.file.width, m.file.height);
+    constexpr u32 w = 320, h = 240;
+    const vector::MotionMatrix screen = vector::MotionMatrix{2, 0, 0, 2, 0, 0} * cam;
+    for (const std::string& id : ids) {
+        CAPTURE(id);
+        const std::vector<u8> tab = s.rig().area(s.rig().part(id), w, h, Affine{2, 0, 0, 2, 0, 0} * s.camera_matrix());
+        std::vector<u8> game;
+        REQUIRE(places.area(id, screen, w, h, game));
+        REQUIRE(tab.size() == game.size());
+        // Where the tab's is solid (a pixel and its eight neighbours all in or all out) the game's is the same; elsewhere
+        // (the edges) within a pixel's smoothing.
+        int inside = 0, outside = 0, off = 0, edge_off = 0;
+        for (u32 y = 1; y + 1 < h; ++y)
+            for (u32 x = 1; x + 1 < w; ++x) {
+                const int v = tab[y * w + x];
+                bool solid = v == 0 || v == 255;
+                for (int dy = -1; dy <= 1 && solid; ++dy)
+                    for (int dx = -1; dx <= 1 && solid; ++dx) solid = tab[(y + dy) * w + x + dx] == v;
+                const int d = std::abs(int(game[y * w + x]) - v);
+                if (solid) {
+                    (v ? inside : outside) += 1;
+                    if (d > 2) ++off;
+                } else if (d > 160) ++edge_off;
+            }
+        CHECK(inside > 150);
+        CHECK(outside > 150);
+        CHECK(off == 0);
+        CHECK(edge_off == 0);
+        // Its box holds all of it, in the stage's units.
+        f64 bx = 0, by = 0, bw = 0, bh = 0;
+        REQUIRE(places.area_box(id, bx, by, bw, bh));
+        const vector::MotionMatrix back = vector::inverse(screen);
+        for (u32 y = 0; y < h; ++y)
+            for (u32 x = 0; x < w; ++x) {
+                if (game[y * w + x] < 8) continue;
+                const vector::Point q = back.apply({x + 0.5, y + 0.5});
+                CHECK((q.x > bx - 1 && q.x < bx + bw + 1 && q.y > by - 1 && q.y < by + bh + 1));
+                if (!(q.x > bx - 1 && q.x < bx + bw + 1 && q.y > by - 1 && q.y < by + bh + 1)) {
+                    x = w, y = h; // once is enough
+                }
+            }
+    }
+    // The outline's area is the ring alone: its middle is empty.
+    std::vector<u8> ring;
+    REQUIRE(places.area("кольцо", vector::MotionMatrix{}, 160, 120, ring));
+    CHECK(ring[40 * 160 + 110] == 0);
+    CHECK(ring[40 * 160 + 130] == 255);
+    // The hidden outline's is all of it, its middle too.
+    std::vector<u8> hidden;
+    REQUIRE(places.area("тайник", vector::MotionMatrix{}, 160, 120, hidden));
+    CHECK(hidden[85 * 160 + 45] == 255);
+    // A part not asked for at place, or none such: no area.
+    std::vector<u8> none;
+    CHECK_FALSE(places.area("пол", screen, w, h, none));
+    CHECK(places.area_shapes("пол").empty());
+    CHECK_FALSE(places.area("нет", screen, w, h, none));
+    f64 x = 1, y = 1, bw = 1, bh = 1;
+    CHECK_FALSE(places.area_box("нет", x, y, bw, bh));
+    CHECK(bw == 0);
+}
+
+namespace {
+
+// The game's screen for scenes (part 6г4): the game's UI over a world of one grey on the GPU (software Vulkan on CI),
+// a frame drawn as the shell draws it (the world in a texture of its own when a scene's transition shows the game's
+// frame). The grey is the tab's «то, что было».
+struct SceneScreen {
+    u32 w = 0, h = 0;
+    SDL_GPUDevice* device = nullptr;
+    SDL_GPUTexture* world = nullptr;
+    SDL_GPUTexture* target = nullptr;
+    ui::Ui ui;
+    Rml::Context* context = nullptr;
+
+    SceneScreen(u32 width, u32 height) : w(width), h(height) {
+        device = render::create_offscreen_device();
+        REQUIRE(device);
+        world = render::create_render_target(device, w, h);
+        target = render::create_render_target(device, w, h);
+        REQUIRE(world);
+        REQUIRE(target);
+        ui::UiConfig config;
+        config.root = fs::path(FORGE_SOURCE_DIR) / "ui";
+        config.hot_reload = false;
+        config.debugger = false;
+        config.display_scale = 1;
+        REQUIRE(ui.init(device, nullptr, config));
+        context = ui.create_context("scene", static_cast<int>(w), static_cast<int>(h));
+        REQUIRE(context);
+    }
+    ~SceneScreen() {
+        ui.shutdown();
+        SDL_ReleaseGPUTexture(device, world);
+        SDL_ReleaseGPUTexture(device, target);
+        render::destroy_offscreen_device(device);
+    }
+
+    static void fill(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture, Rgba8 c) {
+        SDL_GPUColorTargetInfo color{};
+        color.texture = texture;
+        color.load_op = SDL_GPU_LOADOP_CLEAR;
+        color.store_op = SDL_GPU_STOREOP_STORE;
+        color.clear_color = {c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1};
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &color, 1, nullptr));
+    }
+
+    // The scene's time goes dt, then the frame is drawn: its pixels.
+    std::vector<u8> frame(game::GameScene& scene, f64 dt) {
+        scene.update(dt, static_cast<int>(w), static_cast<int>(h));
+        for (Rml::ElementDocument* d : scene.documents()) d->PullToFront();
+        SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
+        REQUIRE(cmd);
+        fill(cmd, target, kOutsideScene);
+        const bool backdrop = scene.wants_backdrop();
+        if (backdrop) {
+            fill(cmd, world, kOutsideScene);
+            ui.set_world(world);
+        }
+        ui.update();
+        ui.render(cmd, target, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, w, h);
+        ui.set_world(nullptr);
+        REQUIRE(SDL_SubmitGPUCommandBuffer(cmd));
+        std::vector<u8> rgba;
+        REQUIRE(render::read_pixels(device, target, w, h, rgba));
+        return rgba;
+    }
+};
+
+Rgba8 rgba_at(const std::vector<u8>& rgba, u32 w, u32 x, u32 y) {
+    const u8* p = &rgba[(static_cast<usize>(y) * w + x) * 4];
+    return {p[0], p[1], p[2], p[3]};
+}
+
+// The game's frame against the tab's draw_frame on a screen of the canvas's size: where the tab's is solid (a pixel and
+// its eight neighbours one colour), the game's within 6 of it over black (under a transition's frames); empty when they
+// agree, else where not. `said`: how many were compared.
+std::string frame_differs(const std::vector<u8>& game, const assets::CookedTexture& tab, std::string& said) {
+    const u32 w = tab.width, h = tab.height;
+    if (game.size() != tab.rgba8.size()) return "размеры кадров разные";
+    int solid = 0, off = 0, worst = 0;
+    std::string why;
+    for (u32 y = 1; y + 1 < h; ++y)
+        for (u32 x = 1; x + 1 < w; ++x) {
+            const Rgba8 t = pixel_at(tab, x, y);
+            bool one = true;
+            for (int dy = -1; dy <= 1 && one; ++dy)
+                for (int dx = -1; dx <= 1 && one; ++dx) {
+                    const Rgba8 n = pixel_at(tab, x + dx, y + dy);
+                    one = std::abs(n.r - t.r) <= 1 && std::abs(n.g - t.g) <= 1 && std::abs(n.b - t.b) <= 1 && std::abs(n.a - t.a) <= 1;
+                }
+            if (!one) continue;
+            ++solid;
+            const Rgba8 g = rgba_at(game, w, x, y);
+            auto over_black = [&](u8 c) { return static_cast<int>(std::lround(c * t.a / 255.0)); };
+            const int d = std::max({std::abs(g.r - over_black(t.r)), std::abs(g.g - over_black(t.g)), std::abs(g.b - over_black(t.b))});
+            worst = std::max(worst, d);
+            if (d > 6 && off++ == 0)
+                why = "в " + std::to_string(x) + ", " + std::to_string(y) + " игра " + std::to_string(g.r) + " " + std::to_string(g.g) + " " +
+                      std::to_string(g.b) + ", вкладка " + std::to_string(t.r) + " " + std::to_string(t.g) + " " + std::to_string(t.b) + " " +
+                      std::to_string(t.a);
+        }
+    said = std::to_string(solid) + " сплошных из " + std::to_string(w * h) + ", расхождение до " + std::to_string(worst);
+    if (off == 0 && solid >= static_cast<int>(w * h) / 2) return {};
+    return off ? std::to_string(off) + " расходятся (" + why + ")" : "сплошных только " + std::to_string(solid);
+}
+
+// What a scene's check also looks at, each moment: the game's frame, the tab's and the screen.
+using FrameCheck = std::function<void(f64 t, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen& screen)>;
+
+// A scene of the tab given to a game, played on the screen from its start: the game's frame at each moment against the
+// tab's (moments in order, the first 0); the tab's of `tab_code` when given (what the game draws where it will not draw
+// what the scene says).
+void game_frames_as_tab(Files& files, std::string_view stage, std::string_view code, const std::vector<f64>& moments, const char* name,
+                        std::string_view tab_code = {}, const FrameCheck& also = {}) {
+    INFO("сцена «", name, "»");
+    Scene given, other;
+    load(given, files, code, stage);
+    record(given);
+    Scene& s = tab_code.empty() ? given : other;
+    if (!tab_code.empty()) {
+        load(other, files, tab_code, stage);
+        record(other);
+    }
+    const SceneGift gift = gift_of(given, files, name);
+    const fs::path game_dir = empty_dir("forge_tests_переходы_в_игре");
+    give(gift, game_dir, name);
+    {
+        SceneScreen screen(160, 120);
+        game::GameScene scene;
+        scene.set_ui(&screen.ui);
+        std::string why;
+        REQUIRE(scene.play(screen.context, game_dir, name, {}, why));
+        f64 at = 0;
+        for (usize i = 0; i < moments.size(); ++i) {
+            const f64 t = moments[i];
+            CAPTURE(t);
+            const std::vector<u8> game = screen.frame(scene, i == 0 ? 0 : t - at);
+            at = t;
+            CHECK(scene.time() == doctest::Approx(t));
+            const bool ok = s.frame(t);
+            INFO(s.error());
+            REQUIRE(ok);
+            std::string said;
+            const assets::CookedTexture tab = s.draw_frame(160, 120, Affine{});
+            const std::string differs = frame_differs(game, tab, said);
+            INFO(said);
+            CHECK_MESSAGE(differs.empty(), differs);
+            if (also) also(t, game, tab, screen);
+        }
+        scene.drop();
+    }
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+} // namespace
+
+TEST_CASE("Сцена в игре: кадры входа и ухода — как кадр вкладки, у которой «то, что было» — кадр игры") {
+    Files files;
+    project(files);
+    // «растворение» in, then «сдвиг» out to the game from the right.
+    game_frames_as_tab(files, kStage, R"(    transition("растворение", 1)
+    wait(1)
+    leave("сдвиг", 1))",
+                       {0, 0.25, 0.5, 1, 1.25, 1.5, 1.75, 2}, "Растворение");
+    // «сдвиг» in from above (the game's frame black where it has gone), «приближение» in.
+    game_frames_as_tab(files, kStage, "    transition(\"сдвиг\", 1, { from = \"верх\" })\n    wait(1)", {0, 0.3, 0.5, 0.8, 1}, "Сдвиг");
+    game_frames_as_tab(files, kStage, "    transition(\"приближение\", 1)\n    wait(1)", {0, 0.25, 0.5, 0.75, 1}, "Приближение");
+    // One of its own: the new frame seen only in the circle as the camera sees it, the old one faded, through a camera
+    // that moves and zooms; and the new one outside the circle, turned and smaller, over the old going left.
+    game_frames_as_tab(files, kStageB, R"(    camera().x(8)
+    camera().zoom(1.25)
+    transition(function(old, new)
+      new:mask("круг")
+      old.opacity(0.5)
+      wait(1)
+    end)
+    wait(1))",
+                       {0, 0.5, 0.99, 1}, "Своя");
+    game_frames_as_tab(files, kStageB, R"(    transition(function(old, new)
+      new:mask("круг", { invert = true })
+      new.rot(6)
+      new.scale(0.9)
+      old.opacity(0.75)
+      old.x(-40, 1, "linear")
+    end)
+    wait(1))",
+                       {0, 0.5, 0.99, 1}, "Наоборот");
+    // A leave of its own: the game's frame from below, masked by the circle.
+    game_frames_as_tab(files, kStageB, R"(    wait(0.5)
+    leave(function(old, new)
+      new:mask("круг")
+      new.y(120)
+      new.y(0, 1, "linear")
+    end))",
+                       {0, 0.5, 0.75, 1.25, 1.5}, "Уход");
+}
+
+TEST_CASE("Сцена в игре: маска картинки и актёра по фигуре сцены — как во вкладке") {
+    Files files;
+    project(files);
+    const char* stage = R"(    canvas(160, 120)
+    background("#203040")
+    picture("лес", "картинки/лес.png", { x = 8, y = 6 })
+    actor("ёжик", "персонажи/Ёжик", { x = 40, y = 100, pivot = { 32, 60 } })
+    actor("жук", "персонажи/Жук", { x = 120, y = 90, scale = 0.5, rot = 15, pivot = { 24, 16 } })
+    circle("окно", { x = 30, y = 20, r = 14, fill = "#ffffff", hidden = true })
+    rect("щель", { x = 20, y = 60, w = 40, h = 12, fill = "#ffffff", hidden = true })
+    circle("дыра", { x = 120, y = 85, r = 6, fill = "#ffffff", hidden = true })
+    rect("полоса", { x = -40000, y = 6, w = 40030, h = 20, fill = "#ffffff", hidden = true })
+    rect("рамка", { x = 10, y = 10, w = 30.05, h = 20.05, fill = "#ffffff", hidden = true }))";
+    // The picture inside a circle, the hedgehog in a slit that moves, the beetle outside a hole; the camera zoomed and
+    // turned (its view inside the canvas).
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
+    part("ёжик"):mask("щель")
+    part("жук"):mask("дыра", { invert = true })
+    camera().x(6)
+    camera().zoom(1.2)
+    camera().rot(4)
+    part("щель").y(20, 1, "linear"))",
+                       {0, 0.3, 0.6, 0.9}, "Маски");
+    // Unmasked again: whole, as 6г2 draws it; its mask's picture gone from the GPU.
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("окно")
+    wait(0.5)
+    part("лес"):mask()
+    wait(0.5))",
+                       {0, 0.25, 0.75}, "Без маски", {}, [](f64 t, const std::vector<u8>&, const assets::CookedTexture&, SceneScreen& screen) {
+                           CHECK(screen.ui.gpu_images() == (t < 0.5 ? 1u : 0u));
+                       });
+    // By an actor or a picture: drawn whole («В игре не будет: маска по актёру или картинке»), as the tab without them.
+    game_frames_as_tab(files, stage, R"(    part("лес"):mask("ёжик")
+    part("жук"):mask("лес", { invert = true })
+    wait(0.5))",
+                       {0, 0.25}, "По актёру", "    wait(0.5)",
+                       [](f64, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen&) {
+                           // The picture's own pixels too (a gradient, none of them solid), all there.
+                           int off = 0;
+                           for (u32 y = 8; y < 34; ++y)
+                               for (u32 x = 10; x < 46; ++x) {
+                                   const Rgba8 t = pixel_at(tab, x, y), g = rgba_at(game, 160, x, y);
+                                   if (std::abs(g.r - t.r) > 8 || std::abs(g.g - t.g) > 8 || std::abs(g.b - t.b) > 8) ++off;
+                               }
+                           CHECK(off == 0);
+                       });
+    // A shape far out of the camera's view (a strip 40 000 long): its raster only of what the camera sees, at the
+    // screen's scale, its edge where the tab has it.
+    game_frames_as_tab(files, stage, "    part(\"лес\"):mask(\"полоса\")\n    wait(0.5)", {0, 0.25}, "Длинная полоса");
+    // A box not of whole pixels (30,05 × 20,05 on a still camera, the raster 31 × 21): the far edges where the tab has
+    // them, the raster's last pixel not stretched over the box.
+    game_frames_as_tab(files, stage, "    part(\"лес\"):mask(\"рамка\")\n    wait(0.5)", {0, 0.25}, "Край маски", {},
+                       [](f64, const std::vector<u8>& game, const assets::CookedTexture& tab, SceneScreen&) {
+                           int off = 0;
+                           auto near = [&](u32 x, u32 y) {
+                               const Rgba8 t = pixel_at(tab, x, y), g = rgba_at(game, 160, x, y);
+                               if (std::abs(g.r - t.r) > 48 || std::abs(g.g - t.g) > 48 || std::abs(g.b - t.b) > 48) ++off;
+                           };
+                           for (u32 y = 12; y < 28; ++y) near(39, y);
+                           for (u32 x = 12; x < 38; ++x) near(x, 29);
+                           CHECK(off == 0);
+                       });
+}
+
+TEST_CASE("Сцена в игре: сцена за сценой — прежняя стоит старым кадром до конца входа новой, последний кадр — до хода логики") {
+    Files files;
+    project(files);
+    const char* kOne = "    canvas(160, 120)\n    background(\"#203040\")";
+    const char* kTwo = "    canvas(160, 120)\n    background(\"#a04020\")";
+    const fs::path game_dir = empty_dir("forge_tests_сцены_подряд");
+    // «А» and «В» without a transition, «Б» coming in by «растворение», «Г» going out to the game by «сдвиг».
+    Scene a, b, c, d;
+    auto give_one = [&](Scene& s, const char* name, const char* stage, const char* code) {
+        load(s, files, code, stage);
+        record(s);
+        give(gift_of(s, files, name), game_dir, name);
+    };
+    give_one(a, "А", kOne, "    wait(1)");
+    give_one(b, "Б", kTwo, "    transition(\"растворение\", 1)\n    wait(1)");
+    give_one(c, "В", kOne, "    wait(1)");
+    give_one(d, "Г", kOne, "    wait(0.5)\n    leave(\"сдвиг\", 0.5)");
+    const Rgba8 one{0x20, 0x30, 0x40, 255}, two{0xa0, 0x40, 0x20, 255};
+    // How far «Б» has come in at t, by its tab (whose old frame is the grey).
+    auto come = [&](f64 t) {
+        const bool ok = b.frame(t);
+        INFO(b.error());
+        REQUIRE(ok);
+        const Rgba8 p = pixel_at(b.draw_frame(160, 120, Affine{}), 80, 60);
+        return (p.r - kOutsideScene.r) / static_cast<f64>(two.r - kOutsideScene.r);
+    };
+    // x and y mixed by k, within 3 of each channel.
+    auto mix = [](Rgba8 p, Rgba8 x, Rgba8 y, f64 k) {
+        auto near_by = [&](u8 got, u8 from, u8 to) { return std::abs(got - (from + (to - from) * k)) <= 3; };
+        return near_by(p.r, x.r, y.r) && near_by(p.g, x.g, y.g) && near_by(p.b, x.b, y.b);
+    };
+
+    SceneScreen screen(160, 120);
+    game::GameScene scene;
+    scene.set_ui(&screen.ui);
+    u64 runs = 0;
+    scene.logic_ran(runs);
+    std::vector<std::string> ends;
+    scene.on_end = [&](const std::string& name, bool skipped, u64) { ends.push_back(name + (skipped ? " пропущена" : "")); };
+    auto middle = [&](f64 dt) { return rgba_at(screen.frame(scene, dt), 160, 80, 60); };
+    std::string why;
+
+    // «А» ends; in the frames of a screen of 144 Hz in which the logic does not run, its last frame stays.
+    REQUIRE(scene.play(screen.context, game_dir, "А", {}, why));
+    CHECK(mix(middle(0), one, one, 0));
+    CHECK(mix(middle(0.5), one, one, 0));
+    CHECK(mix(middle(0.5), one, one, 0));
+    CHECK_FALSE(scene.going());
+    CHECK(ends == std::vector<std::string>{"А"});
+    for (int k = 0; k < 2; ++k) {
+        CHECK(mix(middle(1.0 / 144), one, one, 0));
+        CHECK(scene.documents().size() == 1);
+    }
+    // The logic runs, hears it and begins «Б»: it comes in over the last frame of «А», no frame of the game between.
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 2);
+    CHECK_FALSE(scene.wants_backdrop());
+    CHECK(mix(middle(0), one, two, come(0)));
+    for (const f64 t : {0.25, 0.5, 0.75}) {
+        CAPTURE(t);
+        scene.logic_ran(++runs);
+        CHECK(mix(middle(0.25), one, two, come(t)));
+        CHECK(scene.documents().size() == 2);
+        CHECK_FALSE(scene.wants_backdrop());
+    }
+    // Come in, it stands alone: the one before goes.
+    CHECK(mix(middle(0.25), two, two, 0));
+    CHECK(scene.documents().size() == 1);
+
+    // «Б» ends, «В» begins without a transition: «Б» goes at once.
+    CHECK(mix(middle(1), two, two, 0));
+    CHECK_FALSE(scene.going());
+    REQUIRE(scene.documents().size() == 1);
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "В", {}, why));
+    CHECK(scene.documents().size() == 1);
+    CHECK(mix(middle(0), one, one, 0));
+
+    // «В» skipped between frames is the one before too: its last frame, the moment of the skip, under «Б» coming in.
+    CHECK(mix(middle(0.5), one, one, 0));
+    scene.skip();
+    CHECK(ends.back() == "В пропущена");
+    CHECK(mix(middle(1.0 / 144), one, one, 0));
+    CHECK(scene.documents().size() == 1);
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 2);
+    middle(0);
+    CHECK(mix(middle(0.5), one, two, come(0.5)));
+
+    // «Б» ends and nothing comes after it: once the logic has run, its last frame goes and the game is seen.
+    CHECK(mix(middle(0.5), two, two, 0));
+    CHECK(mix(middle(1), two, two, 0));
+    CHECK_FALSE(scene.going());
+    CHECK(mix(middle(1.0 / 144), two, two, 0));
+    scene.logic_ran(++runs);
+    CHECK(mix(middle(1.0 / 144), kOutsideScene, kOutsideScene, 0));
+    CHECK(scene.documents().empty());
+
+    // «Г» goes out to the game: «Б» after it comes in over the game, not over its last frame.
+    REQUIRE(scene.play(screen.context, game_dir, "Г", {}, why));
+    CHECK(mix(middle(0), one, one, 0));
+    middle(0.5);
+    middle(0.5);
+    CHECK_FALSE(scene.going());
+    scene.logic_ran(++runs);
+    REQUIRE(scene.play(screen.context, game_dir, "Б", {}, why));
+    CHECK(scene.documents().size() == 1);
+    middle(0);
+    CHECK(scene.wants_backdrop());
+    CHECK(mix(middle(0.5), kOutsideScene, two, come(0.5)));
+
+    // Dropped (a load, a new game, the main menu): all of it goes at once.
+    scene.drop();
+    CHECK(scene.documents().empty());
+    CHECK_FALSE(scene.wants_backdrop());
+    CHECK(mix(middle(1.0 / 60), kOutsideScene, kOutsideScene, 0));
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+namespace {
+
+// Part 6г5а: the hedgehog's calls with blends from each kind of what it showed, the beetle from rest; lines from 11.
+// A play waits for its clip: spawned, the next line comes at once.
+const char* kBlendScene = R"(    spawn(actor("жук"):play("hop", { blend = 0.6 }))
+    actor("ёжик"):loop("walk")
+    wait(0.6)
+    spawn(actor("ёжик"):play("wave", { blend = 0.3 }))
+    wait(0.1)
+    spawn(actor("ёжик"):play("walk", { blend = 0.4 }))
+    wait(1)
+    actor("ёжик"):stop()
+    wait(0.2)
+    actor("ёжик"):loop("walk", { blend = 0.8, speed = 2 })
+    wait(0.5)
+    actor("ёжик"):play("stretch", { blend = 5, params = { len = 0 } })
+    wait(0.3)
+    spawn(actor("ёжик"):play("wave", { blend = 2 }))
+    wait(0.1)
+    wait_action("Поговорить")
+    wait(0.9))";
+
+f64 smooth(f64 x) { return vector::timing(vector::Timing::Smooth, x); }
+
+} // namespace
+
+TEST_CASE("Смешивание (6г5а): что актёр показывает в смене — от клипа, который идёт, от снимка смены, от stop, от покоя") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& walk_loop = play_of(rec, "ёжик", ActorPlay::Kind::Loop);
+    const ActorPlay& wave = play_of(rec, "ёжик", ActorPlay::Kind::Play, 0);
+    const ActorPlay& walk = play_of(rec, "ёжик", ActorPlay::Kind::Play, 1);
+    const ActorPlay& fast = play_of(rec, "ёжик", ActorPlay::Kind::Loop, 1);
+    const ActorPlay& stretch = play_of(rec, "ёжик", ActorPlay::Kind::Play, 2);
+    const ActorPlay& wave_again = play_of(rec, "ёжик", ActorPlay::Kind::Play, 3);
+    const ActorPlay& hop = play_of(rec, "жук", ActorPlay::Kind::Play);
+    CHECK(wave.blend == 0.3);
+    CHECK(walk_loop.blend == 0);
+    CHECK(fast.blend == 0.8);
+    CHECK(stretch.clip_length == 0);
+    struct Step {
+        const ActorPlay* play;
+        f64 time, k;
+    };
+    auto steps = [&](const char* actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1) {
+        std::vector<Step> out;
+        for (const ActorBlendStep& st : actor_moment(rec, actor, t, held, waiting).blend) out.push_back({st.play, st.time, st.k});
+        return out;
+    };
+    auto same = [](const std::vector<Step>& a, const std::vector<Step>& b) {
+        bool ok = a.size() == b.size();
+        for (usize i = 0; ok && i < a.size(); ++i) ok = a[i].play == b[i].play && std::abs(a[i].time - b[i].time) < 1e-9 && std::abs(a[i].k - b[i].k) < 1e-9;
+        return ok;
+    };
+    // The beetle from rest, over 0,6 s of hop's 0,8.
+    CHECK(same(steps("жук", 0.1), {{nullptr, 0, 1}, {&hop, 0.1, smooth(0.1 / 0.6)}}));
+    CHECK(steps("жук", 0.6).empty());
+    // wave from the walk going on round by its own time.
+    CHECK(same(steps("ёжик", 0.65), {{&walk_loop, 0.15, 1}, {&wave, 0.05, smooth(0.05 / 0.3)}}));
+    CHECK(same(steps("ёжик", 0.69), {{&walk_loop, 0.19, 1}, {&wave, 0.09, smooth(0.09 / 0.3)}}));
+    // walk in the middle of wave's blend: from what was shown then, held, no chain going on.
+    const std::vector<Step> shown_then = {{&walk_loop, 0.2, 1}, {&wave, 0.1, smooth(0.1 / 0.3)}};
+    for (const f64 t : {0.75, 0.9, 1.05}) {
+        CAPTURE(t);
+        std::vector<Step> want = shown_then;
+        want.push_back({&walk, t - 0.7, smooth((t - 0.7) / 0.4)});
+        CHECK(same(steps("ёжик", t), want));
+    }
+    const ActorMoment over = actor_moment(rec, "ёжик", 1.2);
+    CHECK(over.play == &walk);
+    CHECK(over.time == doctest::Approx(0.5));
+    CHECK(over.blend.empty());
+    // After the stop, the loop at speed 2 from the pose it held; a loop's blend longer than its clip is not cut.
+    CHECK(same(steps("ёжик", 1.95), {{&walk, 0.5, 1}, {&fast, 0.1, smooth(0.1 / 0.8)}}));
+    CHECK(same(steps("ёжик", 2.2), {{&walk, 0.5, 1}, {&fast, 0.1, smooth(0.6 / 0.8)}}));
+    CHECK(steps("ёжик", 2.31).empty());
+    // A clip of length 0 comes at once; wave's blend of 2 s no longer than wave, from it.
+    CHECK(actor_moment(rec, "ёжик", 2.5).play == &stretch);
+    CHECK(steps("ёжик", 2.5).empty());
+    CHECK(same(steps("ёжик", 2.75), {{&stretch, 0, 1}, {&wave_again, 0.05, smooth(0.05 / 0.5)}}));
+    CHECK(steps("ёжик", 3.2).empty());
+    // The scene waits at 2,8: the new clip goes on, its blend too.
+    REQUIRE(rec.stops.size() == 1);
+    const std::vector<f64> held = {0.2};
+    CHECK(same(steps("ёжик", 2.8, {}, 0), {{&stretch, 0, 1}, {&wave_again, 0.1, smooth(0.1 / 0.5)}}));
+    CHECK(same(steps("ёжик", 2.8, held, 0), {{&stretch, 0, 1}, {&wave_again, 0.3, smooth(0.3 / 0.5)}}));
+    CHECK(same(steps("ёжик", 2.9, held), {{&stretch, 0, 1}, {&wave_again, 0.4, smooth(0.4 / 0.5)}}));
+    CHECK(steps("ёжик", 3.05, held).empty());
+
+    // The files say the same at every moment, with and without the wait.
+    CHECK(gift.motion.file.plays[static_cast<usize>(&wave - rec.plays.data())].blend == 0.3);
+    for (const std::vector<f64>& h : {std::vector<f64>{}, held})
+        for (f64 t = 0; t <= rec.length + 1e-9; t += 0.01)
+            for (i32 waiting = -1; waiting < 1; ++waiting)
+                for (const char* actor : {"ёжик", "жук"}) {
+                    CAPTURE(t);
+                    CAPTURE(actor);
+                    CAPTURE(waiting);
+                    const ActorMoment tab = actor_moment(rec, actor, t, h, waiting);
+                    const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, actor, t, h, waiting);
+                    CHECK(game.play == (tab.play ? static_cast<i32>(tab.play - rec.plays.data()) : -1));
+                    CHECK(game.time == doctest::Approx(tab.time));
+                    REQUIRE(game.blend.size() == tab.blend.size());
+                    for (usize i = 0; i < tab.blend.size(); ++i) {
+                        CHECK(game.blend[i].play == (tab.blend[i].play ? static_cast<i32>(tab.blend[i].play - rec.plays.data()) : -1));
+                        CHECK(game.blend[i].time == doctest::Approx(tab.blend[i].time));
+                        CHECK(game.blend[i].k == doctest::Approx(tab.blend[i].k));
+                    }
+                }
+}
+
+TEST_CASE("Смешивание (6г5а): тот же клип ещё раз — с начала, от своей прежней позы") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    spawn(actor("ёжик"):play("wave"))
+    wait(0.3)
+    actor("ёжик"):play("wave", { blend = 0.2 })
+    wait(0.1))");
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& first = play_of(rec, "ёжик", ActorPlay::Kind::Play, 0);
+    const ActorPlay& again = play_of(rec, "ёжик", ActorPlay::Kind::Play, 1);
+    CHECK(again.start == doctest::Approx(0.3));
+    // At 0,4 s: the first wave going on (0,4 s of it), the new one from its start (0,1 s) over it by half.
+    const ActorMoment m = actor_moment(rec, "ёжик", 0.4);
+    CHECK(m.play == &again);
+    CHECK(m.time == doctest::Approx(0.1));
+    REQUIRE(m.blend.size() == 2);
+    CHECK(m.blend[0].play == &first);
+    CHECK(m.blend[0].time == doctest::Approx(0.4));
+    CHECK(m.blend[1].play == &again);
+    CHECK(m.blend[1].time == doctest::Approx(0.1));
+    CHECK(m.blend[1].k == doctest::Approx(0.5));
+    const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, "ёжик", 0.4);
+    REQUIRE(game.blend.size() == 2);
+    CHECK(game.blend[0].play == static_cast<i32>(&first - rec.plays.data()));
+    CHECK(game.blend[0].time == doctest::Approx(0.4));
+    CHECK(game.blend[1].play == static_cast<i32>(&again - rec.plays.data()));
+    CHECK(game.blend[1].k == doctest::Approx(0.5));
+    // The nose comes back from the first's turn towards the start: halfway between them, in the tab and in the game.
+    const vector::MotionFile& hf = gift.motion.actors[0];
+    using P = vector::MotionProp;
+    auto nose_at = [&](f64 t) { return game_value_of(vector::motion_pose(hf, *hf.clip("wave"), t), "ёжик/nose", P::Rot).v; };
+    CHECK(nose_at(0.4) > nose_at(0.1) + 5);
+    const f64 nose = (nose_at(0.4) + nose_at(0.1)) / 2;
+    ScenePoses poses;
+    REQUIRE(s.poses(0.4, {}, -1, poses));
+    CHECK(poses.actors["ёжик"].parts["ёжик/nose"].rot == doctest::Approx(nose));
+    const vector::ScenePose whole = vector::scene_pose(gift.motion, 0.4);
+    CHECK(game_value_of(whole.actors[0].parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    // After its blend, the new wave alone.
+    const ActorMoment after = actor_moment(rec, "ёжик", 0.55);
+    CHECK(after.play == &again);
+    CHECK(after.time == doctest::Approx(0.25));
+    CHECK(after.blend.empty());
+}
+
+TEST_CASE("Смешивание (6г5а): loop клипа длины 0 приходит сразу, как play") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, R"(    actor("ёжик"):loop("walk")
+    wait(0.3)
+    actor("ёжик"):loop("stretch", { blend = 0.5, params = { len = 0 } })
+    wait(0.3))");
+    const SceneGift gift = gift_of(s, files); // records the scene
+    const Recording& rec = *s.recording();
+    const ActorPlay& stretch = play_of(rec, "ёжик", ActorPlay::Kind::Loop, 1);
+    CHECK(stretch.clip_length == 0);
+    CHECK(stretch.blend == 0.5);
+    for (const f64 t : {0.3, 0.4, 0.55}) {
+        CAPTURE(t);
+        const ActorMoment m = actor_moment(rec, "ёжик", t);
+        CHECK(m.play == &stretch);
+        CHECK(m.blend.empty());
+        const vector::SceneActorMoment game = vector::scene_actor_moment(gift.motion, "ёжик", t);
+        CHECK(game.play == static_cast<i32>(&stretch - rec.plays.data()));
+        CHECK(game.blend.empty());
+    }
+}
+
+TEST_CASE("Смешивание (6г5а): поза в смене — свойства, рисунки и метки по правилам 5е, во вкладке и в игре") {
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files);
+    const vector::SceneMotion& m = gift.motion;
+    const vector::MotionFile& hf = m.actors[0];
+    const vector::MotionFile& bf = m.actors[1];
+    using P = vector::MotionProp;
+    auto clip_value = [](const vector::MotionFile& f, const char* clip, f64 t, const char* part, P p) {
+        return game_value_of(vector::motion_pose(f, *f.clip(clip), t), part, p).v;
+    };
+    auto tab_part = [&](f64 t, const char* actor, const char* part) {
+        ScenePoses poses;
+        REQUIRE(s.poses(t, {}, -1, poses));
+        return poses.actors[actor].parts[part];
+    };
+    // wave from walk going on: the head comes from walk's bob to rest, the nose from rest to wave's turn.
+    {
+        const f64 t = 0.65, k = smooth(0.05 / 0.3);
+        const f64 head = (1 - k) * clip_value(hf, "walk", 0.15, "ёжик/head", P::Y), nose = k * clip_value(hf, "wave", 0.05, "ёжик/nose", P::Rot);
+        CHECK(head < -1);
+        CHECK(nose > 0);
+        CHECK(tab_part(t, "ёжик", "ёжик/head").y == doctest::Approx(head));
+        CHECK(tab_part(t, "ёжик", "ёжик/nose").rot == doctest::Approx(nose));
+        const vector::ScenePose whole = vector::scene_pose(m, t);
+        const vector::SceneActorPose& g = whole.actors[0];
+        CHECK(game_value_of(g.parts, "ёжик/head", P::Y).v == doctest::Approx(head));
+        CHECK(game_value_of(g.parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    }
+    // From a blend going on: what it showed then, held, into walk.
+    {
+        const f64 k0 = smooth(0.1 / 0.3), k = smooth(0.15 / 0.4);
+        const f64 head_then = (1 - k0) * clip_value(hf, "walk", 0.2, "ёжик/head", P::Y);
+        const f64 head = head_then + (clip_value(hf, "walk", 0.15, "ёжик/head", P::Y) - head_then) * k;
+        const f64 nose = (1 - k) * k0 * clip_value(hf, "wave", 0.1, "ёжик/nose", P::Rot);
+        CHECK(tab_part(0.85, "ёжик", "ёжик/head").y == doctest::Approx(head));
+        CHECK(tab_part(0.85, "ёжик", "ёжик/nose").rot == doctest::Approx(nose));
+        const vector::ScenePose whole = vector::scene_pose(m, 0.85);
+        const vector::SceneActorPose& g = whole.actors[0];
+        CHECK(game_value_of(g.parts, "ёжик/head", P::Y).v == doctest::Approx(head));
+        CHECK(game_value_of(g.parts, "ёжик/nose", P::Rot).v == doctest::Approx(nose));
+    }
+    // The beetle from rest into hop's swap to its flat drawing: the main drawing weighed (1 − k) and hop's share of it,
+    // flat on top as a swap by its share k · s.
+    {
+        const f64 t = 0.4, k = smooth(0.4 / 0.6);
+        const vector::MotionShown hop = vector::motion_shown(bf, *bf.clip("hop"), 0.4);
+        REQUIRE(hop.swap);
+        REQUIRE(hop.drawing == "flat");
+        const vector::ScenePose whole = vector::scene_pose(m, t);
+        const vector::SceneActorPose& g = whole.actors[1];
+        CHECK(g.shown.drawing == "flat");
+        CHECK(g.shown.swap);
+        CHECK(g.shown.from == vector::kMotionMainDrawing);
+        CHECK(g.shown.k == doctest::Approx(k * hop.k));
+        ScenePoses poses;
+        REQUIRE(s.poses(t, {}, -1, poses));
+        const Pose& tab = poses.actors["жук"];
+        CHECK(tab.drawing == "flat");
+        CHECK(tab.swap);
+        CHECK(tab.swap_from.empty());
+        CHECK(tab.swap_k == doctest::Approx(k * hop.k));
+        CHECK(tab.parts.at("жук/shell").y == doctest::Approx(k * clip_value(bf, "hop", 0.4, "жук/shell", P::Y)));
+    }
+    // The walk loop's steps stop with wave at 0,6: its round past 0,75 says nothing; walk again says its own.
+    std::vector<vector::SceneMark> marks;
+    std::string why;
+    REQUIRE(vector::scene_marks(m, marks, why));
+    std::vector<f64> steps;
+    for (const vector::SceneMark& mk : marks)
+        if (mk.name == "шаг") steps.push_back(mk.at);
+    REQUIRE(steps.size() >= 3);
+    CHECK(steps[0] == doctest::Approx(0.25));
+    CHECK(steps[1] == doctest::Approx(0.95)); // walk from 0,7, not walk's round at 0,75
+    std::vector<Mark> tab_marks;
+    REQUIRE(s.marks(tab_marks));
+    REQUIRE(tab_marks.size() == marks.size());
+    for (usize i = 0; i < marks.size(); ++i) CHECK(tab_marks[i].time == doctest::Approx(marks[i].at));
+}
+
+TEST_CASE("Смешивание (6г5а): scene.json со сменой — версия 2 и обратно, без смен — 1; сверка ловит другую смену") {
+    using K = vector::ScenePlay::Kind;
+    vector::SceneFile f;
+    f.name = "Смена";
+    f.from = "сцены/Смена.luau";
+    f.length = 2;
+    f.actors = {{"ёжик", "персонажи/Ёжик", "actors/ёжик.svg", "actors/ёжик.motion.json", {0, 0}, 64, 64}};
+    f.plays = {{K::Loop, "ёжик", "walk", 0, 1, 0}, {K::Play, "ёжик", "wave", 0.5, 1.5, 1, 0.3}, {K::Stop, "ёжик", "", 1, 1, 2}};
+    const std::string text = vector::write_scene_file(f);
+    INFO(text);
+    CHECK(has(text, "\"version\": 2"));
+    CHECK(has(text, "{\"actor\": \"ёжик\", \"kind\": \"play\", \"clip\": \"wave\", \"at\": 0.5, \"speed\": 1.5, \"order\": 1, \"blend\": 0.3}"));
+    CHECK(has(text, "{\"actor\": \"ёжик\", \"kind\": \"loop\", \"clip\": \"walk\", \"at\": 0, \"speed\": 1, \"order\": 0}"));
+    vector::SceneFile back;
+    std::string why;
+    REQUIRE(vector::read_scene_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_scene_file(back) == text);
+    // Without a blend, version 1, as a game made before reads it.
+    vector::SceneFile plain = f;
+    plain.plays[1].blend = 0;
+    CHECK(has(vector::write_scene_file(plain), "\"version\": 1"));
+    CHECK_FALSE(has(vector::write_scene_file(plain), "blend"));
+    struct Bad {
+        const char *from, *to, *said;
+    };
+    const Bad bad[] = {
+        {"\"version\": 2", "\"version\": 1", "plays[1]: blend: смена клипов — в файле версии 2"},
+        {"\"version\": 2", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
+        {"\"blend\": 0.3", "\"blend\": -0.3", "plays[1]: blend: нужны секунды смены от 0"},
+        {"\"blend\": 0.3", "\"blend\": \"0.3\"", "plays[1]: blend: нужны секунды смены от 0"},
+        {"\"order\": 2}", "\"order\": 2, \"blend\": 1}", "plays[2]: blend: у stop смены нет"},
+    };
+    for (const Bad& b : bad) {
+        CAPTURE(b.to);
+        vector::SceneFile out;
+        CHECK_FALSE(vector::read_scene_file(replaced(text, b.from, b.to), out, why));
+        CHECK(why == b.said);
+    }
+
+    // The gift's check: the files with another blend would not show what the tab shows.
+    Files files;
+    project(files);
+    Scene s;
+    load(s, files, kBlendScene);
+    const SceneGift gift = gift_of(s, files);
+    CHECK(has(*gift_file(gift, "scene.json"), "\"version\": 2"));
+    vector::SceneMotion other = gift.motion;
+    for (vector::ScenePlay& p : other.file.plays)
+        if (p.clip == "wave" && p.at > 2) p.blend = 0.25;
+    CHECK_FALSE(check_scene_gift(s, other, why));
+    CHECK(has(why, "«ёжик», смена клипов"));
+    // A scene without blends goes as before: version 1.
+    Scene before;
+    load(before, files, "    actor(\"ёжик\"):loop(\"walk\")\n    wait(1)");
+    CHECK(has(*gift_file(gift_of(before, files), "scene.json"), "\"version\": 1"));
+}
+
+TEST_CASE("Смешивание (6г5а): blend_pose вкладки — как motion_blend игры: копии гаснут и проявляются, связь и порядок прежние") {
+    Rig rig;
+    std::string why;
+    REQUIRE(rig.load(R"(<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect id="a" width="4" height="4"/><rect id="b" width="4" height="4"/></svg>)", why));
+    Pose from, to;
+    from.parts["a"].x = 4;
+    from.parts["a"].visible = false;
+    from.parts["a"].carry_by = "b";
+    from.parts["a"].fill = {255, 0, 0, 255};
+    from.parts["a"].has_fill = true;
+    from.parts["искра[1]"].y = 2;
+    from.copies = {{"искра[1]", "a", 1}};
+    from.order = {{"a", OrderStep::Kind::Top, ""}};
+    from.morphs["b"] = {"a", 0.5};
+    to.parts["a"].x = 8;
+    to.parts["b"].rot = 90;
+    to.parts["искра[2]"].opacity = 0.5;
+    to.copies = {{"искра[2]", "a", 2}};
+    const f64 k = 0.25;
+    const Pose out = blend_pose(rig, from, to, k);
+    CHECK(out.parts.at("a").x == doctest::Approx(5));
+    CHECK_FALSE(out.parts.at("a").visible); // until k is 1
+    CHECK(out.parts.at("a").carry_by == "b");
+    CHECK(out.parts.at("a").has_fill);
+    CHECK(out.parts.at("a").fill == Rgba8{255, 0, 0, 255});
+    CHECK(out.parts.at("a").fill_k == doctest::Approx(0.75));
+    CHECK(out.parts.at("b").rot == doctest::Approx(22.5));
+    CHECK(out.morphs.at("b").target == "a");
+    CHECK(out.morphs.at("b").k == doctest::Approx(0.375));
+    CHECK(out.parts.at("искра[1]").y == 2);
+    CHECK(out.parts.at("искра[1]").opacity == doctest::Approx(0.75));
+    CHECK(out.parts.at("искра[2]").opacity == doctest::Approx(0.125));
+    REQUIRE(out.copies.size() == 2);
+    CHECK(out.copies[0].id == "искра[2]");
+    CHECK(out.copies[1].id == "искра[1]");
+    CHECK(out.order == from.order);
+    CHECK(out.drawing.empty());
+    CHECK_FALSE(out.swap);
+    CHECK(blend_pose(rig, from, to, 0).parts.at("a").x == 4);
+    CHECK(blend_pose(rig, from, to, 1).parts.at("a").x == 8);
+    // The same by the game's rule.
+    auto side = [](const Pose& p) {
+        vector::MotionClipPose c;
+        std::set<std::string> ids;
+        for (const auto& [id, pp] : p.parts) ids.insert(id);
+        for (const auto& [id, mm] : p.morphs) ids.insert(id);
+        for (const std::string& id : ids) {
+            vector::MotionPartPose pp;
+            pp.id = id;
+            for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+                const auto mp = static_cast<vector::MotionProp>(i);
+                pp.values[i] = screen_value(p, id, mp);
+                pp.has[i] = mp != vector::MotionProp::Drawing;
+            }
+            c.parts.push_back(pp);
+        }
+        for (const PartCopy& k : p.copies) c.copies.push_back({k.id, k.source, k.number, 0});
+        return c;
+    };
+    vector::MotionFile file;
+    const vector::MotionClipPose game = vector::motion_blend(file, side(from), side(to), k);
+    for (const vector::MotionPartPose& pp : game.parts)
+        for (usize i = 0; i < vector::kMotionPropCount; ++i) {
+            const auto mp = static_cast<vector::MotionProp>(i);
+            if (mp == vector::MotionProp::Drawing || mp == vector::MotionProp::Link) continue;
+            CAPTURE(pp.id);
+            CAPTURE(i);
+            CHECK(vector::motion_same(mp, pp.values[i], screen_value(out, pp.id, mp)));
+        }
+    REQUIRE(game.copies.size() == 2);
+    CHECK(game.copies[0].id == "искра[2]");
+    CHECK(game.copies[1].id == "искра[1]");
 }

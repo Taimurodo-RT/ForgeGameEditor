@@ -1,5 +1,7 @@
 #include "elements.h"
 
+#include "gpu_renderer.h"
+
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/profile.h"
@@ -541,6 +543,14 @@ void ElementShape::OnRender() {
         geometry_ = mesh ? GetRenderManager()->MakeGeometry(std::move(mesh)) : Rml::Geometry();
     }
     if (geometry_) geometry_.Render(GetAbsoluteOffset(Rml::BoxArea::Content));
+}
+
+ElementBackdrop::ElementBackdrop(const Rml::String& tag_name) : Rml::Element(tag_name) {}
+
+void ElementBackdrop::OnRender() {
+    GpuRenderer* r = GpuRenderer::recording();
+    const Rml::String name = GetAttribute<Rml::String>("name", "");
+    if (r && !name.empty()) r->backdrop(name);
 }
 
 } // namespace forge::ui

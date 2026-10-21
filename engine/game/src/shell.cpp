@@ -175,6 +175,7 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     screens_->set_quests(&quests_); // the journal's list
     // A scene's emits go to the logic as a button's «Сообщение логике» does, its sounds as a button's.
     scene_ = std::make_unique<GameScene>();
+    scene_->set_ui(ui_.get()); // its masks (part 6г4)
     scene_->on_message = [this](const std::string& m) { screen_action({"message", m}); };
     scene_->on_sound = [this](const std::string& file) {
         if (screens_->on_sound) screens_->on_sound(file);
@@ -210,6 +211,8 @@ void Shell::shutdown() {
     scene_.reset(); // its document lives in the UI's context
     screens_.reset(); // its pages live in the UI's context
     if (ui_) ui_->shutdown();
+    if (world_) SDL_ReleaseGPUTexture(device_, world_);
+    world_ = nullptr;
     context_ = nullptr;
 }
 
@@ -726,6 +729,7 @@ void Shell::update(f64 dt) {
     const bool stopped = playing && (screens_->pauses() || scene_holds());
     // A game that is not running draws its menu backdrop.
     game_->update(dt, (playing && !stopped) || !game_->running(), playing && !stopped && !in_dialogue());
+    if (const std::optional<u64> runs = game_->logic_runs()) scene_->logic_ran(*runs);
     if (playing && !stopped && !scene_->going()) scene_heard_ = scene_->serial(); // its logic ran this frame
     input_.end_frame(); // what went down this frame was the game's to see
     const bool in_game = game_->running() && screen_ != Screen::Main && screen_ != Screen::Loading;
@@ -735,8 +739,8 @@ void Shell::update(f64 dt) {
     // The scene's time goes while the game is on the screen. It is over the game's screens and HUD (the game may have
     // pulled its own over the menus this frame), under the shell's dialogue, menus and messages.
     scene_->update(screen_ == Screen::Playing ? dt : 0, static_cast<int>(width_), static_cast<int>(height_));
-    if (Rml::ElementDocument* d = scene_->document()) {
-        d->PullToFront();
+    if (const std::vector<Rml::ElementDocument*> docs = scene_->documents(); !docs.empty()) {
+        for (Rml::ElementDocument* d : docs) d->PullToFront(); // the one before under the one coming in (part 6г4)
         shell_doc_->PullToFront();
     }
     for (Toast& t : m.toast_list) t.left -= dt;
@@ -752,8 +756,48 @@ void Shell::render(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, u32 width,
     if (width != width_ || height != height_) FORGE_INFO("экран игрока: %u×%u пикселей", width, height);
     width_ = width;
     height_ = height;
-    game_->render(cmd, target, width, height);
-    ui_->render(cmd, target, format_, width, height);
+    // Part 6г4: a scene's transition shows the game's frame, a snapshot the UI's renderer takes of the world and what the
+    // UI drew under the scene: the world is drawn into a texture of its own for it, then onto the frame.
+    if (scene_->wants_backdrop() && device_) {
+        if (world_ && (world_w_ != width || world_h_ != height)) {
+            SDL_ReleaseGPUTexture(device_, world_);
+            world_ = nullptr;
+        }
+        if (!world_) {
+            SDL_GPUTextureCreateInfo info{};
+            info.type = SDL_GPU_TEXTURETYPE_2D;
+            info.format = format_;
+            info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+            info.width = width;
+            info.height = height;
+            info.layer_count_or_depth = 1;
+            info.num_levels = 1;
+            info.sample_count = SDL_GPU_SAMPLECOUNT_1;
+            world_ = SDL_CreateGPUTexture(device_, &info);
+            world_w_ = width;
+            world_h_ = height;
+            if (!world_) FORGE_WARN("сцена: текстура кадра игры не создана: %s", SDL_GetError());
+        }
+    }
+    if (scene_->wants_backdrop() && world_) {
+        game_->render(cmd, world_, width, height);
+        SDL_GPUBlitInfo blit{};
+        blit.source.texture = world_;
+        blit.source.w = width;
+        blit.source.h = height;
+        blit.destination.texture = target;
+        blit.destination.w = width;
+        blit.destination.h = height;
+        blit.load_op = SDL_GPU_LOADOP_DONT_CARE;
+        blit.filter = SDL_GPU_FILTER_NEAREST;
+        SDL_BlitGPUTexture(cmd, &blit);
+        ui_->set_world(world_);
+        ui_->render(cmd, target, format_, width, height);
+        ui_->set_world(nullptr);
+    } else {
+        game_->render(cmd, target, width, height);
+        ui_->render(cmd, target, format_, width, height);
+    }
     if (model_->pending) --model_->pending_frames;
 }
 

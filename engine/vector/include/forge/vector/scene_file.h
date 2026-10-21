@@ -52,6 +52,7 @@ struct SceneActor {
 
 // play, loop and stop of an actor: from `at` of the scene its clip `clip` (one of its motion file's) at `speed`; of two
 // at one moment the one with the greater `order` is seen, and a wait at that moment with a smaller one does not move it.
+// Part 6г5а: a play or loop with a `blend` comes in over that many seconds of its clip's play from what the actor showed.
 struct ScenePlay {
     enum class Kind : u8 { Play, Loop, Stop };
     Kind kind = Kind::Play;
@@ -59,6 +60,7 @@ struct ScenePlay {
     std::string clip; // empty for a stop
     f64 at = 0, speed = 1;
     u32 order = 0;
+    f64 blend = 0; // 0: at once
     bool operator==(const ScenePlay&) const = default;
 };
 
@@ -108,7 +110,9 @@ struct SceneFile {
     const SceneActor* actor(std::string_view id) const;
 };
 
-inline constexpr u32 kSceneFileVersion = 1;
+// The newest version a game reads. A file with a blend (part 6г5а) is version 2, one without 1, so a game made before
+// reads it.
+inline constexpr u32 kSceneFileVersion = 2;
 // The parts of the stage's tracks that are the camera and the transitions' frames, not shapes of its picture.
 inline constexpr const char* kSceneCamera = "camera";
 inline constexpr const char* kSceneFrames[4] = {"camera/in-old", "camera/in-new", "camera/out-old", "camera/out-new"};
@@ -130,12 +134,26 @@ struct SceneMotion {
 // why.
 bool check_scene(const SceneMotion& scene, std::string& why);
 
+// One clip of what an actor shows in a blend (part 6г5а): play (an index of file.plays; -1: the character at rest) at its
+// moment `time`, coming in by k over what the steps before it show.
+struct SceneBlendStep {
+    i32 play = -1;
+    f64 time = 0;
+    f64 k = 1;
+    bool operator==(const SceneBlendStep&) const = default;
+};
 // Which play an actor shows at t of the scene (an index of file.plays; -1: at rest) and its moment in that clip: the play
 // begun last, a stop holding the moment the one before it showed; a clip that is no loop held at its end, a loop round
 // and round; ahead by the scene's waits after its start.
+// Part 6г5а: while a play's blend goes (k = smooth of its clip's play over its blend, held to the clip's length when it
+// is no loop), `blend` is what the actor shows, the first step at rest or a clip at its moment, each next blended in
+// over it, the last this play. The first: the call before it going on by its own time; that call's pose at the play's
+// start, held, when it was a stop or itself in a blend then; the character at rest when there was none. Empty when no
+// blend goes.
 struct SceneActorMoment {
     i32 play = -1;
     f64 time = 0;
+    std::vector<SceneBlendStep> blend;
     bool operator==(const SceneActorMoment&) const = default;
 };
 SceneActorMoment scene_actor_moment(const SceneMotion& scene, std::string_view actor, f64 t, std::span<const f64> held = {}, i32 waiting = -1);
@@ -163,9 +181,10 @@ void scene_over(MotionPartPose& clip, const MotionPartPose& scene);
 // on its group of the stage.
 bool scene_actor_look(MotionProp p);
 
-// An actor at t: its clip's pose at its moment with the scene's over it, each part as it stands in the drawing shown;
-// the scene's looks of the whole actor on its picture's group (the part with the actor's id); its copies drawn, its
-// order's steps (the clip's, then the scene's of its parts) and the drawing it shows.
+// An actor at t: its clip's pose at its moment (in a blend, its steps' poses blended one into the next: motion_blend)
+// with the scene's over it, each part as it stands in the drawing shown; the scene's looks of the whole actor on its
+// picture's group (the part with the actor's id); its copies drawn, its order's steps (the clip's, then the scene's of
+// its parts) and the drawing it shows.
 struct SceneActorPose {
     std::string id;
     SceneActorMoment moment;

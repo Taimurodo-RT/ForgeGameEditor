@@ -18,6 +18,12 @@
 // the time it lived (its waits counted) passes them: an emit to on_message, a sound (name, name.wav or name.ogg of the
 // game's sounds) to on_sound. Its music: the tunes it plays now and how loud the game's own is under them, to on_music.
 // At its end, or skipped, on_end.
+//
+// Part 6г4: it comes in and goes out by its transitions, each frame of one the whole screen in its track's pose, its
+// mask a shape of the stage as the camera sees it; the game's frame is a snapshot of what is drawn under the scene (the
+// shell draws the world into a texture for it: wants_backdrop). A scene played by the logic that heard the end of the one
+// before comes in over that one's last frame, which is held till the game's logic has run once after the end
+// (logic_ran). A picture's or an actor's mask by a shape of the stage is drawn.
 
 #include "forge/core/types.h"
 #include "forge/vector/scene_file.h"
@@ -33,6 +39,10 @@ namespace Rml {
 class Context;
 class ElementDocument;
 } // namespace Rml
+
+namespace forge::ui {
+class Ui;
+}
 
 namespace forge::game {
 
@@ -96,11 +106,23 @@ public:
     void note(const std::string& line);
     // Each play's own number (from 1): on_end's, and over() for the logic waiting on it.
     u64 serial() const;
-    // The play with this number has ended (or never began).
+    // The play with this number has ended (or never began): so too while its last frame is held.
     bool over(u64 serial) const;
     // Whether the play with this number was skipped (when over).
     bool skipped(u64 serial) const;
+    // The one on the screen at the top: the one playing, else the last frame held of the one over (part 6г4).
     Rml::ElementDocument* document() const;
+    // All of them, bottom to top (the one before standing under the one coming in, part 6г4): the shell pulls them over
+    // the game's screens in this order.
+    std::vector<Rml::ElementDocument*> documents() const;
+    // Part 6г4: whether a transition shows the game's frame now, and the shell is to draw the world into a texture for it.
+    bool wants_backdrop() const;
+    // The UI whose renderer takes the masks it makes (none: they are not made).
+    void set_ui(ui::Ui* ui);
+    // Part 6г4: how many times the game's logic has run so far (its ticks), each frame before update: the last frame of
+    // the one over stays till this changes after its end, so the scene the logic begins on hearing it comes in over it
+    // (on a screen of 144 Hz the logic's next tick may be two frames on). Not told, each update is taken for a run.
+    void logic_ran(u64 runs);
 
     std::function<void(const std::string& message)> on_message;
     std::function<void(const std::string& file)> on_sound;
