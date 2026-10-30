@@ -1608,7 +1608,7 @@ void UiEditor::refresh_props() {
         p.size = t.size > 0 ? fmt(t.size) : "Экран";
         p.weight = std::to_string(t.weight);
         p.italic = t.italic;
-        p.line_height = t.line_height > 0 ? fmt(t.line_height) : "Авто";
+        p.line_height = t.line_height > 0 ? fmt(t.line_height) + "px" : "Авто"; // the unit shown: not a multiple of the size
         p.letter_spacing = fmt(t.letter_spacing);
         p.text_align = kAlignWords[static_cast<int>(t.align)];
         p.text_case = kCaseWords[static_cast<int>(t.text_case)];
@@ -3021,6 +3021,14 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
     if (field == "line_height") {
         if (value.empty() || value == "Авто" || value == "auto") {
             t.line_height = 0;
+            return true;
+        }
+        // In pixels; "140%" is that share of the text's size, as in Figma.
+        if (const usize end = value.find_last_not_of(" \t"); end != std::string::npos && value[end] == '%') {
+            const f32 size = t.size > 0 ? t.size : screen_.text.size;
+            f32 share = t.line_height > 0 && size > 0 ? t.line_height / size * 100 : 100;
+            if (!set_num(share, 0, 4000)) return false;
+            t.line_height = std::clamp(std::round(size * share) / 100, 0.0f, 4000.0f);
             return true;
         }
         return set_num(t.line_height, 0, 4000);

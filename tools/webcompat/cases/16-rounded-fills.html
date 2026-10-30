@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><head><style>
+body { margin: 16px; background: #fff; font-size: 13px; }
+.grid { display: flex; flex-wrap: wrap; gap: 14px; }
+.b { width: 178px; height: 110px; color: #fff; padding: 6px; box-sizing: border-box; }
+.c { width: 110px; height: 110px; border-radius: 50%; }
+/* As the UI editor writes a layer's fills: each placed, not repeated. */
+.f1 { border-radius: 24px; background-image: linear-gradient(90deg, #f43f5e, #6366f1); background-size: auto; background-repeat: no-repeat; background-position: 0% 0%; }
+.f2 { background-image: radial-gradient(ellipse farthest-side, #fde68a, #b45309); background-size: auto; background-repeat: no-repeat; background-position: 0% 0%; }
+.f3 { background-image: linear-gradient(rgba(255,255,255,.3), rgba(255,255,255,0)), linear-gradient(160deg, #0ea5e9, #22c55e);
+      background-size: auto, auto; background-repeat: no-repeat, no-repeat; background-position: 0% 0%, 0% 0%; }
+.f4 { border-radius: 40px 8px 40px 8px; background-image: linear-gradient(45deg, #a855f7 25%, transparent 25%); background-size: 20px 20px; background-color: #f3e8ff; color: #581c87; }
+.f5 { border-radius: 30px; border: 6px solid #1e293b; background-image: linear-gradient(#22d3ee, #0e7490); background-size: 100% 100%; background-repeat: no-repeat; }
+.f6 { background-image: url("art/tile.png"); background-size: 100% 100%; background-repeat: no-repeat; }
+.f7 { border-radius: 18px; background-image: url("art/tile.png"); background-size: 32px 32px; color: #111; }
+.f8 { border-radius: 50%; width: 178px; background-image: conic-gradient(from 90deg, #ef4444, #eab308, #22c55e, #3b82f6, #ef4444); background-size: auto; background-repeat: no-repeat; }
+</style></head><body>
+<div class="grid">
+<div class="b f1">rounded, editor fill</div><div class="c f2"></div><div class="c f3"></div><div class="b f4">rounded tiles</div>
+<div class="b f5">with border</div><div class="c f6"></div><div class="b f7">picture tiles</div><div class="b f8"></div>
+</div>
+</body></html>
