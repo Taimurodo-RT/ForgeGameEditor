@@ -1,0 +1,16 @@
+[package]
+name = "forge-world-demo"
+description = "Forge's big-world demo on Rust (wgpu + bevy_ecs), to compare with forge_world_demo"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-world.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+bevy_ecs.workspace = true
+rayon.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true

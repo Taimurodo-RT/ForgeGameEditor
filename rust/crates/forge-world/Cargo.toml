@@ -1,0 +1,11 @@
+[package]
+name = "forge-world"
+description = "Tile worlds in chunks: generators and streaming (port of engine/world)"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+rayon.workspace = true
+crossbeam-channel.workspace = true

@@ -6,6 +6,32 @@ on:
   pull_request:
 
 jobs:
+  # Forge on Rust (rust/), ported module by module while the C++ build below stays the working version.
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Formatting
+        run: cargo fmt --all --check
+      - name: Clippy, warnings are errors
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests (the generators make the same chunks as C++, tests/data/world_chunks.txt)
+        run: cargo test --workspace --locked
+      - name: World demo, 3 s headless (streaming and the crowd, no window)
+        run: cargo run --release --locked -p forge-world-demo -- --headless 3 --crowd 20000
+
   build:
     strategy:
       fail-fast: false
@@ -15,7 +41,9 @@ jobs:
             # No -G: CMake picks the newest Visual Studio on the runner image.
             configure: ""
             bin: build/{0}/Release
-          - os: ubuntu-latest
+          # Pinned: ubuntu-latest became Ubuntu 26.04 with GCC 15, whose maths differ in the last bits from what the
+          # vector, motion and screen tests expect (they check exact numbers). The C++ version only gets fixes now.
+          - os: ubuntu-24.04
             # CI machines have no display; SDL builds without X11/Wayland here.
             configure: -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_UNIX_CONSOLE_BUILD=ON
             bin: build/{0}

@@ -1,0 +1,23 @@
+# Forge on Rust. The C++ engine stays the working version until everything here is ported; see README.md.
+[workspace]
+resolver = "3"
+members = ["crates/forge-world", "apps/world-demo"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+forge-world = { path = "crates/forge-world" }
+wgpu = "30"
+winit = "0.30"
+bevy_ecs = { version = "0.20", features = ["multi_threaded"] }
+rayon = "1.12"
+bytemuck = { version = "1.25", features = ["derive"] }
+pollster = "1"
+crossbeam-channel = "0.5"
+
+[profile.release]
+debug = 1
