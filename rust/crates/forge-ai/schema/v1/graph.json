@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Graph",
+  "description": "A scoring or reaction graph, or a reusable subgraph.",
+  "type": "object",
+  "properties": {
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Edge"
+      }
+    },
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "inputs": {
+      "description": "Only for `subgraph`: its external ports.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GraphInput"
+      }
+    },
+    "kind": {
+      "$ref": "#/$defs/GraphKind"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Node"
+      }
+    },
+    "outputs": {
+      "description": "Output name → `node.port`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "kind",
+    "nodes",
+    "outputs"
+  ],
+  "$defs": {
+    "Edge": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "`node.port`",
+          "type": "string"
+        },
+        "to": {
+          "description": "`node.port`",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ]
+    },
+    "GraphInput": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "type": {
+          "$ref": "#/$defs/PortType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "GraphKind": {
+      "type": "string",
+      "enum": [
+        "utility",
+        "reaction",
+        "subgraph"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "LocalId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Node": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "op": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "params": {
+          "description": "Checked per operation, see `validate::graph`.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "op"
+      ]
+    },
+    "PortType": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "real",
+        "bool",
+        "entity",
+        "flow",
+        "tag"
+      ]
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    }
+  }
+}

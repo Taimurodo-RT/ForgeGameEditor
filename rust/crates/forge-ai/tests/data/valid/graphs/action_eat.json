@@ -1,0 +1,63 @@
+{
+  "edges": [
+    {
+      "from": "hunger.value",
+      "to": "urgency.x"
+    },
+    {
+      "from": "urgency.y",
+      "to": "product.a"
+    },
+    {
+      "from": "light.value",
+      "to": "fix.x"
+    },
+    {
+      "from": "fix.out",
+      "to": "product.b"
+    }
+  ],
+  "id": "graph.action_eat",
+  "kind": "utility",
+  "name": "loc.graph.action_eat.name",
+  "nodes": [
+    {
+      "id": "hunger",
+      "op": "need",
+      "params": {
+        "need": "need.food"
+      }
+    },
+    {
+      "id": "urgency",
+      "op": "curve",
+      "params": {
+        "curve": "curve.hunger"
+      }
+    },
+    {
+      "id": "light",
+      "op": "input",
+      "params": {
+        "input": "light_level"
+      }
+    },
+    {
+      "id": "fix",
+      "op": "subgraph",
+      "params": {
+        "subgraph": "subgraph.dim"
+      }
+    },
+    {
+      "id": "product",
+      "op": "mul",
+      "params": {}
+    }
+  ],
+  "outputs": {
+    "score": "product.out"
+  },
+  "schema": "graph/1",
+  "tags": []
+}

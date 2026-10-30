@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Schedule",
+  "description": "A daily schedule.",
+  "type": "object",
+  "properties": {
+    "blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Block"
+      }
+    },
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    },
+    "weights": {
+      "type": "object",
+      "properties": {
+        "any": {
+          "type": "object",
+          "properties": {
+            "eat": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "event": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "idle": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "leisure": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "sleep": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "social": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "survival": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "work": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            }
+          },
+          "additionalProperties": false
+        },
+        "free": {
+          "type": "object",
+          "properties": {
+            "eat": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "event": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "idle": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "leisure": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "sleep": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "social": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "survival": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "work": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            }
+          },
+          "additionalProperties": false
+        },
+        "sleep": {
+          "type": "object",
+          "properties": {
+            "eat": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "event": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "idle": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "leisure": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "sleep": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "social": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "survival": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "work": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            }
+          },
+          "additionalProperties": false
+        },
+        "work": {
+          "type": "object",
+          "properties": {
+            "eat": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "event": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "idle": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "leisure": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "sleep": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "social": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "survival": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            "work": {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "blocks",
+    "weights"
+  ],
+  "$defs": {
+    "Block": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/TimeOfDay"
+        },
+        "kind": {
+          "$ref": "#/$defs/BlockKind"
+        },
+        "to": {
+          "$ref": "#/$defs/TimeOfDay"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to",
+        "kind"
+      ]
+    },
+    "BlockKind": {
+      "type": "string",
+      "enum": [
+        "sleep",
+        "work",
+        "free",
+        "any"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "Num_m327680000_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": -32768.0,
+      "multipleOf": 0.0001
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    }
+  }
+}

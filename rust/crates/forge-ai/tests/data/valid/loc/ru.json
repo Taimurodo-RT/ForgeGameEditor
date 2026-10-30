@@ -1,0 +1,21 @@
+{
+  "loc.action.eat.name": "Поесть",
+  "loc.archetype.boss.name": "Босс",
+  "loc.archetype.worker.name": "Работяга",
+  "loc.curve.hunger.name": "Голод → срочность",
+  "loc.curve.linear_up.name": "Линейный рост",
+  "loc.emotion.fear.name": "Страх",
+  "loc.event.festival.name": "Праздник урожая",
+  "loc.graph.action_eat.name": "Оценка: поесть",
+  "loc.graph.fire_strength.name": "Сила реакции на пожар",
+  "loc.job.haul.name": "Перенести еду",
+  "loc.need.food.name": "Сытость",
+  "loc.object.storehouse.name": "Склад",
+  "loc.reaction.fire_panic.name": "Паника при пожаре",
+  "loc.role.cook.name": "Повар",
+  "loc.scenario.ordinary_day.name": "Обычный день",
+  "loc.schedule.worker.name": "Работник",
+  "loc.stimulus.fire.name": "Пожар",
+  "loc.subgraph.dim.name": "Компенсация одного соображения",
+  "loc.trait.glutton.name": "Обжора"
+}

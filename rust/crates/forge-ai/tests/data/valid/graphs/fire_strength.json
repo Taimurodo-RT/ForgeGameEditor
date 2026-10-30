@@ -1,0 +1,35 @@
+{
+  "edges": [
+    {
+      "from": "shortage.value",
+      "to": "shape.x"
+    }
+  ],
+  "id": "graph.fire_strength",
+  "kind": "reaction",
+  "name": "loc.graph.fire_strength.name",
+  "nodes": [
+    {
+      "id": "shortage",
+      "op": "input",
+      "params": {
+        "args": {
+          "tag": "food"
+        },
+        "input": "stock_shortage"
+      }
+    },
+    {
+      "id": "shape",
+      "op": "curve",
+      "params": {
+        "curve": "curve.linear_up"
+      }
+    }
+  ],
+  "outputs": {
+    "strength": "shape.y"
+  },
+  "schema": "graph/1",
+  "tags": []
+}

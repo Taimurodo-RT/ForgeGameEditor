@@ -1,0 +1,62 @@
+{
+  "buckets": [
+    {
+      "id": "survival",
+      "interrupt": "now",
+      "threshold": 0.6
+    },
+    {
+      "id": "crisis",
+      "interrupt": "step_boundary",
+      "threshold": 0.3
+    },
+    {
+      "id": "life",
+      "interrupt": "walking",
+      "threshold": 0
+    }
+  ],
+  "calendar": {
+    "days_per_season": 28,
+    "seasons": [
+      "spring",
+      "summer",
+      "autumn",
+      "winter"
+    ]
+  },
+  "day_parts": [
+    {
+      "id": "night",
+      "start": "00:00"
+    },
+    {
+      "id": "morning",
+      "start": "06:00"
+    },
+    {
+      "id": "day",
+      "start": "10:00"
+    },
+    {
+      "id": "evening",
+      "start": "18:00"
+    }
+  ],
+  "far_think_minutes": 60,
+  "format": 1,
+  "inertia": 1.25,
+  "languages": [
+    "ru"
+  ],
+  "memory_limit": 64,
+  "move_speed": 3,
+  "stay_ratio": 0.8,
+  "tags": [
+    "festival",
+    "food",
+    "haul"
+  ],
+  "think_interval": 10,
+  "tick_minutes": 1
+}

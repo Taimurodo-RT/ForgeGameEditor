@@ -1,0 +1,48 @@
+{
+  "admission": {
+    "curve": "curve.linear_up",
+    "input": "light_level"
+  },
+  "id": "event.festival",
+  "name": "loc.event.festival.name",
+  "on_cancel": [
+    {
+      "set_flag": {
+        "flag": "festival_cancelled",
+        "value": true
+      }
+    }
+  ],
+  "phases": [
+    {
+      "actions": [
+        {
+          "action": "action.eat",
+          "bucket": "life"
+        }
+      ],
+      "duration": 120,
+      "id": "gather",
+      "jobs": [
+        "job.haul"
+      ],
+      "weights": {
+        "leisure": 2
+      }
+    },
+    {
+      "duration": {
+        "until": "23:00"
+      },
+      "id": "feast",
+      "schedule": "schedule.worker"
+    }
+  ],
+  "priority": 50,
+  "schema": "event/1",
+  "start": {
+    "day": 10,
+    "season": "autumn"
+  },
+  "tags": []
+}

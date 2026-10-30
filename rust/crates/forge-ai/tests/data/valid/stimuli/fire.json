@@ -1,0 +1,14 @@
+{
+  "channels": [
+    "sight",
+    "hearing"
+  ],
+  "duration": 60,
+  "id": "stimulus.fire",
+  "interrupts": true,
+  "name": "loc.stimulus.fire.name",
+  "radius": 12,
+  "schema": "stimulus/1",
+  "strength": 1,
+  "tags": []
+}

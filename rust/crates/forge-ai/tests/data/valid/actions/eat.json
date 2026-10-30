@@ -1,0 +1,69 @@
+{
+  "animation": "eat",
+  "bucket": {
+    "default": "life",
+    "overrides": [
+      {
+        "bucket": "crisis",
+        "when": {
+          "need_below": {
+            "need": "need.food",
+            "value": 15
+          }
+        }
+      }
+    ]
+  },
+  "category": "eat",
+  "conditions": [
+    {
+      "stock_gte": {
+        "tag": "food",
+        "value": 1
+      }
+    }
+  ],
+  "effects": [
+    {
+      "need_add": {
+        "need": "need.food",
+        "value": 55
+      }
+    },
+    {
+      "stock_add": {
+        "tag": "food",
+        "value": -1
+      }
+    }
+  ],
+  "graph": "graph.action_eat",
+  "id": "action.eat",
+  "interruptible": "step_boundary",
+  "name": "loc.action.eat.name",
+  "schema": "action/1",
+  "steps": [
+    {
+      "args": {},
+      "id": "go",
+      "type": "goto_slot"
+    },
+    {
+      "args": {
+        "count": 1,
+        "tag": "food"
+      },
+      "id": "take",
+      "type": "take_item"
+    },
+    {
+      "args": {
+        "animation": "eat",
+        "minutes": 30
+      },
+      "id": "eat",
+      "type": "play_animation"
+    }
+  ],
+  "tags": []
+}

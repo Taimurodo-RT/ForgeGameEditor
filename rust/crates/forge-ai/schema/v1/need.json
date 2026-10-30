@@ -1,0 +1,393 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Need",
+  "description": "A need and how fast it falls.",
+  "type": "object",
+  "properties": {
+    "crisis_below": {
+      "$ref": "#/$defs/Num_0_1000000"
+    },
+    "decay_modifiers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DecayModifier"
+      }
+    },
+    "decay_per_hour": {
+      "$ref": "#/$defs/Num_0_327670000"
+    },
+    "icon": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LocalId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "start": {
+      "$ref": "#/$defs/Num_0_1000000"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    },
+    "urgency": {
+      "$ref": "#/$defs/Ref"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "start",
+    "decay_per_hour",
+    "crisis_below",
+    "urgency"
+  ],
+  "$defs": {
+    "Cond": {
+      "description": "A condition. JSON form: an object with one key, the operation name.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "stock_gte": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "$ref": "#/$defs/Tag"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_m327680000_327670000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stock_gte"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "has_tag": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "$ref": "#/$defs/Tag"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "has_tag"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flag_is": {
+              "type": "object",
+              "properties": {
+                "flag": {
+                  "$ref": "#/$defs/LocalId"
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "flag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flag_is"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "time_between": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "$ref": "#/$defs/TimeOfDay"
+                },
+                "to": {
+                  "$ref": "#/$defs/TimeOfDay"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "time_between"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "all": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Cond"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "all"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Cond"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "any"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Cond"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "not"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need_below": {
+              "type": "object",
+              "properties": {
+                "need": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_0_1000000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "need",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "need_below"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need_above": {
+              "type": "object",
+              "properties": {
+                "need": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_0_1000000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "need",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "need_above"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "has_trait": {
+              "type": "object",
+              "properties": {
+                "trait": {
+                  "$ref": "#/$defs/Ref"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "trait"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "has_trait"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "day_part_is": {
+              "type": "object",
+              "properties": {
+                "part": {
+                  "$ref": "#/$defs/LocalId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "part"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "day_part_is"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_phase_is": {
+              "type": "object",
+              "properties": {
+                "event": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "phase": {
+                  "$ref": "#/$defs/LocalId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "event",
+                "phase"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "event_phase_is"
+          ]
+        }
+      ]
+    },
+    "DecayModifier": {
+      "type": "object",
+      "properties": {
+        "mul": {
+          "$ref": "#/$defs/Num_m327680000_327670000"
+        },
+        "when": {
+          "$ref": "#/$defs/Cond"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "when",
+        "mul"
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "LocalId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Num_0_1000000": {
+      "type": "number",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "multipleOf": 0.0001
+    },
+    "Num_0_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": 0.0,
+      "multipleOf": 0.0001
+    },
+    "Num_m327680000_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": -32768.0,
+      "multipleOf": 0.0001
+    },
+    "Ref": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    }
+  }
+}

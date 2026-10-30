@@ -1,0 +1,16 @@
+{
+  "action": "action.eat",
+  "id": "job.haul",
+  "materials": [
+    {
+      "count": 2,
+      "tag": "food"
+    }
+  ],
+  "min_skill": 0,
+  "name": "loc.job.haul.name",
+  "schema": "job/1",
+  "tags": [],
+  "urgency": 0.5,
+  "work": "haul"
+}
