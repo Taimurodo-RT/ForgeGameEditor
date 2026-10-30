@@ -21,6 +21,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -580,10 +581,16 @@ struct SceneBridge final : script::GameBridge {
     void set_var(std::string_view, f64) override {}
     void set_text(std::string_view, std::string_view text) override { said.emplace_back(text); }
     void screen(std::string_view, std::string_view) override {}
-    bool scene_play(std::string_view name, bool pause, bool skip, u64& serial, std::string& why) override {
+    bool scene_play(std::string_view name, bool pause, bool skip, const std::map<std::string, f64>& params, u64& serial, std::string& why) override {
         if (name == "Нет") return why = "нет сцены «Нет»: отдайте её игре во вкладке «Векторная»", false;
         if (!going.empty()) return why = "идёт сцена «" + going + "»", false;
-        plays.push_back(std::string(name) + (pause ? " пауза" : "") + (skip ? " пропуск" : ""));
+        std::string values;
+        for (const auto& [k, v] : params) {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, " %s=%g", k.c_str(), v);
+            values += buf;
+        }
+        plays.push_back(std::string(name) + (pause ? " пауза" : "") + (skip ? " пропуск" : "") + values);
         going = std::string(name);
         serial = current = ++serials;
         return true;
@@ -692,7 +699,7 @@ TEST_CASE("6г2: forge.scene.play waits for the scene's end and says whether it 
     CHECK(error_of("e1", "forge.scene.play(\"Нет\")") == "scene.play: нет сцены «Нет»: отдайте её игре во вкладке «Векторная»");
     CHECK(error_of("e2", "forge.scene.play(\"\")") == "scene.play: нужно имя сцены");
     CHECK(error_of("e3", "forge.scene.play(\"А\", { pause = 1 })") == "scene.play: pause: нужно true или false");
-    CHECK(error_of("e4", "forge.scene.play(\"А\", { speed = 2 })") == "scene.play: в таблице только pause и skip, а не «speed»");
+    CHECK(error_of("e4", "forge.scene.play(\"А\", { speed = 2 })") == "scene.play: в таблице только pause, skip и params, а не «speed»");
     CHECK(error_of("e5", "forge.scene.play(\"А\", \"да\")") == "scene.play: 2-е значение (мир на паузе): нужно true или false");
     CHECK(error_of("e6", "forge.scene.play(\"А\", true, 0)") == "scene.play: 3-е значение (можно пропустить): нужно true или false");
     REQUIRE(bridge.going.empty());
@@ -718,7 +725,7 @@ TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for i
     REQUIRE(play);
     CHECK(play->title.get() == "Показать сцену");
     CHECK(play->category == "Сцены");
-    REQUIRE(play->inputs.size() == 3);
+    REQUIRE(play->inputs.size() == 9);
     CHECK(play->inputs[0].title.get() == "Сцена");
     CHECK(play->inputs[0].enum_type == "scene"); // a list of the game's scenes
     CHECK(play->inputs[0].required);
@@ -726,6 +733,20 @@ TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for i
     CHECK(play->inputs[1].value == "true");
     CHECK(play->inputs[2].title.get() == "Можно пропустить");
     CHECK(play->inputs[2].value == "true");
+    // Part 6г6: three pairs of a parameter of the scene (a list of its) and its value, empty and 0.
+    for (usize k = 0; k < 3; ++k) {
+        CAPTURE(k);
+        const script::PinDef &name = play->inputs[3 + 2 * k], &value = play->inputs[4 + 2 * k];
+        CHECK(name.id == "param" + std::to_string(k + 1));
+        CHECK(name.title.get() == "Параметр " + std::to_string(k + 1));
+        CHECK(name.enum_type == "scene_param");
+        CHECK(name.value.empty());
+        CHECK_FALSE(name.required);
+        CHECK(value.id == "value" + std::to_string(k + 1));
+        CHECK(value.title.get() == "Значение " + std::to_string(k + 1));
+        CHECK(value.type == script::ValueType::Number);
+        CHECK(value.value == "0");
+    }
     REQUIRE(play->outputs.size() == 1);
     CHECK(play->outputs[0].title.get() == "Пропущена");
     const script::NodeDef* ended = nodes.find("std.event.scene");
@@ -809,7 +830,7 @@ TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for i
     const logic::Module* m = c.find("fox");
     REQUIRE(m);
     INFO(m->source);
-    CHECK(m->source.find("forge.scene.play(\"Вступление\", false, true)") != std::string::npos);
+    CHECK(m->source.find("forge.scene.play(\"Вступление\", false, true, \"\", 0, \"\", 0, \"\", 0)") != std::string::npos);
     CHECK(m->source.find("S.on_scene[#S.on_scene + 1] = function(self, e1, e2)") != std::string::npos);
     std::string error;
     CHECK_MESSAGE(script::check_syntax(m->source, &error), error);
@@ -824,4 +845,54 @@ TEST_CASE("6г2: «Показать сцену» in a thing's scheme waits for i
     CHECK(game.hints == std::vector<std::string>{"Вступление", "true", "true"});
     CHECK(scripts.errors().empty());
     fs::remove_all(dir);
+}
+
+TEST_CASE("6г6: forge.scene.play gives the scene's parameters, by a table or by the node's pairs; what it cannot do, with the line") {
+    PoolScope pool;
+    world::World world(world::WorldDesc{}, std::make_shared<world::EmptyGenerator>());
+    scene::Scene scene(world);
+    sim::Simulation sim(world, scene);
+    script::ScriptHost scripts(sim, scene);
+    SceneBridge bridge;
+    bridge.scripts = &scripts;
+    scripts.set_user(script::kGameBridge, &bridge);
+    const world::Rect view{-64, -64, 128, 64};
+    auto run = [&](u32 ticks) {
+        for (u32 i = 0; i < ticks; ++i) sim.update(1.0 / 60.0, view);
+    };
+    sim.update(0, view);
+    world.finish_loading();
+    sim.update(0, view);
+    auto error_of = [&](const char* name, const char* call) {
+        scripts.clear_errors();
+        REQUIRE(scripts.load(name, std::string("local S = {}\nfunction S.on_start(self)\n    ") + call + "\nend\nreturn S"));
+        flecs::entity e = scene.spawn(scene::Position::at_tile(6, 5));
+        e.set<script::Script>({name});
+        run(2);
+        e.destruct();
+        bridge.end(false);
+        run(1);
+        return scripts.errors().empty() ? std::string() : scripts.errors().front().message;
+    };
+    // A table: by name; the node's pairs: an empty name is no pair.
+    CHECK(error_of("p1", "forge.scene.play(\"А\", { params = { h = 20, n = 2.5 } })") == "");
+    CHECK(bridge.plays.back() == "А пауза пропуск h=20 n=2.5");
+    CHECK(error_of("p2", "forge.scene.play(\"А\", false, true, \"h\", 20, \"\", 0, \"n\", -1)") == "");
+    CHECK(bridge.plays.back() == "А пропуск h=20 n=-1");
+    CHECK(error_of("p3", "forge.scene.play(\"А\", false, true, \"\", 5, \"\", 0, \"\", 0)") == "");
+    CHECK(bridge.plays.back() == "А пропуск");
+    CHECK(error_of("p4", "forge.scene.play(\"А\", { pause = false, params = {} })") == "");
+    CHECK(bridge.plays.back() == "А пропуск");
+    // What it cannot do.
+    CHECK(error_of("q1", "forge.scene.play(\"А\", { params = 5 })") == "scene.play: params: нужна таблица { имя = число }");
+    CHECK(error_of("q2", "forge.scene.play(\"А\", { params = { 20 } })") == "scene.play: params: имена параметров — строки, а не number");
+    CHECK(error_of("q3", "forge.scene.play(\"А\", { params = { h = \"20\" } })") == "scene.play: params.h: нужно число");
+    CHECK(error_of("q4", "forge.scene.play(\"А\", { params = { h = 0/0 } })") == "scene.play: params.h: нужно число");
+    CHECK(error_of("q5", "forge.scene.play(\"А\", true, true, \"h\", 1, \"h\", 2)") == "scene.play: параметр h дан дважды");
+    CHECK(error_of("q6", "forge.scene.play(\"А\", true, true, \"h\", \"много\")") == "scene.play: значение параметра h: нужно число");
+    CHECK(error_of("q7", "forge.scene.play(\"А\", true, true, 5, 1)") == "scene.play: 4-е значение: нужно имя параметра строкой");
+    CHECK(error_of("q8", "forge.scene.play(\"А\", true, true, \"h\")") == "scene.play: значение параметра h: нужно число");
+    const usize before = bridge.plays.size();
+    CHECK(error_of("q9", "forge.scene.play(\"А\", { params = { h = 1 }, speed = 2 })") == "scene.play: в таблице только pause, skip и params, а не «speed»");
+    CHECK(bridge.plays.size() == before); // none of these began a scene
 }

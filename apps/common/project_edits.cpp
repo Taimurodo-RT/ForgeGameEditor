@@ -243,6 +243,8 @@ FORGE_REFLECT(forge::edits::ProjectEdits, 1) {
     t.field("st_wide", &forge::edits::ProjectEdits::st_wide);
     t.field("st_blend_frames", &forge::edits::ProjectEdits::st_blend_frames);
     t.field("st_blend_files", &forge::edits::ProjectEdits::st_blend_files);
+    t.field("st_param", &forge::edits::ProjectEdits::st_param);
+    t.field("st_param_value", &forge::edits::ProjectEdits::st_param_value);
     t.field("sb_menu", &forge::edits::ProjectEdits::sb_menu);
     t.field("sb_scene", &forge::edits::ProjectEdits::sb_scene);
     t.field("sb_button", &forge::edits::ProjectEdits::sb_button);

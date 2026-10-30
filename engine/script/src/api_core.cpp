@@ -457,14 +457,16 @@ int api_anim_going(lua_State* L) {
     return 1;
 }
 
-// forge.scene.play(name[, {pause = …, skip = …} or pause[, skip]]) (part 6г2 of docs/models/сцены-модель.md): the game
-// shows its scene and the handler waits for its end, as forge.wait waits; it returns whether the player skipped it.
-// The scheme's node «Показать сцену» gives pause and skip second and third.
+// forge.scene.play(name[, {pause = …, skip = …, params = {…}} or pause[, skip[, name1, value1, …]]]) (parts 6г2 and 6г6
+// of docs/models/сцены-модель.md): the game shows its scene and the handler waits for its end, as forge.wait waits; it
+// returns whether the player skipped it. The scheme's node «Показать сцену» gives pause and skip second and third, then
+// three pairs of a parameter's name and value (an empty name: no pair).
 int api_scene_play(lua_State* L) {
     size_t len = 0;
     const char* name = luaL_checklstring(L, 1, &len);
     if (len == 0) luaL_error(L, "scene.play: нужно имя сцены");
     bool pause = true, skip = true;
+    std::map<std::string, f64> params;
     auto flag = [&](int i, const char* where, bool& out) {
         if (lua_isnil(L, i)) return;
         if (!lua_isboolean(L, i)) luaL_error(L, "scene.play: %s: нужно true или false", where);
@@ -477,23 +479,49 @@ int api_scene_play(lua_State* L) {
         lua_getfield(L, 2, "skip");
         flag(-1, "skip", skip);
         lua_pop(L, 1);
+        lua_getfield(L, 2, "params");
+        if (!lua_isnil(L, -1)) {
+            if (!lua_istable(L, -1)) luaL_error(L, "scene.play: params: нужна таблица { имя = число }");
+            const int t = lua_gettop(L);
+            lua_pushnil(L);
+            while (lua_next(L, t)) {
+                if (lua_type(L, -2) != LUA_TSTRING) luaL_error(L, "scene.play: params: имена параметров — строки, а не %s", luaL_typename(L, -2));
+                const char* key = lua_tostring(L, -2);
+                const f64 v = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : std::numeric_limits<f64>::quiet_NaN();
+                if (!std::isfinite(v)) luaL_error(L, "scene.play: params.%s: нужно число", key);
+                params[key] = v;
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
         lua_pushnil(L);
         while (lua_next(L, 2)) {
             lua_pop(L, 1);
             const char* key = lua_type(L, -1) == LUA_TSTRING ? lua_tostring(L, -1) : nullptr;
             const std::string_view k = key ? key : "";
-            if (!key || (k != "pause" && k != "skip"))
-                luaL_error(L, "scene.play: в таблице только pause и skip, а не «%s»", key ? key : luaL_typename(L, -1));
+            if (!key || (k != "pause" && k != "skip" && k != "params"))
+                luaL_error(L, "scene.play: в таблице только pause, skip и params, а не «%s»", key ? key : luaL_typename(L, -1));
         }
     } else {
         if (!lua_isnone(L, 2)) flag(2, "2-е значение (мир на паузе)", pause);
         if (!lua_isnone(L, 3)) flag(3, "3-е значение (можно пропустить)", skip);
+        // The node's pairs: a parameter's name and its value.
+        for (int i = 4; !lua_isnone(L, i); i += 2) {
+            if (lua_isnil(L, i)) continue;
+            if (lua_type(L, i) != LUA_TSTRING) luaL_error(L, "scene.play: %d-е значение: нужно имя параметра строкой", i);
+            size_t n = 0;
+            const char* key = lua_tolstring(L, i, &n);
+            if (n == 0) continue;
+            const f64 v = lua_type(L, i + 1) == LUA_TNUMBER ? lua_tonumber(L, i + 1) : std::numeric_limits<f64>::quiet_NaN();
+            if (!std::isfinite(v)) luaL_error(L, "scene.play: значение параметра %s: нужно число", key);
+            if (!params.emplace(std::string(key, n), v).second) luaL_error(L, "scene.play: параметр %s дан дважды", key);
+        }
     }
     if (!lua_isyieldable(L)) luaL_error(L, "scene.play: ждать сцену можно только внутри обработчика объекта");
     GameBridge* b = bridge_of(L);
     std::string why = "сцены показывает только игра";
     u64 serial = 0;
-    if (!b || !b->scene_play(std::string_view(name, len), pause, skip, serial, why)) luaL_error(L, "scene.play: %s", why.c_str());
+    if (!b || !b->scene_play(std::string_view(name, len), pause, skip, params, serial, why)) luaL_error(L, "scene.play: %s", why.c_str());
     impl_of(L)->pending_scene = serial;
     return lua_yield(L, 0); // the host resumes it with whether it was skipped
 }
@@ -911,10 +939,17 @@ void register_core_api(ScriptApi& api) {
     api.add("scene.play", &api_scene_play).latent().category("Сцены").icon("movie").title("Показать сцену", "Play scene")
         .help("Сцена из «Векторной», отданная игре («Отдать игре»): поверх мира и экранов игры. Нода ждёт её конца и идёт "
               "дальше; «Пропущена» — да, когда игрок пропустил её в меню паузы. «Мир на паузе»: мир стоит и не слушает "
-              "игрока, пока она идёт.")
+              "игрока, пока она идёт. «Параметр» и «Значение»: число параметра кода сцены, с которым она играет "
+              "(без выбранного параметра — как отдана).")
         .param("name", V::String, "Сцена", "Scene").enum_type("scene")
         .param("pause", V::Bool, "Мир на паузе", "Pause world", "true")
         .param("skip", V::Bool, "Можно пропустить", "Can skip", "true")
+        .param("param1", V::String, "Параметр 1", "Parameter 1", "\"\"").enum_type("scene_param")
+        .param("value1", V::Number, "Значение 1", "Value 1", "0")
+        .param("param2", V::String, "Параметр 2", "Parameter 2", "\"\"").enum_type("scene_param")
+        .param("value2", V::Number, "Значение 2", "Value 2", "0")
+        .param("param3", V::String, "Параметр 3", "Parameter 3", "\"\"").enum_type("scene_param")
+        .param("value3", V::Number, "Значение 3", "Value 3", "0")
         .result("skipped", V::Bool, "Пропущена", "Skipped");
     api.add("scene.stop", &api_scene_stop).action().category("Сцены").icon("stop").title("Кончить сцену", "Stop scene")
         .help("Идущая сцена кончается, как когда игрок её пропускает: её оставшиеся сообщения уходят «Логике».");

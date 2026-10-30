@@ -125,6 +125,15 @@ std::vector<std::string> scene_names(const fs::path& game_dir) {
     return out;
 }
 
+std::vector<vector::MotionParam> scene_params(const fs::path& game_dir, std::string_view name) {
+    const std::string n(name);
+    if (n.empty() || n == "." || n == ".." || n.find_first_of("/\\:") != std::string::npos) return {};
+    std::string text, why;
+    vector::SceneFile file;
+    if (!read_text_file(game_dir / "scenes" / utf8_path(n) / "scene.json", text) || !vector::read_scene_file(text, file, why)) return {};
+    return file.params;
+}
+
 std::string scene_sound_file(const fs::path& sounds, std::string_view name) {
     if (name.empty() || sounds.empty() || name.find_first_of("/\\") != std::string_view::npos) return {};
     const std::string n(name);
@@ -892,6 +901,10 @@ bool GameScene::play(Rml::Context* context, const fs::path& game_dir, std::strin
     vector::SceneMotion scene;
     std::string err;
     if (!read_scene_folder(dir, scene, err)) return why = "сцена «" + n + "»: " + err, false;
+    // Part 6г6: its numbers at the values given; a parameter a game does not change, a line once.
+    std::vector<std::string> fixed;
+    if (!vector::scene_with_params(scene, how.params, fixed, why)) return false;
+    for (const std::string& line : fixed) im.say("сцена «" + n + "»: " + line);
     std::vector<std::vector<ui::SvgDrawing>> drawings(scene.actors.size());
     for (usize a = 0; a < scene.actors.size(); ++a) {
         const fs::path beside = (dir / utf8_path(scene.file.actors[a].picture)).parent_path();

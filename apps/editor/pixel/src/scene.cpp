@@ -712,6 +712,7 @@ bool actor_marks(const Recording& rec, SceneMarkSource& clips, std::vector<Mark>
 // ---- the scene ----
 
 struct Scene::Impl {
+    std::string code;
     SceneDoc doc;
     SceneFiles files;
     PoseScript script;
@@ -942,6 +943,7 @@ Scene::~Scene() = default;
 bool Scene::load(std::string_view code, const SceneDoc& doc, const SceneFiles& files) {
     impl_ = std::make_unique<Impl>();
     Impl& im = *impl_;
+    im.code = std::string(code);
     im.doc = doc;
     im.files = files;
     im.make_hooks();
@@ -1117,6 +1119,7 @@ assets::CookedTexture Scene::draw_frame(u32 w, u32 h) {
 
 const Stage& Scene::stage() const { return impl_->stage; }
 const SceneDoc& Scene::doc() const { return impl_->doc; }
+const std::string& Scene::code() const { return impl_->code; }
 PoseScript& Scene::script() { return impl_->script; }
 Rig& Scene::rig() { return impl_->rig; }
 const Rig& Scene::rig() const { return impl_->rig; }
@@ -1141,6 +1144,14 @@ bool Scene::actor_reach(std::string_view id, f64 out[4]) {
     Impl::Actor* a = impl_->actor(id);
     if (!a) return out[0] = out[1] = out[2] = out[3] = 0, false;
     return a->rig.reach({}, out);
+}
+
+bool Scene::actor_reach_each(std::string_view id, std::vector<std::array<f64, 4>>& out) {
+    out.clear();
+    Impl::Actor* a = impl_->actor(id);
+    if (!a) return false;
+    a->rig.reach_each({}, out);
+    return true;
 }
 
 const SceneCharacter* Scene::character(std::string_view actor) const {

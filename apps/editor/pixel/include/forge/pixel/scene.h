@@ -38,6 +38,7 @@
 #include "forge/pixel/script.h"
 #include "forge/vector/scene_file.h"
 
+#include <array>
 #include <functional>
 #include <map>
 #include <memory>
@@ -260,6 +261,8 @@ public:
 
     const Stage& stage() const;
     const SceneDoc& doc() const;
+    // The code it was loaded with (part 6г6: the gift loads it again at other values of its parameters).
+    const std::string& code() const;
     PoseScript& script();
     Rig& rig();
     const Rig& rig() const;
@@ -268,6 +271,8 @@ public:
     // Part 6г2: where an actor's drawing reaches as the last frame() or pose() left it, in its picture's units (Rig::reach):
     // x0, y0, x1, y1. False for no such actor or one that draws nothing.
     bool actor_reach(std::string_view id, f64 out[4]);
+    // Part 6г6: the same of each shape of the actor's pictures (Rig::reach_each); false for no such actor.
+    bool actor_reach_each(std::string_view id, std::vector<std::array<f64, 4>>& out);
     // An actor's character as read; null for none.
     const SceneCharacter* character(std::string_view actor) const;
     // Part 6г1: the code of an actor's character that records the clip of a play, and the values it records it with

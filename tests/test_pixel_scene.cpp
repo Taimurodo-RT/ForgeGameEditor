@@ -52,6 +52,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <set>
@@ -2188,7 +2189,7 @@ TEST_CASE("Сцена в игре: scene.json — каждое поле туда
     };
     const Bad bad[] = {
         {"\"forge\": \"scene\"", "\"forge\": \"screen\"", "forge: "},
-        {"\"version\": 1", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
+        {"\"version\": 1", "\"version\": 4", "version 4: сцену отдал редактор новее этой игры (она читает 3)"},
         {"\"name\": \"Вступление\"", "\"name\": \"\"", "name: "},
         {"\"canvas\": [160, 120]", "\"canvas\": [160, 0]", "canvas: "},
         {"\"background\": \"#203040\"", "\"background\": \"red\"", "background: "},
@@ -3142,6 +3143,10 @@ TEST_CASE("Сцена в игре: рамка актёра — куда дотя
     CHECK(r[1] == doctest::Approx(-6));
     CHECK(r[2] == doctest::Approx(46));
     CHECK(r[3] == doctest::Approx(58));
+    // The beetle shows one drawing at a time, as its pose says and not as a frame drawn before left it: before its swap
+    // the shell (rx 18) and not the flat one (rx 20) too, though nothing is drawn yet.
+    REQUIRE(s.actor_reach("жук", r));
+    CHECK(r[2] - r[0] == doctest::Approx(36));
     CHECK_FALSE(s.actor_reach("лиса", r));
     // The tab does not cut it at its canvas either: the head above it is drawn (over the sky).
     {
@@ -3178,6 +3183,10 @@ TEST_CASE("Сцена в игре: рамка актёра — куда дотя
     vector::SceneFile back;
     CHECK_FALSE(vector::read_scene_file(text, back, why));
     CHECK(why == "actors[0]: reach: нужна рамка рисунка в сцене [x, y, w, h], w и h больше 0");
+    // After it the flat one alone, though the frame drawn last showed the shell.
+    REQUIRE(s.frame(0.7));
+    REQUIRE(s.actor_reach("жук", r));
+    CHECK(r[2] - r[0] == doctest::Approx(40));
 }
 
 namespace {
@@ -4804,7 +4813,7 @@ TEST_CASE("Смешивание (6г5а): scene.json со сменой — ве�
     };
     const Bad bad[] = {
         {"\"version\": 2", "\"version\": 1", "plays[1]: blend: смена клипов — в файле версии 2"},
-        {"\"version\": 2", "\"version\": 3", "version 3: сцену отдал редактор новее этой игры (она читает 2)"},
+        {"\"version\": 2", "\"version\": 4", "version 4: сцену отдал редактор новее этой игры (она читает 3)"},
         {"\"blend\": 0.3", "\"blend\": -0.3", "plays[1]: blend: нужны секунды смены от 0"},
         {"\"blend\": 0.3", "\"blend\": \"0.3\"", "plays[1]: blend: нужны секунды смены от 0"},
         {"\"order\": 2}", "\"order\": 2, \"blend\": 1}", "plays[2]: blend: у stop смены нет"},
@@ -5453,6 +5462,381 @@ TEST_CASE("Сцена позади (6г5б): кадры под экраном �
         CHECK(screens.scene_behind("меню")->time() == doctest::Approx(0.5));
         as_tab(1);
     }
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+// ---- part 6г6: the scene's parameters from the game -------------------------------------------------------------
+
+namespace {
+
+// The scene's code with its parameters: stage from line 4, scene from the line after the stage's end.
+std::string params_code(std::string_view params, std::string_view scene, std::string_view stage = kStage) {
+    return "return {\n  params = { " + std::string(params) + " },\n  stage = function(p, rng)\n" + std::string(stage) + "\n  end,\n  scene = function(p)\n" +
+           std::string(scene) + "\n  end,\n}\n";
+}
+
+// The forest moves by twice h, the hedgehog walks as high as h, the scene waits n.
+const char* kParamsScene = R"(    part("лес").x(p.h * 2, 1)
+    actor("ёжик"):play("walk", { params = { height = p.h } })
+    wait(p.n))";
+
+void load_params(Scene& s, Files& files, std::string_view params, std::string_view scene, const std::map<std::string, f64>& values = {},
+                 std::string_view stage = kStage) {
+    SceneDoc d;
+    d.params = values;
+    const bool ok = s.load(params_code(params, scene, stage), d, files.scene());
+    INFO(s.error());
+    REQUIRE(ok);
+}
+
+// Why the gift says the game does not change a parameter.
+std::string fixed_why(Files& files, std::string_view params, std::string_view scene, const char* name, std::string_view stage = kStage) {
+    Scene s;
+    load_params(s, files, params, scene, {}, stage);
+    const SceneGift gift = gift_of(s, files, "Сцена");
+    const auto it = gift.motion.file.fixed.find(name);
+    return it == gift.motion.file.fixed.end() ? std::string() : it->second;
+}
+
+} // namespace
+
+TEST_CASE("Параметры сцены (6г6): scene.json версии 3 — туда и обратно, плохие поля называют поле; без параметров — прежняя версия") {
+    vector::SceneFile f;
+    f.name = "Сцена";
+    f.from = "сцены/Сцена.luau";
+    f.length = 2;
+    f.actors = {{"ёжик", "персонажи/Ёжик", "actors/ёжик.svg", "actors/ёжик.motion.json", {0, 0}, 64, 64}};
+    f.actors[0].reach_by["h"] = {0, 2, 0, 0.5};
+    f.params = {{"h", 16}, {"n", 1}};
+    f.fixed["n"] = "длина сцены";
+    const std::string text = vector::write_scene_file(f);
+    INFO(text);
+    CHECK(has(text, "\"version\": 3"));
+    CHECK(has(text, "\"length\": 2,\n  \"params\": [{\"name\": \"h\", \"value\": 16}, {\"name\": \"n\", \"value\": 1}],\n  \"fixed\": {\"n\": \"длина сцены\"},\n"));
+    CHECK(has(text, "\"size\": [64, 64], \"reach_by\": {\"h\": [0, 2, 0, 0.5]}}"));
+    vector::SceneFile back;
+    std::string why;
+    REQUIRE(vector::read_scene_file(text, back, why));
+    CHECK(back == f);
+    CHECK(vector::write_scene_file(back) == text);
+    CHECK(back.param("h")->value == 16);
+    CHECK(back.param("высота") == nullptr);
+    struct Bad {
+        const char *from, *to, *said;
+    };
+    const Bad bad[] = {
+        {"\"version\": 3", "\"version\": 2", "params: параметры сцены — в файле версии 3"},
+        {"\"version\": 3", "\"version\": 4", "version 4: сцену отдал редактор новее этой игры (она читает 3)"},
+        {"\"value\": 16", "\"value\": \"16\"", "params[0]: value: нужно число — с ним вкладка отдала сцену"},
+        {"{\"name\": \"n\", \"value\": 1}", "{\"name\": \"h\", \"value\": 1}", "params[1]: параметр «h» дважды"},
+        {"{\"name\": \"h\", \"value\": 16}, {\"name\": \"n\"", "{\"name\": \"n\", \"value\": 16}, {\"name\": \"h\"", "params[1]: параметры идут по имени"},
+        {"\"params\": [", "\"params\": {", "не JSON"},
+        {"\"fixed\": {\"n\"", "\"fixed\": {\"m\"", "fixed.m: у сцены нет такого параметра"},
+        {"\"длина сцены\"", "\"\"", "fixed.n: нужно, почему он из игры не меняется, строкой"},
+        {"\"reach_by\": {\"h\"", "\"reach_by\": {\"n\"", "actors[0]: reach_by.n: этот параметр из игры не меняется"},
+        {"\"reach_by\": {\"h\"", "\"reach_by\": {\"q\"", "actors[0]: reach_by.q: у сцены нет такого параметра"},
+        {"[0, 2, 0, 0.5]", "[0, -2, 0, 0.5]", "actors[0]: reach_by.h: нужно, на сколько уходит каждый край на единицу: [слева, сверху, справа, снизу], от 0"},
+        {"[0, 2, 0, 0.5]", "[0, 2, 0]", "actors[0]: reach_by.h: нужно, на сколько уходит каждый край на единицу: [слева, сверху, справа, снизу], от 0"},
+    };
+    for (const Bad& b : bad) {
+        CAPTURE(b.to);
+        vector::SceneFile out;
+        CHECK_FALSE(vector::read_scene_file(replaced(text, b.from, b.to), out, why));
+        CHECK(has(why, b.said));
+    }
+    // A file of version 2 with reach_by does not read either.
+    {
+        std::string two = replaced(text, "\"version\": 3", "\"version\": 2");
+        two = replaced(two, "  \"params\": [{\"name\": \"h\", \"value\": 16}, {\"name\": \"n\", \"value\": 1}],\n  \"fixed\": {\"n\": \"длина сцены\"},\n", "");
+        vector::SceneFile out;
+        CHECK_FALSE(vector::read_scene_file(two, out, why));
+        CHECK(why == "actors[0]: reach_by: параметры сцены — в файле версии 3");
+    }
+    // Without parameters as before: version 1, no params nor fixed.
+    vector::SceneFile plain = f;
+    plain.params.clear();
+    plain.fixed.clear();
+    plain.actors[0].reach_by.clear();
+    const std::string one = vector::write_scene_file(plain);
+    CHECK(has(one, "\"version\": 1"));
+    CHECK_FALSE(has(one, "params"));
+    CHECK_FALSE(has(one, "fixed"));
+}
+
+TEST_CASE("Параметры сцены (6г6): «Отдать игре» — приращения у клипа сцены и клипов актёров, рамка актёра, неменяемый параметр") {
+    Files files;
+    project(files);
+    Scene s;
+    load_params(s, files, "h = 4, n = 1", kParamsScene, {{"n", 2}});
+    record(s);
+    const SceneGift gift = gift_of(s, files, "Сцена");
+    const vector::SceneMotion& m = gift.motion;
+    // The values: the code's, the tab's fields over them; n changes the scene's length.
+    CHECK(m.file.params == std::vector<vector::MotionParam>{{"h", 4}, {"n", 2}});
+    CHECK(m.file.fixed == std::map<std::string, std::string>{{"n", "длина сцены"}});
+    CHECK(m.stage.params == m.file.params);
+    REQUIRE(m.actors.size() == 2);
+    CHECK(m.actors[0].params == m.file.params);
+    CHECK(m.actors[1].params.empty()); // the beetle plays nothing: no file of clips
+    CHECK(has(*gift_file(gift, "scene.json"), "\"version\": 3"));
+    CHECK(has(*gift_file(gift, "stage.motion.json"), "\"version\": 4"));
+    REQUIRE(gift.notes.size() >= 1);
+    CHECK(gift.notes.back() == "Из игры меняются: h. Не меняются: n (длина сцены)");
+    // The forest's move: to twice h, 2 a unit.
+    auto by_of = [](const vector::MotionClip& c, std::string_view part, vector::MotionProp p) -> const vector::MotionBy* {
+        for (const vector::MotionTrack& t : c.tracks)
+            if (t.part == part && t.prop == p)
+                for (const vector::MotionPiece& pc : t.pieces)
+                    for (const vector::MotionBy& b : pc.by)
+                        if (b.param == "h") return &b;
+        return nullptr;
+    };
+    const vector::MotionBy* forest = by_of(*m.stage.clip("scene"), "лес", vector::MotionProp::X);
+    REQUIRE(forest);
+    CHECK(forest->to.v == doctest::Approx(2));
+    CHECK(forest->from.v == 0);
+    // The walk: the head as high as h, -1 a unit; the clip keeps its name.
+    REQUIRE(m.actors[0].clip("walk"));
+    const vector::MotionBy* head = by_of(*m.actors[0].clip("walk"), "ёжик/head", vector::MotionProp::Y);
+    REQUIRE(head);
+    CHECK((head->to.v == doctest::Approx(-1) || head->value.v == doctest::Approx(-1) || head->from.v == doctest::Approx(-1)));
+    // n changes nothing in the files.
+    for (const vector::MotionFile* f : {&m.stage, &m.actors[0]})
+        for (const vector::MotionClip& c : f->clips)
+            for (const vector::MotionTrack& t : c.tracks)
+                for (const vector::MotionPiece& pc : t.pieces)
+                    for (const vector::MotionBy& b : pc.by) CHECK(b.param == "h");
+    // The hedgehog's head goes up 1 a unit of h (its top at 14 − h): at h + 1 its top goes out by 1, at h − 1 its bottom
+    // (each shape's edges on their own). Measured at the moments of the box, not at the top of the step: just under 1.
+    REQUIRE(m.file.actor("ёжик")->reach_by.count("h"));
+    const std::array<f64, 4> edges = m.file.actor("ёжик")->reach_by.at("h");
+    CHECK(edges[0] == 0);
+    CHECK(edges[1] == doctest::Approx(1).epsilon(0.002));
+    CHECK(edges[2] == 0);
+    CHECK(edges[3] == doctest::Approx(1).epsilon(0.002));
+    CHECK(m.file.actor("жук")->reach_by.empty());
+
+    // The game at other values of h is the tab recorded at them, and each actor stays within its box.
+    for (const f64 h : {20.0, 9.0, -3.0}) {
+        CAPTURE(h);
+        vector::SceneMotion at = m;
+        std::vector<std::string> notes;
+        std::string why;
+        REQUIRE(vector::scene_with_params(at, {{"h", h}}, notes, why));
+        CHECK(notes.empty());
+        Scene tab;
+        load_params(tab, files, "h = 4, n = 1", kParamsScene, {{"h", h}, {"n", 2}});
+        record(tab);
+        const bool same = check_scene_gift(tab, at, why);
+        INFO(why);
+        CHECK(same);
+        const vector::SceneActor& hog = *at.file.actor("ёжик");
+        const vector::SceneBox box = hog.reach.w > 0 ? hog.reach : vector::SceneBox{hog.origin.x, hog.origin.y, hog.w, hog.h};
+        for (const f64 t : {0.0, 0.25, 0.5, 1.0, 2.0}) {
+            REQUIRE(tab.frame(t));
+            f64 r[4];
+            REQUIRE(tab.actor_reach("ёжик", r));
+            CHECK(r[0] >= box.x - 1e-6);
+            CHECK(r[1] >= box.y - 1e-6);
+            CHECK(r[2] <= box.x + box.w + 1e-6);
+            CHECK(r[3] <= box.y + box.h + 1e-6);
+        }
+        // Whole units outward.
+        CHECK(box.y == std::floor(box.y));
+        CHECK(box.h == std::floor(box.h));
+    }
+    // At h = 20 the box reaches 16 above the canvas and 16 below it: 1 a unit from the file's 4, whole units outward.
+    {
+        vector::SceneMotion at = m;
+        std::vector<std::string> notes;
+        std::string why;
+        REQUIRE(vector::scene_with_params(at, {{"h", 20}}, notes, why));
+        CHECK(at.file.actor("ёжик")->reach == vector::SceneBox{0, -16, 64, 96});
+        CHECK(at.file.actor("жук")->reach == m.file.actor("жук")->reach);
+        // Under the file's value it grows as much: at h = -3, 7 units away, 7 above and 7 below.
+        at = m;
+        REQUIRE(vector::scene_with_params(at, {{"h", -3}}, notes, why));
+        CHECK(at.file.actor("ёжик")->reach == vector::SceneBox{0, -7, 64, 78});
+    }
+    // The fixed one: the file's numbers and a line; at the file's value, quiet.
+    {
+        vector::SceneMotion at = m;
+        std::vector<std::string> notes;
+        std::string why;
+        REQUIRE(vector::scene_with_params(at, {{"n", 5}}, notes, why));
+        CHECK(notes == std::vector<std::string>{"параметр n из игры не меняется: длина сцены"});
+        CHECK(at.stage == m.stage);
+        CHECK(at.actors == m.actors);
+        CHECK(at.file == m.file);
+        notes.clear();
+        REQUIRE(vector::scene_with_params(at, {{"n", 2}, {"h", 4}}, notes, why));
+        CHECK(notes.empty());
+        CHECK(at.stage == m.stage);
+        // A name it has not, a value that is no number: the scene as it was.
+        CHECK_FALSE(vector::scene_with_params(at, {{"heigth", 5}}, notes, why));
+        CHECK(why == "в сцене «Сцена» нет параметра «heigth»: есть h, n");
+        CHECK_FALSE(vector::scene_with_params(at, {{"h", std::numeric_limits<f64>::quiet_NaN()}}, notes, why));
+        CHECK(why == "параметр h: нужно число");
+        CHECK(at.stage == m.stage);
+    }
+    // A scene without parameters says so.
+    {
+        Scene plain;
+        load(plain, files, "    actor(\"ёжик\"):play(\"walk\")\n    wait(1)");
+        SceneGift g = gift_of(plain, files);
+        CHECK(has(*gift_file(g, "scene.json"), "\"version\": 1"));
+        CHECK(g.motion.file.params.empty());
+        std::vector<std::string> notes;
+        std::string why;
+        CHECK(vector::scene_with_params(g.motion, {}, notes, why));
+        CHECK_FALSE(vector::scene_with_params(g.motion, {{"h", 5}}, notes, why));
+        CHECK(why == "у сцены «Вступление» нет параметров");
+    }
+    // The files read back as the gift says, and a motion file with other parameters does not fit.
+    {
+        vector::SceneMotion other = m;
+        other.actors[0].params[0].value = 5;
+        std::string why;
+        CHECK_FALSE(vector::check_scene(other, why));
+        CHECK(why == "actors/ёжик.motion.json: параметры не те, что у сцены");
+        other = m;
+        other.stage.params.clear();
+        CHECK_FALSE(vector::check_scene(other, why));
+        CHECK(why == "stage.motion.json: параметры не те, что у сцены");
+        CHECK(vector::check_scene(m, why));
+    }
+}
+
+TEST_CASE("Параметры сцены (6г6): почему игра не меняет параметр — по первому отличию, для всей сцены") {
+    Files files;
+    project(files);
+    // A character whose clip makes as many steps as count, in one second.
+    PixelDoc c;
+    c.script = "Счётчик.luau";
+    c.frame_w = c.frame_h = 64;
+    files.put("персонажи/Счётчик.pixel.json", write_pixel_doc(c));
+    files.put("персонажи/Счётчик.luau", R"(return {
+  params = { count = 2 },
+  clips = {
+    steps = function(p)
+      for i = 1, p.count do
+        part("head").y(-i, 0.1)
+      end
+      wait(1 - 0.1 * p.count)
+    end,
+  },
+  draw = function(p, rng)
+    canvas(64, 64)
+    circle("head", { x = 32, y = 28, r = 14, fill = "#c09060" })
+  end,
+}
+)");
+    const std::string counter = std::string(kStage) + "\n    actor(\"счёт\", \"персонажи/Счётчик\", { x = 80, y = 100, pivot = { 32, 60 } })";
+    CHECK(fixed_why(files, "h = 4", "    wait(p.h)", "h") == "длина сцены");
+    CHECK(fixed_why(files, "h = 4", "    if p.h > 4 then actor(\"ёжик\"):play(\"wave\") else actor(\"ёжик\"):play(\"walk\") end\n    wait(1)", "h") ==
+          "клипы актёров");
+    CHECK(fixed_why(files, "h = 4", "    actor(\"ёжик\"):loop(\"walk\", { speed = p.h })\n    wait(1)", "h") == "клипы актёров");
+    CHECK(fixed_why(files, "h = 2", "    actor(\"счёт\"):play(\"steps\", { params = { count = p.h } })\n    wait(1)", "h", counter) ==
+          "клип «steps» актёра «счёт»: число переходов");
+    CHECK(fixed_why(files, "h = 4", "    part(\"дорога\").stroke(p.h > 4 and \"#ff0000\" or \"#00ff00\", 0.5)\n    wait(1)", "h") == "сцена: цвет");
+    CHECK(fixed_why(files, "h = 4", "    part(\"лес\").x(p.h * p.h, 1)", "h") == "сцена: не прямо");
+    CHECK(fixed_why(files, "h = 4", "    part(\"лес\").x(1, 1)", "h", std::string(kStage) + "\n    rect(\"пол\", { x = p.h, y = 110, w = 20, h = 4, fill = \"#806040\" })") ==
+          "рисунок сцены");
+    CHECK(fixed_why(files, "h = 4", "    wait(1)",
+                    "h", replaced(kStage, "picture(\"лес\", \"картинки/лес.png\", { x = 8, y = 6 })", "picture(\"лес\", \"картинки/лес.png\", { x = p.h, y = 6 })")) ==
+          "картинки");
+    CHECK(fixed_why(files, "h = 4", "    music(\"лес\", { volume = p.h / 10 })\n    wait(1)", "h") == "музыка");
+    CHECK(fixed_why(files, "h = 4", "    if p.h > 4 then wait_action(\"Поговорить\") end\n    wait(1)", "h") == "ожидания");
+    CHECK(fixed_why(files, "h = 4", "    if p.h < 4 then transition(\"растворение\", 0.5) end\n    wait(1)", "h") == "переходы сцены");
+    CHECK(fixed_why(files, "h = 4", "    actor(\"ёжик\"):play(\"walk\", { params = { height = p.h * p.h } })\n    wait(1)", "h") == "клип «walk» актёра «ёжик»: не прямо");
+    const std::string err = fixed_why(files, "h = 4", "    if p.h < 4 then error(\"мало\") end\n    wait(1)", "h");
+    CHECK(has(err, "сцена не записывается при h = 3: "));
+    CHECK(has(err, "мало"));
+    // A parameter in nothing changes nothing and is not fixed; the one beside it still changes the scene.
+    Scene s;
+    load_params(s, files, "h = 4, k = 1", "    part(\"лес\").x(p.h, 1)");
+    const SceneGift gift = gift_of(s, files, "Сцена");
+    CHECK(gift.motion.file.fixed.empty());
+    CHECK(gift.notes.back() == "Из игры меняются: h");
+}
+
+TEST_CASE("Параметры сцены (6г6): в игре — значения из логики, рамка актёра по ним, каждый показ — от чисел файла") {
+    Files files;
+    project(files);
+    Scene s;
+    load_params(s, files, "h = 4, n = 1", kParamsScene, {{"n", 2}});
+    const SceneGift gift = gift_of(s, files, "Сцена");
+    const fs::path game_dir = empty_dir("forge_tests_параметры_сцены");
+    give(gift, game_dir, "Сцена");
+    const vector::SceneActor& hog = *gift.motion.file.actor("ёжик");
+    const f64 file_h = hog.reach.w > 0 ? hog.reach.h : hog.h;
+    // The parameters «Логика» lists: those of the scene's folder; a name that is a path is no scene's, though a
+    // scene.json is there.
+    CHECK(game::scene_params(game_dir, "Сцена") == gift.motion.file.params);
+    CHECK(game::scene_params(game_dir, "Нет").empty());
+    give(gift, game_dir / "scenes" / "Сцена", "внутри");
+    CHECK(game::scene_params(game_dir / "scenes" / "Сцена", "внутри") == gift.motion.file.params);
+    CHECK(game::scene_params(game_dir, "Сцена/scenes/внутри").empty());
+    CHECK(game::scene_params(game_dir, "Сцена\\scenes\\внутри").empty());
+
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("scene", {400, 240});
+    REQUIRE(context);
+    {
+        game::GameScene scene;
+        std::string why;
+        // The hedgehog's layer: as tall as its box at those values.
+        auto hog_height = [&]() -> f64 {
+            REQUIRE(scene.document());
+            Rml::Element* camera = scene.document()->GetElementById("camera");
+            const std::vector<std::string> layers = scene.layers();
+            for (usize i = 0; i < layers.size(); ++i)
+                if (layers[i].rfind("actor ёжик", 0) == 0) {
+                    const Rml::Property* p = layer_element(camera, static_cast<int>(i))->GetLocalProperty("height");
+                    return p ? static_cast<f64>(p->Get<float>()) : -1.0;
+                }
+            return -2.0;
+        };
+        // A name it has not, a value that is no number: no scene, and why.
+        CHECK_FALSE(scene.play(context, game_dir, "Сцена", {true, true, false, {{"heigth", 5}}}, why));
+        CHECK(why == "в сцене «Сцена» нет параметра «heigth»: есть h, n");
+        CHECK_FALSE(scene.play(context, game_dir, "Сцена", {true, true, false, {{"h", std::numeric_limits<f64>::infinity()}}}, why));
+        CHECK(why == "параметр h: нужно число");
+        CHECK_FALSE(scene.going());
+        CHECK(scene.problems().empty());
+
+        REQUIRE(scene.play(context, game_dir, "Сцена", {true, true, false, {{"h", 20}}}, why));
+        scene.update(0, 400, 240);
+        CHECK(hog_height() == doctest::Approx(96));
+        CHECK(scene.problems().empty());
+        scene.drop();
+        // The next play is the file's numbers again.
+        REQUIRE(scene.play(context, game_dir, "Сцена", {}, why));
+        scene.update(0, 400, 240);
+        CHECK(hog_height() == doctest::Approx(file_h));
+        scene.drop();
+        // The fixed one plays at the file's numbers, with a line once: the scene as long as the file says, not n = 5's.
+        for (int k = 0; k < 2; ++k) {
+            REQUIRE(scene.play(context, game_dir, "Сцена", {true, true, false, {{"n", 5}, {"h", 20}}}, why));
+            scene.update(0, 400, 240);
+            CHECK(hog_height() == doctest::Approx(96));
+            int frames = 0;
+            while (scene.going() && frames < 60 * 10) {
+                scene.update(1.0 / 60, 400, 240);
+                ++frames;
+            }
+            CHECK_FALSE(scene.going());
+            CHECK(frames <= static_cast<int>(std::ceil(gift.motion.file.length * 60)) + 2);
+        }
+        CHECK(scene.problems() == std::vector<std::string>{"сцена «Сцена»: параметр n из игры не меняется: длина сцены"});
+    }
+    Rml::Shutdown();
     std::error_code ec;
     fs::remove_all(game_dir, ec);
 }

@@ -148,6 +148,24 @@ struct Reader {
                               number(yyjson_arr_get(r, 1), a.reach.y) && number(yyjson_arr_get(r, 2), a.reach.w) && number(yyjson_arr_get(r, 3), a.reach.h);
             if (!four || !(a.reach.w > 0) || !(a.reach.h > 0)) return fail(at, "reach: нужна рамка рисунка в сцене [x, y, w, h], w и h больше 0");
         }
+        if (yyjson_val* rb = yyjson_obj_get(v, "reach_by")) {
+            if (version < 3) return fail(at, "reach_by: параметры сцены — в файле версии 3");
+            if (!yyjson_is_obj(rb)) return fail(at, "reach_by: нужен объект {\"параметр\": [слева, сверху, справа, снизу]}");
+            usize i, n;
+            yyjson_val *key, *edges;
+            yyjson_obj_foreach(rb, i, n, key, edges) {
+                const std::string name(yyjson_get_str(key), yyjson_get_len(key));
+                const std::string where = at + ": reach_by." + name;
+                if (!f.param(name)) return fail(where, "у сцены нет такого параметра");
+                if (f.fixed.count(name)) return fail(where, "этот параметр из игры не меняется");
+                std::array<f64, 4> e{};
+                const bool four = yyjson_is_arr(edges) && yyjson_arr_size(edges) == 4 && number(yyjson_arr_get(edges, 0), e[0]) &&
+                                  number(yyjson_arr_get(edges, 1), e[1]) && number(yyjson_arr_get(edges, 2), e[2]) && number(yyjson_arr_get(edges, 3), e[3]);
+                if (!four || std::any_of(e.begin(), e.end(), [](f64 x) { return !(x >= 0); }))
+                    return fail(where, "нужно, на сколько уходит каждый край на единицу: [слева, сверху, справа, снизу], от 0");
+                a.reach_by[name] = e;
+            }
+        }
         f.actors.push_back(std::move(a));
         return true;
     }
@@ -219,6 +237,41 @@ struct Reader {
         return true;
     }
 
+    // Part 6г6: the scene's parameters and those a game does not change.
+    bool params(yyjson_val* r) {
+        yyjson_val* ps = yyjson_obj_get(r, "params");
+        yyjson_val* fx = yyjson_obj_get(r, "fixed");
+        if ((ps || fx) && version < 3) return why = std::string(ps ? "params" : "fixed") + ": параметры сцены — в файле версии 3", false;
+        if (ps) {
+            if (!yyjson_is_arr(ps)) return why = "params: нужен список параметров [{\"name\": …, \"value\": …}]", false;
+            usize i, n;
+            yyjson_val* item;
+            yyjson_arr_foreach(ps, i, n, item) {
+                const std::string at = "params[" + std::to_string(i) + "]";
+                MotionParam prm;
+                if (!yyjson_is_obj(item)) return fail(at, "нужен объект {\"name\": …, \"value\": …}");
+                if (!text(yyjson_obj_get(item, "name"), prm.name) || prm.name.empty()) return fail(at, "name: нужно имя параметра строкой");
+                if (!number(yyjson_obj_get(item, "value"), prm.value)) return fail(at, "value: нужно число — с ним вкладка отдала сцену");
+                if (f.param(prm.name)) return fail(at, "параметр «" + prm.name + "» дважды");
+                if (!f.params.empty() && !(f.params.back().name < prm.name)) return fail(at, "параметры идут по имени");
+                f.params.push_back(std::move(prm));
+            }
+        }
+        if (fx) {
+            if (!yyjson_is_obj(fx)) return why = "fixed: нужен объект {\"параметр\": \"почему не меняется\"}", false;
+            usize i, n;
+            yyjson_val *key, *v;
+            yyjson_obj_foreach(fx, i, n, key, v) {
+                const std::string name(yyjson_get_str(key), yyjson_get_len(key));
+                std::string reason;
+                if (!f.param(name)) return fail("fixed." + name, "у сцены нет такого параметра");
+                if (!text(v, reason) || reason.empty()) return fail("fixed." + name, "нужно, почему он из игры не меняется, строкой");
+                f.fixed[name] = std::move(reason);
+            }
+        }
+        return true;
+    }
+
     bool root(yyjson_val* r) {
         if (!yyjson_is_obj(r)) return why = "в файле не объект JSON", false;
         std::string kind;
@@ -237,6 +290,7 @@ struct Reader {
         if (yyjson_val* bg = yyjson_obj_get(r, "background"); bg && (!text(bg, f.background) || !hex_color(f.background)))
             return why = "background: нужен цвет \"#rrggbb\" (без background сцена прозрачна)", false;
         if (!number(yyjson_obj_get(r, "length"), f.length) || f.length < 0) return why = "length: нужна длина сцены от 0", false;
+        if (!params(r)) return false;
         auto bind = [this](auto method) { return [this, method](yyjson_val* v, const std::string& at) { return (this->*method)(v, at); }; };
         if (!list(r, "pictures", "{\"id\": …, \"file\": …, \"x\": …}", bind(&Reader::picture))) return false;
         if (!list(r, "actors", "{\"id\": …, \"picture\": …, \"motion\": …}", bind(&Reader::actor))) return false;
@@ -312,6 +366,12 @@ const SceneActor* SceneFile::actor(std::string_view id) const {
     return nullptr;
 }
 
+const MotionParam* SceneFile::param(std::string_view name) const {
+    for (const MotionParam& p : params)
+        if (p.name == name) return &p;
+    return nullptr;
+}
+
 bool read_scene_file(std::string_view json, SceneFile& out, std::string& why) {
     out = {};
     why.clear();
@@ -329,9 +389,10 @@ bool read_scene_file(std::string_view json, SceneFile& out, std::string& why) {
 }
 
 std::string write_scene_file(const SceneFile& f) {
-    // Version 2 only with a blend (part 6г5а): a game made before reads the rest.
+    // Version 3 only with parameters (part 6г6), 2 only with a blend (part 6г5а): a game made before reads the rest.
     const bool blends = std::any_of(f.plays.begin(), f.plays.end(), [](const ScenePlay& p) { return p.blend > 0; });
-    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(blends ? 2 : 1) + ",\n  \"name\": ";
+    const u32 version = !f.params.empty() ? 3 : blends ? 2 : 1;
+    std::string out = "{\n  \"forge\": \"scene\",\n  \"version\": " + std::to_string(version) + ",\n  \"name\": ";
     put_string(out, f.name);
     out += ",\n  \"from\": ";
     put_string(out, f.from);
@@ -343,6 +404,24 @@ std::string write_scene_file(const SceneFile& f) {
     }
     out += ",\n  \"length\": ";
     put_number(out, f.length);
+    if (!f.params.empty()) {
+        out += ",\n  \"params\": [";
+        for (usize i = 0; i < f.params.size(); ++i) {
+            out += i ? ", {\"name\": " : "{\"name\": ";
+            put_string(out, f.params[i].name);
+            out += ", \"value\": ";
+            put_number(out, f.params[i].value);
+            out += '}';
+        }
+        out += "],\n  \"fixed\": {";
+        for (const auto& [name, reason] : f.fixed) {
+            if (out.back() != '{') out += ", ";
+            put_string(out, name);
+            out += ": ";
+            put_string(out, reason);
+        }
+        out += '}';
+    }
     out += ",\n";
     put_list(out, "pictures", f.pictures, [&](const ScenePicture& p) {
         out += "{\"id\": ";
@@ -377,6 +456,20 @@ std::string write_scene_file(const SceneFile& f) {
                 put_number(out, v);
             }
             out += ']';
+        }
+        if (!a.reach_by.empty()) {
+            out += ", \"reach_by\": {";
+            for (const auto& [name, edges] : a.reach_by) {
+                if (out.back() != '{') out += ", ";
+                put_string(out, name);
+                out += ": [";
+                for (usize i = 0; i < 4; ++i) {
+                    if (i) out += ", ";
+                    put_number(out, edges[i]);
+                }
+                out += ']';
+            }
+            out += '}';
         }
         out += '}';
     });
@@ -445,6 +538,51 @@ bool check_scene(const SceneMotion& s, std::string& why) {
         if (s.file.actors[static_cast<usize>(a)].motion.empty()) return why = "актёр «" + p.actor + "» играет «" + p.clip + "», а файла клипов у него нет", false;
         if (!s.actors[static_cast<usize>(a)].clip(p.clip))
             return why = "актёр «" + p.actor + "»: в " + s.file.actors[static_cast<usize>(a)].motion + " нет клипа «" + p.clip + "»", false;
+    }
+    // Part 6г6: the motion files have the scene's parameters, the values the scene was given at.
+    if (s.stage.params != s.file.params) return why = "stage.motion.json: параметры не те, что у сцены", false;
+    for (usize a = 0; a < s.actors.size(); ++a)
+        if (!s.file.actors[a].motion.empty() && s.actors[a].params != s.file.params)
+            return why = s.file.actors[a].motion + ": параметры не те, что у сцены", false;
+    return true;
+}
+
+bool scene_with_params(SceneMotion& s, const std::map<std::string, f64>& values, std::vector<std::string>& notes, std::string& why) {
+    if (values.empty()) return true;
+    const SceneFile& f = s.file;
+    std::vector<MotionParam> given;
+    for (const auto& [name, v] : values) {
+        if (!f.param(name)) {
+            if (f.params.empty()) return why = "у сцены «" + f.name + "» нет параметров", false;
+            std::string have;
+            for (const MotionParam& p : f.params) have += (have.empty() ? "" : ", ") + p.name;
+            return why = "в сцене «" + f.name + "» нет параметра «" + name + "»: есть " + have, false;
+        }
+        if (!std::isfinite(v)) return why = "параметр " + name + ": нужно число", false;
+    }
+    for (const auto& [name, v] : values) {
+        const MotionParam& own = *f.param(name);
+        if (v == own.value) continue;
+        if (const auto it = f.fixed.find(name); it != f.fixed.end()) {
+            notes.push_back("параметр " + name + " из игры не меняется: " + it->second);
+            continue;
+        }
+        given.push_back({name, v});
+    }
+    if (given.empty()) return true;
+    for (MotionClip& c : s.stage.clips) c = motion_clip_with(s.stage, c, given);
+    for (MotionFile& m : s.actors)
+        for (MotionClip& c : m.clips) c = motion_clip_with(m, c, given);
+    for (SceneActor& a : s.file.actors) {
+        f64 out[4] = {};
+        for (const MotionParam& g : given)
+            if (const auto it = a.reach_by.find(g.name); it != a.reach_by.end())
+                for (usize i = 0; i < 4; ++i) out[i] += it->second[i] * std::abs(g.value - f.param(g.name)->value);
+        if (!(out[0] > 0 || out[1] > 0 || out[2] > 0 || out[3] > 0)) continue;
+        const SceneBox b = a.reach.w > 0 ? a.reach : SceneBox{a.origin.x, a.origin.y, a.w, a.h};
+        const f64 x0 = std::floor(b.x - out[0]), y0 = std::floor(b.y - out[1]);
+        const f64 x1 = std::ceil(b.x + b.w + out[2]), y1 = std::ceil(b.y + b.h + out[3]);
+        a.reach = {x0, y0, x1 - x0, y1 - y0};
     }
     return true;
 }
