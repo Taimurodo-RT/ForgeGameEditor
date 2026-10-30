@@ -254,6 +254,10 @@ struct ProjectEdits {
     std::vector<double> st_first_frames, st_in_frames, st_frames, st_holds, st_out_frames, st_out_x;
     std::vector<std::string> st_first_files, st_in_files, st_files, st_out_files;
     bool st_wide = false;
+    // Part 6г5а (the editor's self-test pixel-scene-h): st_scene's clips change smoothly (its file has blends); after its
+    // waits, at st_blend_frames (its time, having waited st_holds) its frames are st_blend_files, the clips mixed.
+    std::vector<double> st_blend_frames;
+    std::vector<std::string> st_blend_files;
 };
 
 // False (error says why) when the file cannot be read.

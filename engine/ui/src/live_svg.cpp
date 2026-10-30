@@ -1591,109 +1591,39 @@ std::vector<std::string> svg_problems() {
     return out;
 }
 
-SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings) {
-    const vector::MotionShown shown = vector::motion_shown(file, clip, at);
+namespace {
+
+vector::MotionClipPose motion_side(const SvgPose& p) {
+    return {p.parts, p.copies, p.order, {p.drawing, p.swap, p.swap_from, p.swap_k}, p.from_parts};
+}
+
+SvgPose svg_side(std::string picture, vector::MotionClipPose p, std::vector<SvgDrawing> drawings) {
     SvgPose pose;
     pose.picture = std::move(picture);
-    pose.parts = vector::motion_pose(file, clip, at, shown.drawing);
-    pose.order = vector::motion_order_at(clip, at);
-    for (const vector::MotionCopy& copy : clip.copies)
-        if (vector::motion_copy_drawn(copy, at)) pose.copies.push_back(copy);
+    pose.parts = std::move(p.parts);
+    pose.copies = std::move(p.copies);
+    pose.order = std::move(p.order);
     pose.drawings = std::move(drawings);
-    pose.drawing = shown.drawing;
-    if (shown.swap) {
-        pose.swap = true;
-        pose.swap_from = shown.from;
-        pose.swap_k = shown.k;
-        pose.from_parts = vector::motion_pose(file, clip, at, shown.from);
+    pose.drawing = std::move(p.shown.drawing);
+    pose.swap = p.shown.swap;
+    if (pose.swap) {
+        pose.swap_from = std::move(p.shown.from);
+        pose.swap_k = p.shown.k;
+        pose.from_parts = std::move(p.from_parts);
     }
     return pose;
 }
 
+} // namespace
+
+SvgPose clip_pose(std::string picture, const vector::MotionFile& file, const vector::MotionClip& clip, f64 at, std::vector<SvgDrawing> drawings) {
+    return svg_side(std::move(picture), vector::motion_clip_pose(file, clip, at), std::move(drawings));
+}
+
 SvgPose blend_pose(const vector::MotionFile& file, const SvgPose& from, const SvgPose& to, f64 k) {
-    using vector::MotionProp;
     if (!(k > 0)) return from;
     if (k >= 1) return to;
-    auto main = [](const std::string& d) { return d.empty() ? std::string(vector::kMotionMainDrawing) : d; };
-    // The drawings and their shares: a pose shows one, a swap two.
-    std::map<std::string, f64> weight;
-    auto weigh = [&](const SvgPose& p, f64 of) {
-        const std::string shown = main(p.drawing);
-        const std::string before = main(p.swap_from);
-        auto add = [&](const std::string& d, f64 w) {
-            if (w > 0 && (d == vector::kMotionMainDrawing || file.drawing(d))) weight[d] += w;
-        };
-        if (p.swap) {
-            add(before, of * (1 - p.swap_k));
-            add(shown, of * p.swap_k);
-        } else
-            add(shown, of);
-    };
-    weigh(from, 1 - k);
-    weigh(to, k);
-    const std::string top = main(to.drawing);
-    std::string under;
-    for (const auto& [d, w] : weight)
-        if (d != top && (under.empty() || w > weight[under])) under = d;
-
-    SvgPose out;
-    out.picture = to.picture;
-    out.drawings = to.drawings;
-    out.drawing = top;
-    out.order = from.order;
-    // The copies drawn on either side; one only one side draws comes in or goes out with its opacity.
-    std::set<std::string> from_copies, to_copies;
-    for (const vector::MotionCopy& c : from.copies) from_copies.insert(c.id);
-    for (const vector::MotionCopy& c : to.copies) to_copies.insert(c.id);
-    out.copies = to.copies;
-    for (const vector::MotionCopy& c : from.copies)
-        if (!to_copies.count(c.id)) out.copies.push_back(c);
-    std::map<std::string, const vector::MotionPartPose*> a, b;
-    for (const vector::MotionPartPose& p : from.parts) a.emplace(p.id, &p);
-    for (const vector::MotionPartPose& p : to.parts) b.emplace(p.id, &p);
-    std::vector<std::string> ids;
-    for (const vector::MotionPartPose& p : to.parts) ids.push_back(p.id);
-    for (const vector::MotionPartPose& p : from.parts)
-        if (!b.count(p.id)) ids.push_back(p.id);
-    for (const std::set<std::string>* copies : {&to_copies, &from_copies}) // a copy without tracks fades too
-        for (const std::string& id : *copies)
-            if (std::find(ids.begin(), ids.end(), id) == ids.end()) ids.push_back(id);
-    constexpr usize kOpacity = static_cast<usize>(MotionProp::Opacity);
-    for (const std::string& id : ids) {
-        const auto ai = a.find(id), bi = b.find(id);
-        const vector::MotionPartPose* pa = ai == a.end() ? nullptr : ai->second;
-        const vector::MotionPartPose* pb = bi == b.end() ? nullptr : bi->second;
-        vector::MotionPartPose pp;
-        pp.id = id;
-        const bool going = from_copies.count(id) && !to_copies.count(id), coming = to_copies.count(id) && !from_copies.count(id);
-        if (going || coming) {
-            // A copy where the side that draws it has it.
-            if (const vector::MotionPartPose* side = going ? pa : pb) pp = *side;
-            else
-                for (usize i = 0; i < vector::kMotionPropCount; ++i) pp.values[i] = vector::motion_rest(static_cast<MotionProp>(i));
-            if (!pp.has[kOpacity]) pp.values[kOpacity] = vector::motion_rest(MotionProp::Opacity);
-            pp.has[kOpacity] = true;
-            pp.values[kOpacity].v *= going ? 1 - k : k;
-        } else
-            for (usize i = 0; i < vector::kMotionPropCount; ++i) {
-                const MotionProp prop = static_cast<MotionProp>(i);
-                pp.has[i] = (pa && pa->has[i]) || (pb && pb->has[i]);
-                const vector::MotionValue rest = vector::motion_rest(prop);
-                pp.values[i] = !pp.has[i] ? rest
-                                          : vector::motion_mix(prop, pa && pa->has[i] ? pa->values[i] : rest,
-                                                               pb && pb->has[i] ? pb->values[i] : rest, k);
-            }
-        vector::motion_part_pose(file, pp, top);
-        out.parts.push_back(std::move(pp));
-    }
-    if (!under.empty()) {
-        out.swap = true;
-        out.swap_from = under;
-        out.swap_k = weight[top] / (weight[top] + weight[under]);
-        out.from_parts = out.parts;
-        for (vector::MotionPartPose& pp : out.from_parts) vector::motion_part_pose(file, pp, under);
-    }
-    return out;
+    return svg_side(to.picture, vector::motion_blend(file, motion_side(from), motion_side(to), k), to.drawings);
 }
 
 void svg_pose(Rml::Element* element, SvgPose pose) {

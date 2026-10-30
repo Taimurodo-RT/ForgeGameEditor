@@ -10296,10 +10296,11 @@ private:
     // look at the skip, skipped too, its last frame till the logic has run. The game lost: st_first played then is gone
     // the frame after its end. On 1920 × 1080 (st_wide): «сдвиг» out begins past the screen's edge, where the frame's x of
     // the canvas puts it, the bars of the scene going under it, the world at the bottom of its frames (the grey stops
-    // short there) the game's as it stands after. The time of a frame in the log.
+    // short there) the game's as it stands after. The time of a frame in the log. Part 6г5а (st_blend_*, the self-test
+    // pixel-scene-h): st_scene's clips changing smoothly after its waits, its frames the tab's there.
     void build_scene_transitions(Shell& s) {
         struct Seen {
-            std::vector<assets::CookedTexture> first, in, frames, out;
+            std::vector<assets::CookedTexture> first, in, frames, out, blend;
             assets::CookedTexture last;
             Rml::ElementDocument* grey = nullptr;
             u64 serial = 0, last_ns = 0;
@@ -10376,7 +10377,7 @@ private:
                                   e.st_in > 0 && e.st_out > 0 && e.st_length > e.st_out &&
                                   (e.st_wide || (e.st_first_frames.size() == e.st_first_files.size() && e.st_in_frames.size() == e.st_in_files.size() &&
                                                  e.st_frames.size() == e.st_files.size() && e.st_out_frames.size() == e.st_out_files.size() &&
-                                                 !e.st_first_frames.empty() && !e.st_in_frames.empty() && !e.st_frames.empty() && !e.st_last_file.empty())),
+                                                 e.st_blend_frames.size() == e.st_blend_files.size() && !e.st_first_frames.empty() && !e.st_in_frames.empty() && !e.st_frames.empty() && !e.st_last_file.empty())),
                               "правки сцен с переходами полны"))
                     return true;
                 auto read_png = [this](const std::string& file, assets::CookedTexture& img) {
@@ -10385,7 +10386,7 @@ private:
                 };
                 if (!e.st_wide) {
                     for (auto [files, into] : {std::pair{&e.st_first_files, &st->first}, std::pair{&e.st_in_files, &st->in}, std::pair{&e.st_files, &st->frames},
-                                               std::pair{&e.st_out_files, &st->out}})
+                                               std::pair{&e.st_out_files, &st->out}, std::pair{&e.st_blend_files, &st->blend}})
                         for (const std::string& file : *files) read_png(file, into->emplace_back());
                     read_png(e.st_last_file, st->last);
                 }
@@ -10401,6 +10402,9 @@ private:
                 check(b.size() == 2 && !b[0].leave && std::fabs(b[0].length - e.st_in) < 1e-9 && b[1].leave && b[1].kind == "сдвиг" &&
                           std::fabs(b[1].length - e.st_out) < 1e-9 && std::fabs(two.file.length - e.st_length) < 1e-9 && two.file.stops.size() == 3,
                       "у «" + e.st_scene + "» свой вход, уход «сдвиг», три ожидания и её длина, как у вкладки");
+                if (!e.st_blend_frames.empty())
+                    check(std::any_of(two.file.plays.begin(), two.file.plays.end(), [](const vector::ScenePlay& p) { return p.blend > 0; }),
+                          "у «" + e.st_scene + "» плавные смены клипов, как у вкладки");
                 grey_over_game(s, st->grey, e.st_wide ? kWorldRows : 0);
                 check(st->grey != nullptr, "серая страница над игрой");
                 return false;
@@ -10476,19 +10480,29 @@ private:
                 }
                 if (sc.waiting_index() < 0) return false;
                 check(e.st_wide || st->next == e.st_in_frames.size() + e.st_frames.size(), "кадры её входа и окна сравнены до ожиданий");
+                st->next = 0;
                 st->stage = 4;
                 [[fallthrough]];
             }
-            case 4: { // Its waits, then out to the game by «сдвиг».
+            case 4: { // Its waits, its clips changing smoothly (part 6г5а), then out to the game by «сдвиг».
                 if (sc.waiting_index() >= 0) {
                     through_waits(e.st_wide);
                     return false;
                 }
                 check(sc.going() && sc.time() > 1.5, "ожидания пройдены");
+                if (!e.st_wide && st->next < e.st_blend_frames.size()) {
+                    const f64 want = e.st_blend_frames[st->next];
+                    if (at_moment(sc.time(), want)) {
+                        compare(st->blend, st->next, e.st_blend_files, nullptr, "смены клипов «" + e.st_scene + "» " + std::to_string(st->next));
+                        ++st->next;
+                    } else
+                        check(sc.time() < want, "миг смены клипов " + std::to_string(want) + " с пройден без кадра");
+                }
                 if (sc.time() < e.st_length - e.st_out - 1e-9) {
                     check(!sc.wants_backdrop(), "до ухода кадр игры не нужен");
                     return false;
                 }
+                check(e.st_wide || st->next == e.st_blend_frames.size(), "кадры смены клипов сравнены");
                 st->next = 0;
                 st->stage = 5;
                 [[fallthrough]];
