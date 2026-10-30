@@ -14,3 +14,5 @@ games/slice/level/
 /assets/
 .forge/
 __pycache__/
+prototypes/rust-world/target/
+prototypes/rust-world/bench-results.txt
