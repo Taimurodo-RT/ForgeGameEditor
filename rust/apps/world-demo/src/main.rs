@@ -8,11 +8,10 @@
 //! bench-results.txt and quits. Esc quits, F toggles the automatic flight, the mouse wheel zooms.
 
 mod ents;
-mod worldgen;
+use forge_world::worldgen;
 mod render;
-mod world;
+use forge_world::world;
 
-use worldgen::{CHUNK, Generator};
 use render::{Camera, Renderer};
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +21,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 use world::{Rect, World};
+use worldgen::{CHUNK, Generator};
 
 const WORLD_CHUNKS: i32 = 1024;
 const WORLD_TILES: i32 = WORLD_CHUNKS * CHUNK;
@@ -39,7 +39,8 @@ struct Options {
 }
 
 fn parse() -> Options {
-    let mut o = Options { top_down: false, crowd: 0, particles: 0, seconds: None, headless: None, vsync: false, dig: false };
+    let mut o =
+        Options { top_down: false, crowd: 0, particles: 0, seconds: None, headless: None, vsync: false, dig: false };
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -110,7 +111,11 @@ struct Sim {
 
 impl Sim {
     fn new(opt: Options) -> Self {
-        let generator = if opt.top_down { Generator::TopDown { seed: 2026 } } else { Generator::Side { seed: 2026, surface_y: SURFACE_Y } };
+        let generator = if opt.top_down {
+            Generator::TopDown { seed: 2026 }
+        } else {
+            Generator::Side { seed: 2026, surface_y: SURFACE_Y }
+        };
         let centre = [WORLD_TILES / 2, if opt.top_down { WORLD_TILES / 2 } else { SURFACE_Y }];
         let crowd = (opt.crowd > 0).then(|| {
             let t = Instant::now();
@@ -136,7 +141,12 @@ impl Sim {
 
     fn visible(&self, w: u32, h: u32) -> Rect {
         let (hw, hh) = (w as f64 / 2.0 / self.cam.zoom as f64, h as f64 / 2.0 / self.cam.zoom as f64);
-        Rect { x0: (self.cam.x - hw).floor() as i32, y0: (self.cam.y - hh).floor() as i32, x1: (self.cam.x + hw).ceil() as i32, y1: (self.cam.y + hh).ceil() as i32 }
+        Rect {
+            x0: (self.cam.x - hw).floor() as i32,
+            y0: (self.cam.y - hh).floor() as i32,
+            x1: (self.cam.x + hw).ceil() as i32,
+            y1: (self.cam.y + hh).ceil() as i32,
+        }
     }
 
     /// One tick: flight, world streaming, crowd. Returns (world ms, crowd ms).
@@ -167,7 +177,12 @@ impl Sim {
                 self.dig_seed = self.dig_seed.wrapping_mul(1664525).wrapping_add(1013904223);
                 let dx = (self.dig_seed >> 8) % 200;
                 let dy = (self.dig_seed >> 20) % 120;
-                let _ = self.world.set_tile(self.cam.x as i32 - 100 + dx as i32, self.cam.y as i32 - 60 + dy as i32, 1, worldgen::AIR);
+                let _ = self.world.set_tile(
+                    self.cam.x as i32 - 100 + dx as i32,
+                    self.cam.y as i32 - 60 + dy as i32,
+                    1,
+                    worldgen::AIR,
+                );
             }
         }
         let t = Instant::now();
@@ -234,7 +249,11 @@ impl App {
         let mode = if self.sim.crowd.is_some() || self.sim.opt.particles > 0 {
             format!("crowd {} + particles {} (zoom 0.5)", self.sim.opt.crowd, self.sim.opt.particles)
         } else {
-            format!("{} flight 3000 tiles/s (zoom 8){}", if self.sim.opt.top_down { "top-down" } else { "side view" }, if self.sim.opt.dig { " + digging" } else { "" })
+            format!(
+                "{} flight 3000 tiles/s (zoom 8){}",
+                if self.sim.opt.top_down { "top-down" } else { "side view" },
+                if self.sim.opt.dig { " + digging" } else { "" }
+            )
         };
         let n = self.stats.frames.len();
         let secs: f64 = self.stats.frames.iter().sum::<f64>() / 1000.0;
@@ -269,9 +288,13 @@ impl ApplicationHandler for App {
         if self.gfx.is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("Forge Rust world check").with_inner_size(winit::dpi::LogicalSize::new(1600, 900));
+        let attrs = Window::default_attributes()
+            .with_title("Forge Rust world check")
+            .with_inner_size(winit::dpi::LogicalSize::new(1600, 900));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(event_loop.owned_display_handle())));
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+            event_loop.owned_display_handle(),
+        )));
         let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -310,7 +333,8 @@ impl ApplicationHandler for App {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
-        let mut renderer = Renderer::new(&device, &queue, format, self.sim.opt.crowd as usize, self.sim.opt.particles, self.sim.area);
+        let mut renderer =
+            Renderer::new(&device, &queue, format, self.sim.opt.crowd as usize, self.sim.opt.particles, self.sim.area);
         if self.sim.opt.top_down {
             renderer.clear = wgpu::Color { r: 0.07, g: 0.09, b: 0.10, a: 1.0 };
             renderer.tints[0] = [1.0; 4];
@@ -320,7 +344,15 @@ impl ApplicationHandler for App {
         let vis = self.sim.visible(config.width, config.height);
         self.sim.world.update(vis);
         self.sim.world.finish_loading();
-        self.gfx = Some(Gfx { window, surface, device, queue, config, renderer, adapter: format!("{} ({:?})", info.name, info.backend) });
+        self.gfx = Some(Gfx {
+            window,
+            surface,
+            device,
+            queue,
+            config,
+            renderer,
+            adapter: format!("{} ({:?})", info.name, info.backend),
+        });
         self.last = Instant::now();
         self.started = Instant::now();
     }
@@ -335,11 +367,13 @@ impl ApplicationHandler for App {
                     g.surface.configure(&g.device, &g.config);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => match event.physical_key {
-                PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
-                PhysicalKey::Code(KeyCode::KeyF) => self.sim.fly = !self.sim.fly,
-                _ => {}
-            },
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                match event.physical_key {
+                    PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::KeyF) => self.sim.fly = !self.sim.fly,
+                    _ => {}
+                }
+            }
             WindowEvent::MouseWheel { delta, .. } => {
                 let d = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
@@ -433,6 +467,14 @@ fn main() {
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let now = Instant::now();
-    let mut app = App { sim: Sim::new(opt), gfx: None, last: now, started: now, measuring: false, stats: Stats::new(), title_at: now };
+    let mut app = App {
+        sim: Sim::new(opt),
+        gfx: None,
+        last: now,
+        started: now,
+        measuring: false,
+        stats: Stats::new(),
+        title_at: now,
+    };
     event_loop.run_app(&mut app).expect("run");
 }

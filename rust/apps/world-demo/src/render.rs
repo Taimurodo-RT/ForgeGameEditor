@@ -1,9 +1,9 @@
 //! wgpu renderer: tile chunks (storage buffer of chunk slots, one instance per chunk, as TilemapRenderer in C++),
 //! creature sprites and GPU particles.
 
-use crate::worldgen::CHUNK;
-use crate::world::{Event, SLOT_TILES, World};
 use bytemuck::{Pod, Zeroable};
+use forge_world::world::{Event, SLOT_TILES, World};
+use forge_world::worldgen::CHUNK;
 use std::collections::HashMap;
 
 const UPLOAD_BUDGET: usize = 192; // chunks sent to the GPU per frame at most, as kUploadBudget
@@ -82,9 +82,23 @@ pub struct Renderer {
 fn atlas_pixels() -> Vec<Vec<u8>> {
     // Flat colours per tile id with a light speckle, like a real tile set at a glance.
     let colors: [[u8; 3]; 17] = [
-        [0, 0, 0], [86, 170, 60], [134, 96, 62], [120, 120, 128], [220, 200, 140], [190, 110, 60], [170, 160, 150],
-        [230, 190, 60], [90, 64, 44], [70, 70, 78], [60, 120, 220], [30, 70, 160], [110, 180, 80], [40, 110, 50],
-        [20, 80, 30], [130, 130, 130], [235, 240, 250],
+        [0, 0, 0],
+        [86, 170, 60],
+        [134, 96, 62],
+        [120, 120, 128],
+        [220, 200, 140],
+        [190, 110, 60],
+        [170, 160, 150],
+        [230, 190, 60],
+        [90, 64, 44],
+        [70, 70, 78],
+        [60, 120, 220],
+        [30, 70, 160],
+        [110, 180, 80],
+        [40, 110, 50],
+        [20, 80, 30],
+        [130, 130, 130],
+        [235, 240, 250],
     ];
     let size = ATLAS_CELL * ATLAS_CELLS;
     let mut base = vec![0u8; (size * size * 4) as usize];
@@ -92,7 +106,7 @@ fn atlas_pixels() -> Vec<Vec<u8>> {
         let (cx, cy) = (id % ATLAS_CELLS, id / ATLAS_CELLS);
         for y in 0..ATLAS_CELL {
             for x in 0..ATLAS_CELL {
-                let speck = (crate::worldgen::hash_tile(id as u64, x as i32, y as i32) % 7) as i32 - 3;
+                let speck = (forge_world::worldgen::hash_tile(id as u64, x as i32, y as i32) % 7) as i32 - 3;
                 let c = colors[id as usize];
                 let i = (((cy * ATLAS_CELL + y) * size + cx * ATLAS_CELL + x) * 4) as usize;
                 for k in 0..3 {
@@ -112,7 +126,9 @@ fn atlas_pixels() -> Vec<Vec<u8>> {
             for x in 0..n {
                 for k in 0..4 {
                     let p = |xx: u32, yy: u32| prev[((yy * s + xx) * 4 + k) as usize] as u32;
-                    next[((y * n + x) * 4 + k) as usize] = ((p(2 * x, 2 * y) + p(2 * x + 1, 2 * y) + p(2 * x, 2 * y + 1) + p(2 * x + 1, 2 * y + 1)) / 4) as u8;
+                    next[((y * n + x) * 4 + k) as usize] =
+                        ((p(2 * x, 2 * y) + p(2 * x + 1, 2 * y) + p(2 * x, 2 * y + 1) + p(2 * x + 1, 2 * y + 1)) / 4)
+                            as u8;
                 }
             }
         }
@@ -123,13 +139,21 @@ fn atlas_pixels() -> Vec<Vec<u8>> {
 }
 
 impl Renderer {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat, sprite_cap: usize, particles: u32, area: [f32; 4]) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        sprite_cap: usize,
+        particles: u32,
+        area: [f32; 4],
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("shaders"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
         });
         let slot_bytes = (SLOT_TILES * 2) as u64;
-        let max_slots = (MAX_TILE_BYTES / slot_bytes).min(device.limits().max_storage_buffer_binding_size as u64 / slot_bytes) as u32;
+        let max_slots =
+            (MAX_TILE_BYTES / slot_bytes).min(device.limits().max_storage_buffer_binding_size / slot_bytes) as u32;
         let tiles_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tiles"),
             size: max_slots as u64 * slot_bytes,
@@ -194,7 +218,12 @@ impl Renderer {
         for (level, data) in levels.iter().enumerate() {
             let s = (size >> level).max(1);
             queue.write_texture(
-                wgpu::TexelCopyTextureInfo { texture: &atlas, mip_level: level as u32, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &atlas,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
                 data,
                 wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * s), rows_per_image: Some(s) },
                 wgpu::Extent3d { width: s, height: s, depth_or_array_layers: 1 },
@@ -210,8 +239,16 @@ impl Renderer {
 
         let vis = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE;
         let entry = |binding, ty| wgpu::BindGroupLayoutEntry { binding, visibility: vis, ty, count: None };
-        let uniform = wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None };
-        let storage = |read_only| wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only }, has_dynamic_offset: false, min_binding_size: None };
+        let uniform = wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        };
+        let storage = |read_only| wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        };
         let draw_vis = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
         let main_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("main"),
@@ -220,17 +257,39 @@ impl Renderer {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: draw_vis,
-                    ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry { binding: 2, visibility: draw_vis, ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: draw_vis,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
                 wgpu::BindGroupLayoutEntry { binding: 3, visibility: draw_vis, ty: storage(true), count: None },
-                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::VERTEX, ty: storage(true), count: None },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: storage(true),
+                    count: None,
+                },
             ],
         });
         let compute_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("particles rw"),
-            entries: &[entry(0, uniform), wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: storage(false), count: None }],
+            entries: &[
+                entry(0, uniform),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: storage(false),
+                    count: None,
+                },
+            ],
         });
         let layer_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("layer"),
@@ -283,13 +342,27 @@ impl Renderer {
             bind_group_layouts: &[Some(&main_layout)],
             immediate_size: 0,
         });
-        let blend = Some(wgpu::ColorTargetState { format, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL });
+        let blend = Some(wgpu::ColorTargetState {
+            format,
+            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
         let pipe = |layout: &wgpu::PipelineLayout, vs: &str, fs: &str, buffers: &[Option<wgpu::VertexBufferLayout>]| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(vs),
                 layout: Some(layout),
-                vertex: wgpu::VertexState { module: &shader, entry_point: Some(vs), buffers, compilation_options: Default::default() },
-                fragment: Some(wgpu::FragmentState { module: &shader, entry_point: Some(fs), targets: &[blend.clone()], compilation_options: Default::default() }),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(vs),
+                    buffers,
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    targets: std::slice::from_ref(&blend),
+                    compilation_options: Default::default(),
+                }),
                 primitive: wgpu::PrimitiveState::default(),
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
@@ -367,10 +440,10 @@ impl Renderer {
     /// Frees GPU slots of chunks that left memory. Call before the world's events are cleared.
     pub fn on_world_events(&mut self, world: &World) {
         for e in &world.events {
-            if let Event::Unloading(c) = e {
-                if let Some(s) = self.slots.remove(c) {
-                    self.free.push(s.index);
-                }
+            if let Event::Unloading(c) = e
+                && let Some(s) = self.slots.remove(c)
+            {
+                self.free.push(s.index);
             }
         }
     }
@@ -383,7 +456,12 @@ impl Renderer {
             i
         } else {
             let frame = self.frame;
-            let oldest = self.slots.iter().filter(|(_, s)| s.last_seen < frame).min_by_key(|(_, s)| s.last_seen).map(|(c, _)| *c)?;
+            let oldest = self
+                .slots
+                .iter()
+                .filter(|(_, s)| s.last_seen < frame)
+                .min_by_key(|(_, s)| s.last_seen)
+                .map(|(c, _)| *c)?;
             self.slots.remove(&oldest).unwrap().index
         };
         self.slots.insert(coord, Slot { index, revision: u32::MAX, last_seen: 0 });
@@ -391,7 +469,17 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare(&mut self, queue: &wgpu::Queue, world: &World, cam: &Camera, width: u32, height: u32, sprites: &[[u32; 3]], dt: f32, area: [f32; 4]) {
+    pub fn prepare(
+        &mut self,
+        queue: &wgpu::Queue,
+        world: &World,
+        cam: &Camera,
+        width: u32,
+        height: u32,
+        sprites: &[[u32; 3]],
+        dt: f32,
+        area: [f32; 4],
+    ) {
         self.frame += 1;
         self.uploads = 0;
         self.instances.clear();
@@ -414,7 +502,11 @@ impl Renderer {
                             continue; // never sent: nothing to draw yet
                         }
                     } else {
-                        queue.write_buffer(&self.tiles_buf, index as u64 * slot_bytes, bytemuck::cast_slice(&chunk.tiles));
+                        queue.write_buffer(
+                            &self.tiles_buf,
+                            index as u64 * slot_bytes,
+                            bytemuck::cast_slice(&chunk.tiles),
+                        );
                         slot.revision = chunk.revision;
                         self.uploads += 1;
                     }
@@ -459,7 +551,8 @@ impl Renderer {
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
         if self.particles > 0 {
-            let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("particles"), timestamp_writes: None });
+            let mut cp = encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("particles"), timestamp_writes: None });
             cp.set_pipeline(&self.particle_cs);
             cp.set_bind_group(0, &self.particle_rw_group, &[]);
             cp.dispatch_workgroups(self.particles.div_ceil(256), 1, 1);

@@ -1,0 +1,25 @@
+# Chunks made by the sample generators (engine/world/src/generators.cpp) and the FNV-1a 64 hash of their tiles
+# (every layer in order, each tile as two bytes, low first). Both the C++ tests (tests/test_world.cpp) and the
+# Rust tests (rust/crates/forge-world/tests/parity.rs) check these, so the two engines make the same worlds.
+# generator seed surface_y chunk_x chunk_y layers hash
+side 1 0 0 -3 2 9c1bda7f8c872325
+side 1 0 0 0 2 e07b2dcecc68042b
+side 1 0 5 1 2 a281eff65ca7ac4e
+side 1 0 -7 2 2 0f00753ae904a1b3
+side 1 0 100 10 2 808f4083a9cc8688
+side 1 0 -3000 40 2 9b51567ee0c45acd
+side 1 0 12 300 2 d2bebe4443be437a
+side 1 0 -40 -2 3 de9c0b54d977dfd6
+side 20261030 -500 333 -6 2 b900a2c4c6e1cc7b
+side 18446744073709551615 0 -1 1 2 583f2e9a8308a4a6
+side 9223372036854775807 4000 2047 70 2 e8e1da888eb104e6
+top 7 0 0 0 2 8cf5b7b67b9cb34b
+top 7 0 -1 -1 2 178fff3befa7d8d4
+top 7 0 500 -200 2 07ad8f90cc483fb2
+top 7 0 -512 511 2 28c9393ab6558aea
+top 7 0 31 7 2 d018117dd6b47deb
+top 7 0 3 4 1 e814ff72bf85e325
+top 7 0 -9 8 3 effcfb30cef6f44d
+top 18446744073709551611 0 1000 -1000 2 af3ae230cc63685d
+top 424242 0 -255 -255 2 fea70d1483c87f25
+empty 0 0 3 -3 2 9c1bda7f8c872325

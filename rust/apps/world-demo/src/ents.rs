@@ -1,8 +1,8 @@
 //! The crowd: N creatures in bevy_ecs that wander over the top-down world, turn now and then, and do not walk into
 //! water or rocks (tiles looked up in a passability grid built from the generator). Systems run on all cores.
 
-use crate::worldgen::{self, Generator};
 use bevy_ecs::prelude::*;
+use forge_world::worldgen::{self, Generator};
 
 pub const AREA: i32 = 4096; // the creatures live in AREA × AREA tiles around the centre of the world
 
@@ -107,9 +107,13 @@ impl Crowd {
                 .into_par_iter()
                 .map(|cy| {
                     let mut row = vec![0u64; (AREA * worldgen::CHUNK) as usize / 64];
-                    let mut tiles = vec![0u16; crate::world::SLOT_TILES];
+                    let mut tiles = vec![0u16; forge_world::world::SLOT_TILES];
                     for cx in 0..per_side {
-                        generator.generate(origin[0] / worldgen::CHUNK + cx, origin[1] / worldgen::CHUNK + cy, &mut tiles);
+                        generator.generate(
+                            origin[0] / worldgen::CHUNK + cx,
+                            origin[1] / worldgen::CHUNK + cy,
+                            &mut tiles,
+                        );
                         for ly in 0..worldgen::CHUNK {
                             for lx in 0..worldgen::CHUNK {
                                 let i = (ly * worldgen::CHUNK + lx) as usize;
@@ -155,12 +159,18 @@ impl Crowd {
         self.world.resource_mut::<Tick>().dt = dt;
         if std::env::var("CROWD_PROFILE").is_ok() {
             let t = std::time::Instant::now();
-            let mut a = Schedule::default(); a.add_systems(think);
-            let mut b = Schedule::default(); b.add_systems(walk);
-            let mut c = Schedule::default(); c.add_systems(gather);
-            a.run(&mut self.world); let t1 = t.elapsed();
-            b.run(&mut self.world); let t2 = t.elapsed();
-            c.run(&mut self.world); let t3 = t.elapsed();
+            let mut a = Schedule::default();
+            a.add_systems(think);
+            let mut b = Schedule::default();
+            b.add_systems(walk);
+            let mut c = Schedule::default();
+            c.add_systems(gather);
+            a.run(&mut self.world);
+            let t1 = t.elapsed();
+            b.run(&mut self.world);
+            let t2 = t.elapsed();
+            c.run(&mut self.world);
+            let t3 = t.elapsed();
             eprintln!("think {:?} walk {:?} gather {:?}", t1, t2 - t1, t3 - t2);
             return;
         }

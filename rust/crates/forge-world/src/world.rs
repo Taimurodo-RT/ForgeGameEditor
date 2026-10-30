@@ -30,6 +30,9 @@ impl Rect {
     }
 }
 
+/// A finished chunk on its way back from a worker thread.
+type Generated = ((i32, i32), Box<[u16]>);
+
 pub struct Chunk {
     pub tiles: Box<[u16]>,
     pub revision: u32,
@@ -51,8 +54,8 @@ pub struct World {
     max_in_flight: usize,
     last_keep: Option<Rect>,
     unload_pending: bool,
-    tx: Sender<((i32, i32), Box<[u16]>)>,
-    rx: Receiver<((i32, i32), Box<[u16]>)>,
+    tx: Sender<Generated>,
+    rx: Receiver<Generated>,
     pub events: Vec<Event>,
     pub generated: u64,
 }
@@ -85,11 +88,11 @@ impl World {
         while let Ok((coord, tiles)) = self.rx.try_recv() {
             self.loading -= 1;
             self.generated += 1;
-            if let Some(keep) = self.last_keep {
-                if !keep.contains(coord.0, coord.1) {
-                    self.chunks.remove(&coord);
-                    continue;
-                }
+            if let Some(keep) = self.last_keep
+                && !keep.contains(coord.0, coord.1)
+            {
+                self.chunks.remove(&coord);
+                continue;
             }
             if let Some(c) = self.chunks.get_mut(&coord) {
                 c.tiles = tiles;

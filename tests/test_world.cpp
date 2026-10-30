@@ -5,11 +5,13 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -83,6 +85,40 @@ TEST_CASE("generators are deterministic") {
     u32 solid = 0;
     for (u32 i = 0; i < kChunkTiles; ++i) solid += a[kChunkTiles + i] != TileAir;
     CHECK(solid > kChunkTiles / 2);
+}
+
+// The Rust port (rust/crates/forge-world) checks the same file: both engines must make the same tiles.
+TEST_CASE("generators make the chunks listed in tests/data/world_chunks.txt") {
+    std::ifstream file(std::filesystem::path(FORGE_SOURCE_DIR) / "tests/data/world_chunks.txt");
+    REQUIRE(file);
+    std::string line;
+    int checked = 0;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream in(line);
+        std::string kind, expected;
+        u64 seed = 0;
+        i32 surface = 0, cx = 0, cy = 0;
+        u32 layers = 0;
+        in >> kind >> seed >> surface >> cx >> cy >> layers >> expected;
+        REQUIRE(layers >= 1);
+        std::vector<TileId> tiles(static_cast<usize>(layers) * kChunkTiles, 0xffff);
+        const ChunkTiles out{tiles.data(), layers};
+        if (kind == "side") SideViewGenerator(seed, surface).generate({cx, cy}, out);
+        else if (kind == "top") TopDownGenerator(seed).generate({cx, cy}, out);
+        else EmptyGenerator().generate({cx, cy}, out);
+        u64 hash = 0xcbf29ce484222325ull;
+        for (TileId t : tiles) {
+            hash = (hash ^ (t & 0xffu)) * 0x100000001b3ull;
+            hash = (hash ^ (t >> 8)) * 0x100000001b3ull;
+        }
+        char text[17];
+        std::snprintf(text, sizeof text, "%016llx", static_cast<unsigned long long>(hash));
+        INFO(line);
+        CHECK(text == expected);
+        ++checked;
+    }
+    CHECK(checked >= 20);
 }
 
 TEST_CASE("world streams chunks around the focus") {
