@@ -35,6 +35,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -93,6 +94,10 @@ public:
     // What the player does in this game, by name, with the module's default keys (the tab «Ввод»). The shell adds
     // its own (pause, journal, quicksave, quickload) after them and answers for all of them (Shell::input()).
     virtual std::vector<input::ActionDef> actions() const { return {}; }
+    // How many times the game's logic has run so far (its ticks; also a frame in which it will not run again, the game
+    // over), for a scene's end (part 6г4): the last frame of a scene stays till the logic has heard its end, so a scene
+    // it begins then comes in over it. None: the logic runs every frame.
+    virtual std::optional<u64> logic_runs() const { return std::nullopt; }
     virtual void shutdown() = 0;
 };
 
@@ -263,6 +268,10 @@ private:
     SDL_GPUDevice* device_ = nullptr;
     SDL_Window* window_ = nullptr;
     SDL_GPUTextureFormat format_{};
+    // Part 6г4: the world of a frame whose scene shows the game's frame in a transition, drawn here (the window's frame
+    // cannot be read); made at the window's size when first needed.
+    SDL_GPUTexture* world_ = nullptr;
+    u32 world_w_ = 0, world_h_ = 0;
     std::unique_ptr<ui::Ui> ui_;
     Rml::Context* context_ = nullptr;
     std::unique_ptr<Model> model_;

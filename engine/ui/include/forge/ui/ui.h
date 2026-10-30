@@ -139,6 +139,18 @@ public:
     // Forgets a picture made by set_image (after no element shows it).
     void drop_image(const std::string& name);
 
+    // Part 6г4 of docs/models/сцены-модель.md. The world drawn this frame, in a texture of the window's size the app
+    // drew it into (the window's frame cannot be read): a <backdrop name="…"/> puts what the UI drew up to it over this
+    // in /gpu/<name>, which the elements after it show; null (the default): black there.
+    void set_world(SDL_GPUTexture* world);
+    // A picture made by code straight into a texture (a scene's mask, made again as it changes), shown as
+    // /gpu/<name>: RGBA with alpha premultiplied, rows top to bottom, w × h. A changed picture keeps its name (it goes
+    // to the GPU with the next frame). drop_gpu_image forgets it, and a backdrop's picture too.
+    void set_gpu_image(const std::string& name, const u8* rgba, u32 width, u32 height);
+    void drop_gpu_image(const std::string& name);
+    // How many such pictures and backdrops' snapshots it keeps on the GPU.
+    usize gpu_images() const;
+
     const Tokens& tokens() const;
     const std::filesystem::path& root() const;
     const UiStats& stats() const;

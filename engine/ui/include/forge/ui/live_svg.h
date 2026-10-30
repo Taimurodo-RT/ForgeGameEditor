@@ -151,7 +151,18 @@ public:
     // The picture at `path` (the path an element showing it has) and its text; false with why when it is not SVG.
     bool load(std::string path, std::string text, std::string& why);
     // Its top level in the order it draws it, in the pose (its `only` and view are not looked at); empty before load.
-    const std::vector<SvgPlace>& place(const SvgPose& pose);
+    // `areas`: the parts whose areas area() then gives.
+    const std::vector<SvgPlace>& place(const SvgPose& pose, const std::vector<std::string>& areas = {});
+    // Part 6г4 of docs/models/сцены-модель.md: the area of a part the last place() asked for, as the pose had it: each of
+    // its shapes opaque white as a mask's copy of it (its fill when it has one or no stroke, its stroke when it has one;
+    // hidden or faded, whole: the tab's Rig::area), drawn w × h through m (the picture's units to the pixels). A byte of
+    // cover for each pixel, rows top to bottom; false (none) when the picture has no such part or it has no shapes.
+    bool area(std::string_view id, const vector::MotionMatrix& m, u32 w, u32 h, std::vector<u8>& cover) const;
+    // Those shapes as SVG in the picture's units ("" none): what area() draws, which changes when its picture does.
+    const std::string& area_shapes(std::string_view id) const;
+    // A box in the picture's units the area is inside (round its outlines' control points and its strokes' miters):
+    // false for none.
+    bool area_box(std::string_view id, f64& x, f64& y, f64& w, f64& h) const;
     // The pose a run of its top level draws (`only` the elements `keys` names): the parts inside them and the parts
     // their links and masks name, and theirs; the copies and the order whole, as every run has them.
     SvgPose run_pose(const SvgPose& pose, std::vector<std::string> keys);

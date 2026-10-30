@@ -57,6 +57,7 @@ struct GpuRenderer::Texture {
     SDL_GPUTexture* texture = nullptr;
     u32 width = 0, height = 0;
     bool external = false; // owned by the app (set_external_texture)
+    std::string name;      // external: its /gpu/ name, which gives the texture when drawn
 };
 
 namespace {
@@ -240,6 +241,13 @@ void GpuRenderer::shutdown() {
     }
     for (Upload& u : uploads_) (void)u; // buffers were created by geometries that RmlUi releases itself
     uploads_.clear();
+    for (auto& [name, o] : owned_) {
+        SDL_ReleaseGPUTexture(device_, o.texture);
+        external_.erase(name);
+    }
+    owned_.clear();
+    backdrops_.clear();
+    world_ = nullptr;
     destroy_targets();
     for (TargetSet& set : spare_targets_) release_targets(set);
     spare_targets_.clear();
@@ -620,6 +628,89 @@ void GpuRenderer::set_external_texture(const std::string& name, SDL_GPUTexture* 
 
 void GpuRenderer::drop_external_texture(const std::string& name) { external_.erase(name); }
 
+namespace {
+GpuRenderer* g_recording = nullptr;
+} // namespace
+
+GpuRenderer* GpuRenderer::recording() { return g_recording; }
+
+SDL_GPUTexture* GpuRenderer::texture_now(const Texture& texture) const {
+    if (!texture.external || texture.name.empty()) return texture.texture;
+    const auto it = external_.find(texture.name);
+    return it != external_.end() ? it->second.texture : nullptr;
+}
+
+SDL_GPUTexture* GpuRenderer::own_texture(const std::string& name, u32 width, u32 height, bool target) {
+    width = std::max(width, 1u);
+    height = std::max(height, 1u);
+    Owned& o = owned_[name];
+    if (o.texture && o.width == width && o.height == height && o.target == target) return o.texture;
+    if (o.texture) {
+        for (Upload& u : uploads_)
+            if (u.image == o.texture) u.image = nullptr;
+        SDL_ReleaseGPUTexture(device_, o.texture); // SDL keeps it while the GPU still draws from it
+    }
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = kColorFormat;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | (target ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    o = {SDL_CreateGPUTexture(device_, &info), width, height, target};
+    if (!o.texture) {
+        FORGE_ERROR("ui: texture «%s» %ux%u: %s", name.c_str(), width, height, SDL_GetError());
+        owned_.erase(name);
+        external_.erase(name);
+        return nullptr;
+    }
+    external_[name] = {o.texture, width, height};
+    return o.texture;
+}
+
+void GpuRenderer::set_image(const std::string& name, const u8* rgba, u32 width, u32 height) {
+    if (!device_ || name.empty() || !rgba || width == 0 || height == 0) return;
+    SDL_GPUTexture* t = own_texture(name, width, height, false);
+    if (!t) return;
+    // A newer picture of the same texture waiting replaces the older one.
+    for (Upload& u : uploads_)
+        if (u.image == t) u.image = nullptr;
+    const usize size = static_cast<usize>(width) * height * 4;
+    const u32 offset = static_cast<u32>((staging_.size() + 511) & ~size_t(511));
+    staging_.resize(offset + size);
+    std::memcpy(staging_.data() + offset, rgba, size);
+    Upload u;
+    u.offset = offset;
+    u.size = static_cast<u32>(size);
+    u.image = t;
+    u.image_w = width;
+    u.image_h = height;
+    uploads_.push_back(u);
+}
+
+void GpuRenderer::drop_image(const std::string& name) {
+    const auto it = owned_.find(name);
+    if (it == owned_.end()) return;
+    for (Upload& u : uploads_)
+        if (u.image == it->second.texture) u.image = nullptr;
+    for (SDL_GPUTexture*& b : backdrops_)
+        if (b == it->second.texture) b = nullptr;
+    SDL_ReleaseGPUTexture(device_, it->second.texture);
+    owned_.erase(it);
+    external_.erase(name);
+}
+
+void GpuRenderer::backdrop(const std::string& name) {
+    if (!recording_ || name.empty()) return;
+    SDL_GPUTexture* t = own_texture(name, width_, height_, true);
+    if (!t) return;
+    Op op{OpType::Backdrop};
+    op.index = static_cast<u32>(backdrops_.size());
+    backdrops_.push_back(t);
+    ops_.push_back(op);
+}
+
 void GpuRenderer::clear_texture(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* texture) {
     SDL_GPUColorTargetInfo color{};
     color.texture = texture;
@@ -635,10 +726,11 @@ Rml::TextureHandle GpuRenderer::LoadTexture(Rml::Vector2i& dimensions, const Rml
     {
         const size_t at = source.find("gpu/");
         if (at == 0 || (at == 1 && source[0] == '/')) {
-            auto it = external_.find(source.substr(at + 4));
-            if (it == external_.end()) return {};
-            Texture* texture = new Texture{it->second.texture, it->second.width, it->second.height, true};
-            dimensions = {static_cast<int>(it->second.width), static_cast<int>(it->second.height)};
+            // By its name: the texture the name has when drawn (none yet: nothing drawn).
+            Texture* texture = new Texture{nullptr, 1, 1, true, source.substr(at + 4)};
+            if (const auto it = external_.find(texture->name); it != external_.end())
+                texture->width = it->second.width, texture->height = it->second.height;
+            dimensions = {static_cast<int>(texture->width), static_cast<int>(texture->height)};
             return reinterpret_cast<Rml::TextureHandle>(texture);
         }
     }
@@ -758,7 +850,9 @@ void GpuRenderer::begin_frame(u32 width, u32 height) {
     depth.SetColumn(3, Rml::Vector4f(0, 0, 0.5f, 1));
     transforms_.push_back(depth * projection);
     layer_depth_ = 0;
+    backdrops_.clear();
     recording_ = true;
+    g_recording = this;
 }
 
 void GpuRenderer::EnableScissorRegion(bool enable) {
@@ -1001,25 +1095,28 @@ void GpuRenderer::upload_pending(SDL_GPUCommandBuffer* cmd) {
     SDL_UnmapGPUTransferBuffer(device_, transfer_);
 
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    u32 sent = 0; // not those dropped or replaced by a newer one
     for (const Upload& u : uploads_) {
         if (u.buffer) {
             SDL_GPUTransferBufferLocation src{transfer_, u.offset};
             SDL_GPUBufferRegion dst{u.buffer, u.buffer_offset, u.size};
             SDL_UploadToGPUBuffer(copy, &src, &dst, false);
-        } else if (u.texture) {
+            ++sent;
+        } else if (u.texture || u.image) {
             SDL_GPUTextureTransferInfo src{};
             src.transfer_buffer = transfer_;
             src.offset = u.offset;
             SDL_GPUTextureRegion dst{};
-            dst.texture = u.texture->texture;
-            dst.w = u.texture->width;
-            dst.h = u.texture->height;
+            dst.texture = u.texture ? u.texture->texture : u.image;
+            dst.w = u.texture ? u.texture->width : u.image_w;
+            dst.h = u.texture ? u.texture->height : u.image_h;
             dst.d = 1;
             SDL_UploadToGPUTexture(copy, &src, &dst, false);
+            ++sent;
         }
     }
     SDL_EndGPUCopyPass(copy);
-    stats_.uploads = static_cast<u32>(uploads_.size());
+    stats_.uploads = sent;
     uploads_.clear();
     staging_.clear();
 }
@@ -1051,6 +1148,7 @@ void GpuRenderer::flush_releases() {
 void GpuRenderer::end_frame(SDL_GPUCommandBuffer* cmd, SDL_GPUTexture* target, SDL_GPUTextureFormat target_format) {
     FORGE_ZONE();
     recording_ = false;
+    if (g_recording == this) g_recording = nullptr;
     stats_.draws = stats_.passes = stats_.uploads = 0;
     if (cmd && target && ensure_targets(width_, height_)) {
         upload_pending(cmd);
@@ -1189,7 +1287,7 @@ void GpuRenderer::fullscreen(const FullscreenDraw& d) {
     end_pass();
     SDL_GPUColorTargetInfo color{};
     color.texture = d.target;
-    color.load_op = SDL_GPU_LOADOP_LOAD;
+    color.load_op = d.clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
     color.store_op = SDL_GPU_STOREOP_STORE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd_, &color, 1, nullptr);
     ++stats_.passes;
@@ -1221,6 +1319,31 @@ void GpuRenderer::blit(SDL_GPUTexture* source, Rml::Rectanglei from, SDL_GPUText
     info.filter = SDL_GPU_FILTER_LINEAR;
     SDL_BlitGPUTexture(cmd_, &info);
     ++stats_.passes;
+}
+
+// The frame so far into a backdrop's texture: black, the world over it, the context's base layer as drawn up to here
+// over that (what it drew in a layer of its own is not in it yet).
+void GpuRenderer::render_backdrop(SDL_GPUTexture* into) {
+    resolve_layer(0, postprocess_[0]);
+    SDL_GPUColorTargetInfo color{};
+    color.texture = into;
+    color.load_op = SDL_GPU_LOADOP_CLEAR;
+    color.store_op = SDL_GPU_STOREOP_STORE;
+    color.clear_color = {0, 0, 0, 1};
+    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd_, &color, 1, nullptr));
+    ++stats_.passes;
+    const Rml::Rectanglei full = Rml::Rectanglei::FromSize({static_cast<int>(width_), static_cast<int>(height_)});
+    for (SDL_GPUTexture* layer : {world_, postprocess_[0]}) {
+        if (!layer) continue;
+        FullscreenDraw d{into, copy_blend_, layer};
+        d.viewport = full;
+        d.scissor = full;
+        d.vertex_uniforms = &kQuadIdentity;
+        d.vertex_uniforms_size = sizeof(kQuadIdentity);
+        d.fragment_uniforms = &kTintOne;
+        d.fragment_uniforms_size = sizeof(kTintOne);
+        fullscreen(d);
+    }
 }
 
 void GpuRenderer::copy_texture(SDL_GPUTexture* source, Rml::Rectanglei from, SDL_GPUTexture* destination) {
@@ -1334,6 +1457,7 @@ void GpuRenderer::render_filters(u32 first, u32 count) {
         FullscreenDraw d{postprocess_[1], copy_, postprocess_[0]};
         d.viewport = full;
         d.scissor = window;
+        d.clear = true;
         d.vertex_uniforms = &kQuadIdentity;
         d.vertex_uniforms_size = sizeof(kQuadIdentity);
         switch (f->type) {
@@ -1444,8 +1568,9 @@ void GpuRenderer::replay(SDL_GPUCommandBuffer* cmd) {
     for (const Op& op : ops_) {
         switch (op.type) {
         case OpType::Draw: {
+            SDL_GPUTexture* texture = op.texture ? texture_now(*op.texture) : white_->texture;
+            if (!texture) break; // an app's texture not made yet
             begin_layer_pass(depth);
-            SDL_GPUTexture* texture = op.texture ? op.texture->texture : white_->texture;
             draw_geometry(*op.geometry, op.translation, texture,
                           geometry_[static_cast<int>(clip_enabled_ ? Stencil::Test : Stencil::None)]);
             break;
@@ -1517,6 +1642,9 @@ void GpuRenderer::replay(SDL_GPUCommandBuffer* cmd) {
                          Rml::Rectanglei::FromSize({static_cast<int>(width_), static_cast<int>(height_)}), mask_);
             break;
         }
+        case OpType::Backdrop:
+            if (SDL_GPUTexture* into = backdrops_[op.index]) render_backdrop(into);
+            break;
         }
     }
     end_pass();
