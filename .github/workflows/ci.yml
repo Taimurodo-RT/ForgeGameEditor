@@ -23,12 +23,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
+      - name: libudev for the gamepads (gilrs), Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - name: Formatting
         run: cargo fmt --all --check
       - name: Clippy, warnings are errors
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Tests (the generators make the same chunks as C++, tests/data/world_chunks.txt)
-        run: cargo test --workspace --locked
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Tests (the same chunks, saves and binds as C++, tests/data)
+        run: cargo test --workspace --all-features --locked
       - name: World demo, 3 s headless (streaming and the crowd, no window)
         run: cargo run --release --locked -p forge-world-demo -- --headless 3 --crowd 20000
 
