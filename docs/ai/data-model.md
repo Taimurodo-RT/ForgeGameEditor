@@ -82,7 +82,7 @@
 | `think_interval` | `Minutes`                                                                                    | да    | Период размышлений, по умолчанию `10`       |
 | `day_parts`      | список `{id: LocalId, start: TimeOfDay}`                                                     | да    | Построен по возрастанию `start`             |
 | `calendar`       | `{seasons: список LocalId, days_per_season: Int}`                                            | да    | `days_per_season` ≥ 1                       |
-| `buckets`        | список `{id: LocalId, threshold: Unit, interrupt: Enum<now, step_boundary, walking, never>}` | да    | Ровно 5 групп в порядке силы                |
+| `buckets`        | список `{id: LocalId, threshold: Unit, interrupt: Enum<now, step_boundary, walking, never>}` | да    | От 1 до 5 групп в порядке силы               |
 | `tags`           | список `Tag`                                                                                 | да    | Все допустимые теги проекта                 |
 | `languages`      | список кодов                                                                                 | да    | Первый язык основной, по умолчанию `["ru"]` |
 | `inertia`        | `Real`                                                                                       | нет   | Множитель инерции в S, `1.25`, от 1 до 2    |
@@ -159,7 +159,7 @@
 
 - `trait`: `modifiers` — список `{target: Ref<need|action|stimulus>, field: Enum<decay, weight, sensitivity>, mul: Real}`.
 
-- `archetype`: `traits` (список `Ref<trait>`), `category_weights` (категория → `Real` от 0 до 4), `schedule` (`Ref<schedule>`), `curves` (подмена кривых: `Ref<curve>` → `Ref<curve>`).
+- `archetype`: `mode` (`Enum<life, choice>`, по умолчанию `life`), `think_ticks` (`Int` ≥ 1, только для `choice`), `traits` (список `Ref<trait>`), `category_weights` (категория → `Real` от 0 до 4), `schedule` (`Ref<schedule>`), `curves` (подмена кривых: `Ref<curve>` → `Ref<curve>`).
 
 - `stimulus`: `channels` (список каналов манифеста), `radius` (`Tiles`), `duration` (`Minutes`), `interrupts` (`Bool`), `strength` (`Unit`).
 
@@ -261,3 +261,4 @@
 - Данные лежат в папке проекта Forge, в `game/villagers/`.
 - B и S считаются в Q32.32; одно правило округления при сборке пакета; ступеньки и кривые по точкам без таблиц.
 - В `project.json` добавлены `stay_ratio`, `memory_limit` и `far_think_minutes`.
+- Групп приоритета от 1 до 5 (было ровно 5). У архетипа поле `mode`: `life` (по умолчанию) или `choice` (уровень 2, `levels.md`), и `think_ticks` для режима «Выбор».
