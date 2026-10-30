@@ -99,6 +99,7 @@
 | `stay_ratio`     | `Unit`                                                                                       | нет   | Запас на пороге группы для текущего действия, `0.8` |
 | `memory_limit`   | `Int`                                                                                        | нет   | Записей памяти на жителя, `64`, от 8 до 1024 |
 | `far_think_minutes` | `Minutes`                                                                                 | нет   | Как часто думают жители в дальних кусках мира, `60` |
+| `move_speed` | `Real` > 0 | нет | Скорость ходьбы по умолчанию, клеток в секунду времени мира (как у всех тел Forge, от длины игровых суток не зависит), `3` |
 
 ### need
 
@@ -176,7 +177,7 @@
 
 - `trait`: `modifiers` — список `{target: Ref<need|action|stimulus>, field: Enum<decay, weight, sensitivity>, mul: Real}`.
 
-- `archetype`: `mode` (`Enum<life, choice>`, по умолчанию `life`), `think_ticks` (`Int` ≥ 1, только для `choice`), `traits` (список `Ref<trait>`), `category_weights` (категория → `Real` от 0 до 4), `schedule` (`Ref<schedule>`), `curves` (подмена кривых: `Ref<curve>` → `Ref<curve>`).
+- `archetype`: `mode` (`Enum<life, choice>`, по умолчанию `life`), `think_ticks` (`Int` ≥ 1, только для `choice`), `move_speed` (`Real` > 0, клеток в секунду времени мира; без поля берётся из `project.json`), `traits` (список `Ref<trait>`), `category_weights` (категория → `Real` от 0 до 4), `schedule` (`Ref<schedule>`), `curves` (подмена кривых: `Ref<curve>` → `Ref<curve>`).
 
 - `stimulus`: `channels` (список каналов манифеста), `radius` (`Tiles`), `duration` (`Minutes`), `interrupts` (`Bool`), `strength` (`Unit`).
 
@@ -205,7 +206,7 @@
 | Что | Содержимое |
 |---|---|
 | Входы | `{id, type: PortType, args}`: например `light_level`, `stock_shortage` |
-| Шаги | `{id, version: semver, args: схема, result_reasons: список}`: `goto_slot`, `take_item`, `play_animation`, `say` |
+| Шаги | `{id, version: semver, args: схема, result_reasons: список}`: `goto_slot`, `take_item`, `play_animation`, `say`. У `goto_slot` необязательный аргумент `speed_mul` (`Unit` от 0,25 до 4, по умолчанию 1: бегство, бег на праздник) |
 | Каналы восприятия | `sight`, `hearing`, `rumor` и каналы модулей |
 | Логические имена | Анимации (из сцен Motif), звуки и эффекты, которые могут понадобиться шагам |
 
@@ -280,4 +281,5 @@
 - B и S считаются в Q32.32; одно правило округления при сборке пакета; ступеньки и кривые по точкам без таблиц.
 - По решениям Романа от 30.10.2026 (разбор правил проектом ИИ): правила счёта для всех операций, операции условий и эффектов разделены на модули `rules` и `village`, ошибка `E_OP_LEVEL`, `OwnerToken` у экземпляра действия, запрет `preserve_order`.
 - В `project.json` добавлены `stay_ratio`, `memory_limit` и `far_think_minutes`.
+- Скорость ходьбы (решение Романа 30.10.2026): `move_speed` в архетипе и `project.json`, клеток в секунду времени мира; `speed_mul` у `goto_slot`. Тестовый исполнитель шагов и дальние куски считают время шага одинаково: октильное расстояние между клетками (диагональ 1,41421 константой Q16.16), делённое на скорость за такт ядра (`move_speed × speed_mul / ticks_per_second`), с округлением вверх до целого такта, не меньше 1. Игра двигает жителя с той же скоростью, её путь может быть длиннее; точное совпадение требуется только между прогоном без графики и тестовым исполнителем. Множитель скорости у черты (`move_speed_mul`) — позже, с новой версией схемы.
 - Групп приоритета от 1 до 5 (было ровно 5). У архетипа поле `mode`: `life` (по умолчанию) или `choice` (уровень 2, `levels.md`), и `think_ticks` для режима «Выбор».
