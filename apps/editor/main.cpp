@@ -2118,7 +2118,10 @@ struct Options {
     // scene coming in by «растворение» made, both given, their frames as the game's references, «Показать сцену» of one
     // before the other, played by the scene project at 144 Hz and on 1920 × 1080, by "pixel-scene-g"; part 6г5а, clips changing
     // smoothly: a blend refused on its line, made, another from rest, their wedges and words, «Через камеру» in them, given
-    // as version 2, played by the scene project at 144 Hz, by "pixel-scene-h"); "input"
+    // as version 2, played by the scene project at 144 Hz, by "pixel-scene-h"; part 6г5б, a scene behind a screen: a main menu
+    // with «Сцена 2» behind it made in «Простой», a window with «Сцена 3» behind it in «Полный», undone and done again, the
+    // warning of a scene the game has not, «Проверить» with the scene under the menu, played by the scene project at 144 Hz
+    // and on 1920 × 1080, by "pixel-scene-i"); "input"
     // (the tab «Ввод»: the same, the keys of
     // A's actions set in the tab by "input-a", opened again and played by "input-a-again"); "rpg-template" (step 14.4b: two
     // games of the catalog's «RPG сверху», A changed through the tabs by "rpg-template-a", opened again and played as
@@ -2423,6 +2426,7 @@ public:
         if (part == "pixel-scene-f") return frame < 3 || pixel_scene_f_step();
         if (part == "pixel-scene-g") return frame < 3 || pixel_scene_g_step();
         if (part == "pixel-scene-h") return frame < 3 || pixel_scene_h_step();
+        if (part == "pixel-scene-i") return frame < 3 || pixel_scene_i_step();
         if (part == "input") return frame < 3 || input_step();
         if (part == "ui-scale") return frame < 3 || ui_scale_step();
         if (part == "ui-scale-a") return frame < 3 || ui_scale_a_step();
@@ -19353,6 +19357,15 @@ return {
                                   "0,4 s typed, saved, undone and done again; their wedges and words, «Через камеру» in the blends as the scene "
                                   "of the files draws them, given as version 2; the game shows the scenes as the tab does, the clips changing "
                                   "smoothly, at 144 Hz (pixel-scene-h: exit " + std::to_string(blended_scene) + ")");
+        // Part 6г5б: a scene behind the game's main menu and behind a window.
+        const fs::path thirty_seven = mo_root() / utf8_path("тридцать седьмая папка");
+        fs::create_directories(thirty_seven, ec);
+        const int behind_scene = pj_run({exe, "--project", project, "--self-test", "pixel-scene-i"}, thirty_seven);
+        check(behind_scene == 0, "a main menu with «Сцена 2» behind it in «Простой», a window with «Сцена 3» behind it in «Полный», each a step "
+                                 "undone and done again byte for byte; the warning while «Сцена 3» is away; «Проверить» with the scene under the "
+                                 "menu; the game plays «Сцена 2» behind its menu round and round as the tab's frames without its ways in and "
+                                 "out, its music the menu's, «Новая игра» taking them away, the window stopping the world with «Сцена 3» going "
+                                 "on under it, at 144 Hz and on 1920 × 1080 (pixel-scene-i: exit " + std::to_string(behind_scene) + ")");
         const auto tmpl = tp_template(), btree = pj_tree(b);
         check(tg_snap("шаблон после", tmpl, mo_root()) == tg_digest(mo_tmpl_) && tmpl == mo_tmpl_, "the template byte for byte as before");
         check(tg_snap("Движение Б после", btree, mo_root()) == tg_digest(mo_b_) && btree == mo_b_, "«Движение Б» byte for byte as before");
@@ -30540,6 +30553,274 @@ return {
         return true;
     }
 
+    // Part 6г5б: «Сцена 2» behind the main menu, the moments of its frames the game compares (its time, round and round:
+    // coming in, itself, going out, just before a round's end and in the next round), on a screen of 144 Hz.
+    static constexpr f64 kSiFrames[5] = {36 / 144.0, 1, 2.5, 431 / 144.0, 36 / 144.0};
+    static constexpr const char* kSiButton = "#20e080"; // a colour «Сцена 2» has not
+    std::string si_menu_, si_window_, si_json_, si_html_, si_after_json_, si_after_html_;
+    std::vector<std::string> si_files_;
+    u32 si_button_ = 0;
+    usize si_n_ = 0;
+    // «Сцена 2» of the files at t as the game draws it behind a screen: the scene through its camera, none of its ways in
+    // and out; kept beside the games (for the game's moment k, the same file for a moment of the same time).
+    void si_refs() {
+        si_files_.clear();
+        pixel::Scene s;
+        std::string why;
+        check(sg_read(s, kSeDoc, kSeLua, why), "the scene of the files " + why);
+        const f64 cw = s.stage().width(), ch = s.stage().height(), k = std::min(kSeFrameW / cw, kSeFrameH / ch);
+        const pixel::Affine px = pixel::translation((kSeFrameW - cw * k) / 2, (kSeFrameH - ch * k) / 2) * pixel::Affine{k, 0, 0, k, 0, 0};
+        for (usize i = 0; i < std::size(kSiFrames); ++i) {
+            const f64 t = kSiFrames[i];
+            if (i == 4) {
+                si_files_.push_back(si_files_[0]);
+                continue;
+            }
+            pixel::ScenePoses poses;
+            check(s.frame(t) && s.poses(t, {}, -1, poses), "at " + se_num(t) + " s " + s.error());
+            const assets::CookedTexture plain = s.rig().draw(kSeFrameW, kSeFrameH, px * s.camera_matrix());
+            // Coming in and going out the tab's frame is the transition's; behind a screen the scene's own.
+            const bool way = poses.phase != pixel::ScenePhase::Scene;
+            check(way == (i == 0 || i == 2 || i == 3), "at " + se_num(t) + " s " + (way ? "in a way in or out" : "itself"));
+            if (way) check(!px_same(plain, s.draw_frame(kSeFrameW, kSeFrameH)), "at " + se_num(t) + " s the tab's frame is the transition's, not the scene's");
+            std::vector<u8> png;
+            const std::filesystem::path out = mo_root() / utf8_path("сцена и позади " + std::to_string(std::lround(t * 144)) + ".png");
+            check(plain.width == kSeFrameW && plain.height == kSeFrameH && assets::encode_image(plain, ".png", png) && write_file_atomic(out, png),
+                  "the frame behind a screen at 1440 × 1080, beside the games: " + path_to_utf8(out));
+            si_files_.push_back(path_to_utf8(out));
+        }
+    }
+    edits::ProjectEdits si_edits(bool wide) {
+        // The scheme of «Флаг» as pixel-scene-g left it (its scenes at the start); none of the checks of 6г2 to 6г5а.
+        edits::ProjectEdits e = se_edits();
+        e.sg_scene.clear();
+        e.sg_length = 0;
+        e.sg_frames.clear();
+        e.sg_frame_files.clear();
+        e.sg_heard.clear();
+        e.sb_menu = si_menu_;
+        e.sb_scene = "Сцена 2";
+        e.sb_button = "n" + std::to_string(si_button_);
+        e.sb_button_color = kSiButton;
+        e.sb_music = e.sg_music;
+        e.sb_window = si_window_;
+        e.sb_window_scene = "Сцена 3";
+        e.sb_length = 3;
+        e.sb_window_length = 1;
+        if (!wide) {
+            e.sb_frames.assign(std::begin(kSiFrames), std::end(kSiFrames));
+            e.sb_files = si_files_;
+        }
+        e.sb_wide = wide;
+        return e;
+    }
+
+    // In an editor for «Движение А» after pixel-scene-h (--self-test pixel-scene-i).
+    bool pixel_scene_i_step() {
+        namespace fs = std::filesystem;
+        namespace d = editor::design;
+        std::error_code ec;
+        const fs::path a = pjw().config().root, game = a / "game";
+        const std::string note_ok2 = "Играет под экраном в «Проверить» и в игре · 3 с по кругу",
+                          note_ok3 = "Играет под экраном в «Проверить» и в игре · 1 с по кругу",
+                          note_gone = "Сцены «Сцена 3» нет в игре: экран покажется без неё. Отдайте её игре во вкладке «Векторная».";
+        auto label = [&] { return ue().history().undo_label(); };
+        switch (sc_step_) {
+        case 0:
+            check(pjw().config().title == "Движение А" && !lvl_same(fs::current_path(), a), "the editor has «Движение А» open, from a folder of its own");
+            check(fs::is_regular_file(game / "scenes" / utf8_path("Сцена 2") / "scene.json", ec) &&
+                      fs::is_regular_file(game / "scenes" / utf8_path("Сцена 3") / "scene.json", ec),
+                  "«Сцена 2» and «Сцена 3» given to the game");
+            si_refs();
+            check(click_tab(8), "«Интерфейс»");
+            break;
+        case 1:
+            if (hold(ed_.tab() == "ui" && shown("ue-new-screen"), "«Интерфейс» is laid out")) return true;
+            si_n_ = ue().screens().size();
+            check(click("ue-new-screen"), "«Новый экран»");
+            break;
+        // The main menu: its role, its scene behind it in «Простой», its button «Новая игра».
+        case 2:
+            si_menu_ = ue().opened();
+            check(ue().screens().size() == si_n_ + 1 && !si_menu_.empty() && ue().screen().root.fills.empty(), "a new screen «" + si_menu_ + "», nothing filled");
+            if (!ue().simple()) check(click("ue-mode-simple") && ue().simple(), "«Простой»");
+            ue().select({ue().screen().root.id});
+            break;
+        case 3:
+            if (hold(shown("ue-s-show"), "«Когда видно» is laid out")) return true;
+            check(ue_sd_open("ue-s-show"), "a click opens how it shows");
+            break;
+        case 4:
+            check(ue_option("ue-s-show", "menu") && ue().screen().show == d::ScreenShow::Menu, "«Главное меню игры»");
+            break;
+        case 5:
+            if (hold(ue_field("ue-s-scene").empty() && element_text("ue-s-scene-note").find("Сначала отдайте сцену игре") != std::string::npos,
+                     "«Сцена позади»: «Нет», and what it does"))
+                return true;
+            si_json_ = ue_file(".json", si_menu_);
+            si_html_ = ue_file(".html", si_menu_);
+            check(si_json_.find("scene_behind") == std::string::npos && si_html_.find("forge-scene-behind") == std::string::npos, "no scene behind it yet");
+            check(ue_sd_open("ue-s-scene"), "a click opens «Сцена позади»");
+            break;
+        case 6: {
+            const usize cursor = ue().history().cursor();
+            check(ue_option("ue-s-scene", "Сцена 2") && ue().screen().scene_behind == "Сцена 2", "«Сцена 2» behind the menu");
+            check(ue().history().cursor() == cursor + 1 && label() == "Изменено: Сцена позади", "one step: " + label());
+            si_after_json_ = ue_file(".json", si_menu_);
+            si_after_html_ = ue_file(".html", si_menu_);
+            check(si_after_json_.find("\"scene_behind\": \"Сцена 2\"") != std::string::npos, "its file says it");
+            check(si_after_html_.find("forge-scene-behind=\"Сцена 2\"") != std::string::npos, "its page says it");
+            break;
+        }
+        case 7:
+            if (hold(element_text("ue-s-scene-note") == note_ok2, "the line under the field: how it plays")) return true;
+            check(!ed_.find_element("ue-s-scene-note")->IsClassSet("ue-warn"), "not a warning");
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(ue().screen().scene_behind.empty() && ue_file(".json", si_menu_) == si_json_ && ue_file(".html", si_menu_) == si_html_,
+                  "Ctrl+Z: none behind it, its files byte for byte as before");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(ue().screen().scene_behind == "Сцена 2" && ue_file(".json", si_menu_) == si_after_json_ && ue_file(".html", si_menu_) == si_after_html_,
+                  "Ctrl+Y: «Сцена 2» again, byte for byte");
+            check(click("ue-block-button"), "«Кнопка»");
+            si_button_ = ue().selection().size() == 1 ? ue().selection()[0] : 0;
+            check(ue_node(si_button_) && d::block_of(*ue_node(si_button_)) == d::Block::Button, "a button");
+            break;
+        case 8:
+            check(ue_type("ue-s-color", kSiButton) && ue_node(si_button_)->fills.size() == 1 &&
+                      d::color_hex(ue_node(si_button_)->fills[0].color) == kSiButton,
+                  std::string("its colour ") + kSiButton);
+            check(ue_sd_open("ue-s-action"), "a click opens what it does");
+            break;
+        case 9:
+            check(ue_option("ue-s-action", "new"), "«Новая игра»");
+            check(ue_file(".html", si_menu_).find("id=\"n" + std::to_string(si_button_) + "\"") != std::string::npos, "the button on its page");
+            si_n_ = ue().screens().size();
+            check(click("ue-new-screen"), "«Новый экран»");
+            break;
+        // A window that stops the world, «Сцена 3» behind it in «Полный».
+        case 10:
+            si_window_ = ue().opened();
+            check(ue().screens().size() == si_n_ + 1 && si_window_ != si_menu_ && ue().screen().show == d::ScreenShow::Command, "a new window «" + si_window_ + "»");
+            ue().select({ue().screen().root.id});
+            break;
+        case 11:
+            if (hold(shown("ue-s-pauses"), "«Пока открыто, игра стоит» is laid out")) return true;
+            if (!ue().screen().pauses) check(click("ue-s-pauses") && ue().screen().pauses, "«Пока открыто, игра стоит»");
+            check(click("ue-mode-full") && !ue().simple(), "«Полный»");
+            break;
+        case 12:
+            check(click("ue-tab-game"), "the screen's «В игре»");
+            break;
+        case 13:
+            if (hold(shown("ue-screen-scene") && ue_field("ue-screen-scene").empty(), "«Сцена позади» in «В игре»")) return true;
+            si_json_ = ue_file(".json", si_window_);
+            si_html_ = ue_file(".html", si_window_);
+            check(ue_sd_open("ue-screen-scene"), "a click opens «Сцена позади»");
+            break;
+        case 14:
+            check(ue_option("ue-screen-scene", "Сцена 3") && ue().screen().scene_behind == "Сцена 3" && label() == "Изменено: Сцена позади",
+                  "«Сцена 3» behind the window, one step: " + label());
+            si_after_json_ = ue_file(".json", si_window_);
+            si_after_html_ = ue_file(".html", si_window_);
+            check(si_after_html_.find("forge-scene-behind=\"Сцена 3\"") != std::string::npos && si_after_json_.find("\"scene_behind\": \"Сцена 3\"") != std::string::npos,
+                  "its file and page say it");
+            break;
+        case 15:
+            if (hold(element_text("ue-scene-note") == note_ok3, "the line under the field: how it plays")) return true;
+            key(SDLK_Z, SDL_KMOD_CTRL);
+            check(ue_file(".json", si_window_) == si_json_ && ue_file(".html", si_window_) == si_html_, "Ctrl+Z: byte for byte as before");
+            key(SDLK_Y, SDL_KMOD_CTRL);
+            check(ue_file(".json", si_window_) == si_after_json_ && ue_file(".html", si_window_) == si_after_html_, "Ctrl+Y: byte for byte again");
+            // «Сцена 3» taken out of the game: the field warns, and lists it as not there.
+            fs::rename(game / "scenes" / utf8_path("Сцена 3"), game / "scenes" / utf8_path("Сцена 3 убрана"), ec);
+            check(!ec, "«Сцена 3» moved away " + ec.message());
+            check(click_tab(0), "away to «Уровень»");
+            break;
+        case 16:
+            if (hold(ed_.tab() == "level", "«Уровень»")) return true;
+            check(click_tab(8), "back to «Интерфейс»: it looks at the game's scenes again");
+            break;
+        case 17:
+            // The panel sets the drop-down's value on the frame after its options change.
+            if (hold(element_text("ue-scene-note") == note_gone && ue_field("ue-screen-scene") == "Сцена 3",
+                     ("the field says the game has no «Сцена 3», and keeps it chosen: «" + ue_field("ue-screen-scene") + "»").c_str()))
+                return true;
+            check(ed_.find_element("ue-scene-note")->IsClassSet("ue-warn"), "as a warning");
+            {
+                auto* select = rmlui_dynamic_cast<Rml::ElementFormControlSelect*>(ed_.find_element("ue-screen-scene"));
+                bool listed = false;
+                for (int i = 0; select && i < select->GetNumOptions(); ++i)
+                    listed |= select->GetOption(i)->GetAttribute<Rml::String>("value", "") == "Сцена 3" &&
+                              select->GetOption(i)->GetInnerRML() == "Сцена 3 (нет в игре)";
+                check(listed && ue_field("ue-screen-scene") == "Сцена 3", "«Сцена 3 (нет в игре)» chosen in the list: «" + ue_field("ue-screen-scene") + "»");
+            }
+            check(ue().screen().scene_behind == "Сцена 3" && ue_file(".json", si_window_) == si_after_json_,
+                  "the screen keeps it: «" + ue().screen().scene_behind + "», " + label());
+            fs::rename(game / "scenes" / utf8_path("Сцена 3 убрана"), game / "scenes" / utf8_path("Сцена 3"), ec);
+            check(!ec, "«Сцена 3» back " + ec.message());
+            check(click_tab(0), "away to «Уровень»");
+            break;
+        case 18:
+            if (hold(ed_.tab() == "level", "«Уровень»")) return true;
+            check(click_tab(8), "back to «Интерфейс»");
+            break;
+        case 19:
+            if (hold(element_text("ue-scene-note") == note_ok3, "back: how it plays")) return true;
+            check(!ed_.find_element("ue-scene-note")->IsClassSet("ue-warn"), "no warning");
+            { // A path, or a folder that is no folder, is no scene of the game's: the screen keeps its own, no step.
+                const std::string step = label();
+                ue().select({ue().screen().root.id});
+                for (const char* bad : {"../Сцена 2", "Сцена 3/../Сцена 2", "scenes\\Сцена 2", "C:Сцена 2", "..", "."})
+                    check(!ue().set_property("screen.scene_behind", bad), std::string("«") + bad + "» is refused");
+                check(ue().screen().scene_behind == "Сцена 3" && label() == step, "the screen keeps «Сцена 3»: «" + ue().screen().scene_behind + "», " + label());
+            }
+            check(ue().open(si_menu_) && ue().opened() == si_menu_, "the menu again");
+            check(click("ue-check") && ue().checking(), "«Проверить»");
+            break;
+        // «Проверить»: the scene under the menu, going.
+        case 20: {
+            const game::GameScreens* sc = ue().check_screens();
+            const game::GameScene* behind = sc ? sc->scene_behind(si_menu_) : nullptr;
+            if (hold(behind && behind->time() > 0.5, "«Сцена 2» under the menu in «Проверить»")) return true;
+            check(behind->how().behind && behind->name() == "Сцена 2" && !behind->documents().empty() && behind->documents().back()->IsVisible(),
+                  "it is «Сцена 2», behind, drawn");
+            Rml::Context* c = behind->documents().back()->GetContext();
+            int scene_at = -1, page_at = -1;
+            for (int i = 0; i < c->GetNumDocuments(); ++i) {
+                if (c->GetDocument(i) == behind->documents().back()) scene_at = i;
+                if (c->GetDocument(i) == sc->document(si_menu_)) page_at = i;
+            }
+            check(scene_at >= 0 && page_at > scene_at, "under the menu's page");
+            key(SDLK_ESCAPE, SDL_KMOD_NONE);
+            break;
+        }
+        case 21:
+            if (hold(!ue().checking(), "«Проверить» ends")) return true;
+            check(click_tab(0) && ed_.tab() == "level", "«Уровень»");
+            break;
+        case 22:
+            if (hold(lv().view_w() > 0 && shown("lv-levels"), "the level view is laid out")) return true;
+            check(pj_click("lv-levels"), "the levels' menu");
+            break;
+        case 23: {
+            if (wait(2)) return true;
+            check(pj_click("lv-level-play-start") && !lv().last_play().empty(), "«Играть со стартового»");
+            const edits::ProjectEdits e = si_edits(false);
+            int code = tg_play(&e, "сцена позади 6г5б.json", mo_root(), "project", {"--size", "1440x1080", "--hz", "144"});
+            check(code == 0, "on a screen of the scenes' shape at 144 Hz: «Сцена 2» behind the menu round and round as the tab's frames without "
+                             "its ways in and out, its music the menu's; «Новая игра» takes them away; the window stops the world, «Сцена 3» under it "
+                             "going on, the game saved (exit " + std::to_string(code) + ")");
+            const edits::ProjectEdits wide = si_edits(true);
+            code = tg_play(&wide, "сцена позади 6г5б 1920.json", mo_root(), "project", {"--size", "1920x1080"});
+            check(code == 0, "on 1920 × 1080: the time of a frame with the scene behind the menu (exit " + std::to_string(code) + ")");
+            return false;
+        }
+        default: break;
+        }
+        ++sc_step_;
+        return true;
+    }
+
     // The game of pixel-motion-m-again: the layers, the scheme of «Табличка» and the author's link.
     static constexpr const char* kMgNames[2] = {"Скакун", "Ёжик"};
     static constexpr int kMgBoxes[2][4] = {{100, 300, 96, 144}, {300, 300, 96, 192}};
@@ -37968,7 +38249,7 @@ int main(int argc, char** argv) {
                                          "pixel-motion-g-again", "pixel-motion-h", "pixel-motion-h-again", "pixel-motion-i", "pixel-motion-i-again", "pixel-motion-j",
                                          "pixel-motion-j-again", "pixel-motion-k", "pixel-motion-k-again", "pixel-motion-l", "pixel-motion-l-again",
                                          "pixel-motion-m", "pixel-motion-m-again", "pixel-scene", "pixel-scene-again", "pixel-scene-b", "pixel-scene-b-again",
-                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "pixel-scene-h", "input", "input-a",
+                                         "pixel-scene-c", "pixel-scene-c-again", "pixel-scene-d", "pixel-scene-d-again", "pixel-scene-e", "pixel-scene-f", "pixel-scene-g", "pixel-scene-h", "pixel-scene-i", "input", "input-a",
                                          "input-a-again",
                                          "rpg-template", "rpg-template-a", "rpg-template-a-again",
                                          "match3-template", "match3-template-a", "match3-template-a-again", "match3-template-a-gone",
@@ -37988,7 +38269,7 @@ int main(int argc, char** argv) {
                     "pixel-motion-h-again, pixel-motion-i, pixel-motion-i-again, pixel-motion-j, pixel-motion-j-again, pixel-motion-k, "
                     "pixel-motion-k-again, pixel-motion-l, pixel-motion-l-again, pixel-motion-m, pixel-motion-m-again, pixel-scene, "
                     "pixel-scene-again, pixel-scene-b, pixel-scene-b-again, pixel-scene-c, pixel-scene-c-again, pixel-scene-d, pixel-scene-d-again, pixel-scene-e, "
-                    "pixel-scene-f, pixel-scene-g, pixel-scene-h, "
+                    "pixel-scene-f, pixel-scene-g, pixel-scene-h, pixel-scene-i, "
                     "input and its parts input-a, input-a-again, rpg-template and its parts rpg-template-a, "
                     "rpg-template-a-again, match3-template and its parts match3-template-a, match3-template-a-again, "
                     "match3-template-a-gone, match3-template-a-restored, images and its parts images-a, images-a-again, images-b, ui-scale "

@@ -413,6 +413,10 @@ std::vector<std::string> game_problems(const fs::path& game, const Module* modul
         sounds.erase(std::unique(sounds.begin(), sounds.end()), sounds.end());
         for (const std::string& p : pictures) named(shown_as + ": картинка", p, game, "");
         for (const std::string& s : sounds) named(shown_as + ": звук", s, game / "sounds", "sounds/");
+        // Part 6г5б: its scene behind is one of the game's.
+        if (!screen.library && !screen.scene_behind.empty() &&
+            !fs::is_regular_file(game / "scenes" / utf8_path(screen.scene_behind) / "scene.json", ec))
+            out.push_back(shown_as + ": сцены «" + screen.scene_behind + "» нет в игре (scenes/): экран покажется без неё");
     }
     return out;
 }

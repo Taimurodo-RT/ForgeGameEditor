@@ -18,8 +18,10 @@
 
 #include "forge/assets/image.h"
 #include "forge/core/file.h"
+#include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/game/scenes.h"
+#include "forge/game/screens.h"
 #include "forge/pixel/bake.h"
 #include "forge/pixel/doc.h"
 #include "forge/pixel/draw.h"
@@ -44,6 +46,7 @@
 #include <thorvg.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -4167,10 +4170,14 @@ struct SceneScreen {
     std::vector<u8> frame(game::GameScene& scene, f64 dt) {
         scene.update(dt, static_cast<int>(w), static_cast<int>(h));
         for (Rml::ElementDocument* d : scene.documents()) d->PullToFront();
+        return draw(scene.wants_backdrop());
+    }
+
+    // The frame as it stands drawn (the world in its texture when `backdrop`): its pixels.
+    std::vector<u8> draw(bool backdrop = false) {
         SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device);
         REQUIRE(cmd);
         fill(cmd, target, kOutsideScene);
-        const bool backdrop = scene.wants_backdrop();
         if (backdrop) {
             fill(cmd, world, kOutsideScene);
             ui.set_world(world);
@@ -4899,4 +4906,553 @@ TEST_CASE("Смешивание (6г5а): blend_pose вкладки — как m
     REQUIRE(game.copies.size() == 2);
     CHECK(game.copies[0].id == "искра[2]");
     CHECK(game.copies[1].id == "искра[1]");
+}
+
+// ---- part 6г5б: a scene behind a screen ----
+
+namespace {
+
+// A scene behind a screen (2 s a round): a transition in and a leave that a screen does not draw, the hedgehog walking
+// right, its sound at the start and «тишина» at 1.5 s, messages, a wait for an action and a talk that pass at once,
+// music from the start; and what the tab draws of it: the same without its transitions.
+const char* kBehindScene = R"(    transition("растворение", 0.5)
+    music("тема")
+    actor("ёжик"):loop("walk")
+    spawn(part("ёжик").x(80, 1.5, "linear"))
+    sound("бум")
+    emit("начало")
+    wait(0.75)
+    wait_action("Поговорить")
+    talk("Встреча")
+    emit("середина")
+    wait(0.75)
+    sound("тишина")
+    leave("сдвиг", 0.5))";
+const char* kBehindTab = R"(    music("тема")
+    actor("ёжик"):loop("walk")
+    spawn(part("ёжик").x(80, 1.5, "linear"))
+    sound("бум")
+    emit("начало")
+    wait(0.75)
+    wait_action("Поговорить")
+    talk("Встреча")
+    emit("середина")
+    wait(0.75)
+    sound("тишина")
+    wait(0.5))";
+
+// The game of the scene «Заставка» (kBehindScene) and «Тихая» (the hedgehog walking for 1 s, no music), the sounds they
+// say.
+fs::path behind_game(Files& files, const char* folder) {
+    Scene s, quiet;
+    load(s, files, kBehindScene, kPlaceStage);
+    load(quiet, files, "    actor(\"ёжик\"):loop(\"walk\")\n    wait(1)", kPlaceStage);
+    const SceneGift gift = gift_of(s, files, "Заставка");
+    REQUIRE(gift.motion.file.length == doctest::Approx(2));
+    REQUIRE(gift.motion.file.stops.size() == 2);
+    const fs::path game_dir = empty_dir(folder);
+    give(gift, game_dir, "Заставка");
+    give(gift_of(quiet, files, "Тихая"), game_dir, "Тихая");
+    for (const char* sound : {"бум.ogg", "тишина.ogg", "тема.ogg"}) put_file(game_dir / "sounds" / utf8_path(sound), "звук");
+    return game_dir;
+}
+
+// A page as «Интерфейс» writes it, the whole 160 × 120 screen: its role, its scene behind, more of its root's attributes
+// and what is in it.
+std::string behind_page(std::string_view role, std::string_view scene, std::string_view more = {}, std::string_view inner = {}) {
+    std::string html = R"(<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><div forge-screen=")" + std::string(role) +
+                       R"(" forge-size="160 120")";
+    if (!scene.empty()) html += " forge-scene-behind=\"" + std::string(scene) + "\"";
+    html += std::string(more) + R"( style="position: absolute; left: 0; top: 0; width: 160px; height: 120px;">)" + std::string(inner) +
+            "</div></body></html>";
+    return html;
+}
+
+// Whether an element of a scene's document is hidden (display: none).
+bool hidden_in(Rml::ElementDocument* doc, const char* id) {
+    Rml::Element* e = doc->GetElementById(id);
+    REQUIRE(e);
+    const Rml::Property* p = e->GetLocalProperty(Rml::PropertyId::Display);
+    return p && p->Get<Rml::Style::Display>() == Rml::Style::Display::None;
+}
+
+// How much of a scene's frame shows: its look's filter (none: all of it).
+f64 look_opacity(const game::GameScene& scene) {
+    const std::vector<Rml::ElementDocument*> docs = scene.documents();
+    REQUIRE(docs.size() == 1);
+    Rml::Element* wrap = docs[0]->GetElementById("look-wrap");
+    REQUIRE(wrap);
+    const Rml::Property* f = wrap->GetLocalProperty(Rml::PropertyId::Filter);
+    if (!f) return 1;
+    const std::string text = f->ToString();
+    const auto at = text.find("opacity(");
+    INFO(text);
+    REQUIRE(at != std::string::npos);
+    return std::atof(text.c_str() + at + 8);
+}
+
+// The visible documents, back to front.
+std::vector<Rml::ElementDocument*> shown_documents(Rml::Context* context) {
+    std::vector<Rml::ElementDocument*> out;
+    for (int i = 0; i < context->GetNumDocuments(); ++i)
+        if (context->GetDocument(i)->IsVisible()) out.push_back(context->GetDocument(i));
+    return out;
+}
+
+// Whether the scene behind a page is shown right under the page: the visible document under it.
+bool right_under(Rml::Context* context, const game::GameScreens& screens, std::string_view page) {
+    const game::GameScene* scene = screens.scene_behind(page);
+    REQUIRE(scene);
+    const std::vector<Rml::ElementDocument*> docs = scene->documents();
+    REQUIRE(docs.size() == 1);
+    const std::vector<Rml::ElementDocument*> shown = shown_documents(context);
+    const auto at = std::find(shown.begin(), shown.end(), docs[0]);
+    return at != shown.end() && at + 1 != shown.end() && *(at + 1) == screens.document(page);
+}
+
+void log_into(LogLevel, const char* message, void* user) { static_cast<std::vector<std::string>*>(user)->push_back(message); }
+
+} // namespace
+
+TEST_CASE("Сцена позади (6г5б): по кругу с начала — переходы не рисуются, ожидания и разговор проходят сразу, сообщений нет, звуки и музыка каждый круг") {
+    Files files;
+    project(files);
+    const fs::path game_dir = behind_game(files, "forge_tests_сцена_позади");
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("behind", {160, 120});
+    REQUIRE(context);
+    {
+        game::GameScene scene;
+        std::vector<std::string> heard;
+        scene.on_message = [&](const std::string& name) { heard.push_back("сообщение " + name); };
+        scene.on_sound = [&](const std::string& file) { heard.push_back("звук " + file); };
+        bool talked = false;
+        scene.on_talk = [&](const std::string&) { return talked = true; };
+        scene.talking = [&] { return talked; };
+        std::vector<game::SceneTune> tunes;
+        scene.on_music = [&](const std::vector<game::SceneTune>& t, f64) { tunes = t; };
+        int ends = 0;
+        scene.on_end = [&](const std::string&, bool, u64) { ++ends; };
+        game::SceneHow how;
+        how.pause = false;
+        how.skip = false;
+        how.behind = true;
+        std::string why;
+        REQUIRE(scene.play(context, game_dir, "Заставка", how, why));
+        CHECK(scene.how().behind);
+        u64 serial = scene.serial(); // the play going now (another when it is played again)
+        // Each frame: at its time, a frame of the scene (none of its transitions), not standing anywhere, its music from the
+        // start of the round.
+        auto as_it_should = [&](f64 want) {
+            CHECK(scene.going());
+            CHECK_FALSE(scene.over(serial));
+            CHECK(scene.time() == doctest::Approx(want));
+            CHECK(scene.waiting() == nullptr);
+            for (const f64 h : scene.held()) CHECK(h == 0);
+            CHECK_FALSE(scene.wants_backdrop());
+            const std::vector<Rml::ElementDocument*> docs = scene.documents();
+            REQUIRE(docs.size() == 1);
+            for (const char* id : {"backdrop", "black", "below", "above"}) CHECK(hidden_in(docs[0], id));
+            CHECK_FALSE(hidden_in(docs[0], "look-wrap"));
+            CHECK(look_opacity(scene) == 1);
+            REQUIRE(tunes.size() == 1);
+            CHECK(tunes[0].file == "тема.ogg");
+            CHECK(tunes[0].since == doctest::Approx(want));
+        };
+        scene.update(0.5, 160, 120); // the first frame shows its moment 0
+        as_it_should(0);
+        CHECK(heard == std::vector<std::string>{"звук бум.ogg"});
+        // Three rounds at 64 frames a second: the frame of its length is its first.
+        std::vector<std::string> want{"звук бум.ogg"};
+        for (int frame = 1; frame <= 3 * 128; ++frame) {
+            CAPTURE(frame);
+            scene.update(1.0 / 64, 160, 120);
+            const int in_round = frame % 128;
+            as_it_should(in_round / 64.0);
+            if (in_round == 96) want.push_back("звук тишина.ogg");
+            if (in_round == 0) want.push_back("звук бум.ogg");
+            CHECK(heard == want);
+        }
+        CHECK_FALSE(talked);
+        CHECK(ends == 0);
+        // At 0.3 s a frame: round on from where it is, each sound in the frame its moment passes.
+        heard.clear();
+        f64 at = 0;
+        for (int frame = 1; frame <= 10; ++frame) {
+            CAPTURE(frame);
+            const f64 before = at;
+            scene.update(0.3, 160, 120);
+            at = std::fmod(std::round((at + 0.3) * 1e9) / 1e9, 2.0);
+            as_it_should(at);
+            std::vector<std::string> now;
+            if (before < 1.5 && (at >= 1.5 || at < before)) now.push_back("звук тишина.ogg");
+            if (at < before) now.push_back("звук бум.ogg");
+            CHECK(heard == now);
+            heard.clear();
+        }
+        // A frame of 4.25 s (the game stood): on from where it is to where it comes in its third round; the end of one
+        // round and the start of the next heard, not of every round.
+        scene.update(4.25, 160, 120);
+        at = std::fmod(at + 4.25, 2.0);
+        CHECK(at == doctest::Approx(1.25));
+        as_it_should(at);
+        CHECK(heard == std::vector<std::string>{"звук тишина.ogg", "звук бум.ogg"});
+        // Dropped: nothing of it; played again, from its start.
+        scene.drop();
+        CHECK_FALSE(scene.going());
+        CHECK(scene.documents().empty());
+        CHECK(tunes.empty());
+        CHECK(ends == 0);
+        heard.clear();
+        REQUIRE(scene.play(context, game_dir, "Заставка", how, why));
+        CHECK(scene.serial() != serial);
+        serial = scene.serial();
+        scene.update(1.0 / 64, 160, 120);
+        as_it_should(0);
+        CHECK(heard == std::vector<std::string>{"звук бум.ogg"});
+        scene.drop();
+    }
+    Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+TEST_CASE("Сцена позади (6г5б): под экраном, пока он показан — с начала при каждом показе, сразу под ним, с его прозрачностью, его музыкой") {
+    Files files;
+    project(files);
+    const fs::path game_dir = behind_game(files, "forge_tests_сцена_позади_экраны");
+    SceneNoRender render;
+    SceneFilesOnDisk disk;
+    Rml::SetRenderInterface(&render);
+    Rml::SetFileInterface(&disk);
+    REQUIRE(Rml::Initialise());
+    ui::install_live_svg();
+    Rml::Context* context = Rml::CreateContext("behind", {160, 120});
+    REQUIRE(context);
+    std::vector<std::string> log;
+    log_set_sink(log_into, &log);
+    {
+        game::GameScreens screens;
+        u32 frames = 0; // the clock: a 64th of a second a frame, to the nanosecond
+        screens.set_clock([&] { return 1'000'000'000ULL + static_cast<u64>(frames) * 15'625'000ULL; });
+        screens.set_game_dir(game_dir);
+        std::vector<std::string> sounds, music;
+        std::vector<std::vector<game::SceneTune>> scene_music;
+        screens.on_sound = [&](const std::string& file) { sounds.push_back(file); };
+        screens.on_music = [&](const std::string& name) { music.push_back(name); };
+        screens.on_scene_music = [&](const std::vector<game::SceneTune>& tunes) { scene_music.push_back(tunes); };
+        auto page = [&](const char* name, std::string_view role, std::string_view scene, std::string_view more = {}) {
+            REQUIRE(screens.load_page(context, name, behind_page(role, scene, more), path_to_utf8(game_dir / "ui" / utf8_path(std::string(name) + ".html"))));
+        };
+        page("меню", "menu", "Заставка");
+        page("окно", "window", "Заставка", R"( forge-appear="fade" forge-appear-time="0.5")");
+        page("своя", "window", "Заставка", R"( forge-music="своя.ogg")");
+        page("пустое", "window", "Нет такой");
+        page("худ", "playing", "Тихая");
+        game::Vars vars;
+        bool menu = true, playing = false;
+        auto to = [&](u32 frame) {
+            while (frames < frame) {
+                ++frames;
+                screens.update(vars, playing, menu, 160, 120);
+            }
+        };
+        auto time_of = [&](const char* name) {
+            const game::GameScene* scene = screens.scene_behind(name);
+            REQUIRE(scene);
+            return scene->time();
+        };
+        auto tunes_since = [&](f64 since) {
+            REQUIRE(screens.scene_music().size() == 1);
+            CHECK(screens.scene_music()[0].file == "тема.ogg");
+            CHECK(screens.scene_music()[0].since == doctest::Approx(since));
+            REQUIRE_FALSE(scene_music.empty());
+            CHECK(scene_music.back() == screens.scene_music());
+        };
+
+        // The main menu up: its scene from the start, right under it; the menu has no music: the scene's is its.
+        screens.update(vars, playing, menu, 160, 120);
+        REQUIRE(screens.scene_behind("меню"));
+        CHECK(screens.scene_behind_name("меню") == "Заставка");
+        CHECK(screens.scene_behind("меню")->how().behind);
+        CHECK(time_of("меню") == 0);
+        CHECK(right_under(context, screens, "меню"));
+        CHECK(sounds == std::vector<std::string>{"бум.ogg"});
+        CHECK(screens.music().empty());
+        CHECK(music.empty());
+        tunes_since(0);
+        CHECK(look_opacity(*screens.scene_behind("меню")) == 1);
+        CHECK(screens.scene_behind("окно") == nullptr);
+        CHECK(screens.scene_behind_name("окно") == "Заставка");
+        CHECK(screens.scene_behind_name("своя") == "Заставка");
+        CHECK(screens.scene_behind_name("нет такого экрана").empty());
+        // Round and round by the screens' clock, its sounds and music with it.
+        to(96);
+        CHECK(time_of("меню") == doctest::Approx(1.5));
+        CHECK(sounds == std::vector<std::string>{"бум.ogg", "тишина.ogg"});
+        tunes_since(1.5);
+        to(128);
+        CHECK(time_of("меню") == doctest::Approx(0));
+        CHECK(sounds == std::vector<std::string>{"бум.ogg", "тишина.ogg", "бум.ogg"});
+        tunes_since(0);
+        to(140);
+        // Brought to the front by RmlUi (a click on it): back right under its page.
+        screens.scene_behind("меню")->documents()[0]->PullToFront();
+        to(141);
+        CHECK(right_under(context, screens, "меню"));
+        to(142);
+
+        // A window over the menu with the same scene: a player of its own from its start, right under the window, over the
+        // menu; as much of it as of the window while it comes in. Without music of its own, its scene's is the music.
+        REQUIRE(screens.show("окно", true));
+        to(143);
+        REQUIRE(screens.scene_behind("окно"));
+        CHECK(screens.scene_behind("окно") != screens.scene_behind("меню"));
+        CHECK(time_of("окно") == 0);
+        CHECK(time_of("меню") == doctest::Approx(15 / 64.0));
+        CHECK(right_under(context, screens, "окно"));
+        CHECK(right_under(context, screens, "меню"));
+        {
+            const std::vector<Rml::ElementDocument*> shown = shown_documents(context);
+            const auto pos = [&](Rml::ElementDocument* d) { return std::find(shown.begin(), shown.end(), d) - shown.begin(); };
+            CHECK(pos(screens.document("меню")) < pos(screens.scene_behind("окно")->documents()[0]));
+        }
+        CHECK(look_opacity(*screens.scene_behind("окно")) == doctest::Approx(0).epsilon(1e-4));
+        tunes_since(0);
+        CHECK(sounds.back() == "бум.ogg");
+        to(151); // a quarter of the window's coming in
+        CHECK(look_opacity(*screens.scene_behind("окно")) == doctest::Approx(1 - 0.75 * 0.75 * 0.75).epsilon(1e-4));
+        Rml::Element* window_root = screens.document("окно")->QuerySelector("[forge-screen]");
+        REQUIRE(window_root);
+        CHECK(window_root->GetLocalProperty(Rml::PropertyId::Opacity)->Get<float>() == doctest::Approx(1 - 0.75 * 0.75 * 0.75).epsilon(1e-4));
+        CHECK(look_opacity(*screens.scene_behind("меню")) == 1);
+        tunes_since(8 / 64.0);
+        // The window's scene sent to the back, under the menu's: back right under the window, the menu's under the menu.
+        screens.scene_behind("окно")->documents()[0]->PushToBack();
+        to(175); // in
+        CHECK(right_under(context, screens, "окно"));
+        CHECK(right_under(context, screens, "меню"));
+        CHECK(look_opacity(*screens.scene_behind("окно")) == 1);
+        CHECK(screens.scene_behind("окно")->documents()[0]->GetElementById("look-wrap")->GetLocalProperty(Rml::PropertyId::Filter) == nullptr);
+        // A window with music of its own over it, its scene's music under it: its own music; the scenes' stops. The menu
+        // brought to the front meanwhile (RmlUi does it when something on it takes the keyboard): back under the windows,
+        // its scene under it.
+        screens.document("меню")->PullToFront();
+        REQUIRE(screens.show("своя", true));
+        to(176);
+        CHECK(right_under(context, screens, "меню"));
+        CHECK(right_under(context, screens, "окно"));
+        CHECK(right_under(context, screens, "своя"));
+        {
+            const std::vector<Rml::ElementDocument*> shown = shown_documents(context);
+            REQUIRE(shown.size() == 6);
+            CHECK(shown[1] == screens.document("меню"));
+            CHECK(shown[5] == screens.document("своя"));
+        }
+        CHECK(screens.music() == "своя.ogg");
+        CHECK(music.back() == "своя.ogg");
+        CHECK(screens.scene_music().empty());
+        CHECK(scene_music.back().empty());
+        CHECK(time_of("своя") == 0);
+        REQUIRE(screens.show("своя", false));
+        to(177);
+        CHECK(music.back().empty());
+        tunes_since(34 / 64.0);
+        // The window going: its scene goes with it, fading as it does; gone, it stops, the menu's music again.
+        REQUIRE(screens.show("окно", false));
+        to(186); // a quarter of its going (it begins going at the next frame, 178)
+        REQUIRE(screens.scene_behind("окно"));
+        CHECK(look_opacity(*screens.scene_behind("окно")) == doctest::Approx(0.75 * 0.75 * 0.75).epsilon(1e-4));
+        CHECK(window_root->GetLocalProperty(Rml::PropertyId::Opacity)->Get<float>() == doctest::Approx(0.75 * 0.75 * 0.75).epsilon(1e-4));
+        CHECK(time_of("окно") == doctest::Approx(43 / 64.0));
+        to(210);
+        CHECK(screens.scene_behind("окно") == nullptr);
+        tunes_since(std::fmod(210 / 64.0, 2.0));
+        CHECK(right_under(context, screens, "меню"));
+        // Shown again: from its start.
+        REQUIRE(screens.show("окно", true));
+        to(211);
+        CHECK(time_of("окно") == 0);
+        REQUIRE(screens.show("окно", false));
+        to(250);
+        CHECK(screens.scene_behind("окно") == nullptr);
+
+        // Its scene not in the game: the window shows without it, said once in the log, however often it is shown.
+        const std::string missing = "экран «пустое»: сцена позади не идёт (нет сцены «Нет такой»: отдайте её игре во вкладке «Векторная»): экран показан без неё";
+        auto said = [&] { return std::count_if(log.begin(), log.end(), [&](const std::string& l) { return l.find(missing) != std::string::npos; }); };
+        CHECK(said() == 0);
+        for (int i = 0; i < 2; ++i) {
+            REQUIRE(screens.show("пустое", true));
+            to(frames + 2);
+            CHECK(screens.document("пустое")->IsVisible());
+            CHECK(screens.scene_behind("пустое") == nullptr);
+            REQUIRE(screens.show("пустое", false));
+            to(frames + 1);
+        }
+        CHECK(said() == 1);
+
+        // A new game: the menu goes and its scene with it; the screen over the world plays its own (no music: none).
+        menu = false;
+        playing = true;
+        const u32 begun = frames + 1;
+        to(begun);
+        CHECK(screens.scene_behind("меню") == nullptr);
+        CHECK(time_of("худ") == 0);
+        CHECK(right_under(context, screens, "худ"));
+        CHECK(screens.scene_music().empty());
+        CHECK(scene_music.back().empty());
+        CHECK(screens.music().empty());
+        to(begun + 64 + 16); // «Тихая» round and round too: 1 s a round
+        CHECK(time_of("худ") == doctest::Approx(0.25));
+        // Back to the menu: from its start.
+        menu = true;
+        playing = false;
+        to(frames + 1);
+        CHECK(screens.scene_behind("худ") == nullptr);
+        CHECK(time_of("меню") == 0);
+        tunes_since(0);
+        // Leaving (the editor's «Проверить»): no scene music said; the next update says it again.
+        screens.stop_music();
+        CHECK(scene_music.back().empty());
+        CHECK(screens.scene_music().empty());
+        to(frames + 1);
+        tunes_since(1 / 64.0);
+        // The page read again (its file changed): its scene from the start.
+        page("меню", "menu", "Заставка");
+        to(frames + 1);
+        CHECK(time_of("меню") == 0);
+        CHECK(right_under(context, screens, "меню"));
+        // Of the scenes behind only the missing one was said: each of the others began once a showing, none of them taken
+        // for a scene already going.
+        CHECK(std::count_if(log.begin(), log.end(), [](const std::string& l) { return l.find("сцена позади не идёт") != std::string::npos; }) == 1);
+    }
+    log_set_sink(nullptr, nullptr);
+    Rml::Shutdown();
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
+}
+
+namespace {
+
+// The frame of a scene behind a screen against the tab's: where the tab's is solid and opaque (outside `skip`: x, y,
+// w, h), `shows` of it over the grey under it, within 6; empty when they agree, else where not. `said`: how many were
+// compared.
+std::string behind_differs(const std::vector<u8>& game, const assets::CookedTexture& tab, f64 shows, const std::array<u32, 4>& skip, std::string& said) {
+    const u32 w = tab.width, h = tab.height;
+    if (game.size() != tab.rgba8.size()) return "размеры кадров разные";
+    int solid = 0, off = 0, worst = 0;
+    std::string why;
+    for (u32 y = 1; y + 1 < h; ++y)
+        for (u32 x = 1; x + 1 < w; ++x) {
+            if (x + 1 >= skip[0] && x <= skip[0] + skip[2] && y + 1 >= skip[1] && y <= skip[1] + skip[3]) continue;
+            const Rgba8 t = pixel_at(tab, x, y);
+            if (t.a != 255) continue;
+            bool one = true;
+            for (int dy = -1; dy <= 1 && one; ++dy)
+                for (int dx = -1; dx <= 1 && one; ++dx) {
+                    const Rgba8 n = pixel_at(tab, x + dx, y + dy);
+                    one = std::abs(n.r - t.r) <= 1 && std::abs(n.g - t.g) <= 1 && std::abs(n.b - t.b) <= 1 && n.a == 255;
+                }
+            if (!one) continue;
+            ++solid;
+            const Rgba8 g = rgba_at(game, w, x, y);
+            auto over_grey = [&](u8 c, u8 grey) { return static_cast<int>(std::lround(grey * (1 - shows) + c * shows)); };
+            const int d = std::max({std::abs(g.r - over_grey(t.r, kOutsideScene.r)), std::abs(g.g - over_grey(t.g, kOutsideScene.g)),
+                                    std::abs(g.b - over_grey(t.b, kOutsideScene.b))});
+            worst = std::max(worst, d);
+            if (d > 6 && off++ == 0)
+                why = "в " + std::to_string(x) + ", " + std::to_string(y) + " игра " + std::to_string(g.r) + " " + std::to_string(g.g) + " " +
+                      std::to_string(g.b) + ", вкладка " + std::to_string(t.r) + " " + std::to_string(t.g) + " " + std::to_string(t.b);
+        }
+    said = std::to_string(solid) + " сплошных из " + std::to_string(w * h) + ", расхождение до " + std::to_string(worst);
+    if (off == 0 && solid >= static_cast<int>(w * h) / 2) return {};
+    return off ? std::to_string(off) + " расходятся (" + why + ")" : "сплошных только " + std::to_string(solid);
+}
+
+bool all_grey(const std::vector<u8>& rgba) {
+    for (usize i = 0; i + 3 < rgba.size(); i += 4)
+        if (rgba[i] != kOutsideScene.r || rgba[i + 1] != kOutsideScene.g || rgba[i + 2] != kOutsideScene.b) return false;
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("Сцена позади (6г5б): кадры под экраном — кадры вкладки без переходов, через конец круга; экран над ней; гаснет и проявляется с ним") {
+    Files files;
+    project(files);
+    Scene tab;
+    load(tab, files, kBehindTab, kPlaceStage);
+    record(tab);
+    const fs::path game_dir = behind_game(files, "forge_tests_сцена_позади_кадры");
+    {
+        SceneScreen screen(160, 120);
+        game::GameScreens screens;
+        u32 frames = 0;
+        screens.set_clock([&] { return 1'000'000'000ULL + static_cast<u64>(frames) * 15'625'000ULL; });
+        screens.set_game_dir(game_dir);
+        screens.set_ui(&screen.ui);
+        // The menu fades in and out over 0.5 s; a square of its own at 4, 4.
+        const std::string square = R"(<div style="position: absolute; left: 4px; top: 4px; width: 12px; height: 12px; background-color: #ff00ff;"></div>)";
+        REQUIRE(screens.load_page(screen.context, "меню", behind_page("menu", "Заставка", R"( forge-appear="fade" forge-appear-time="0.5")", square),
+                                  path_to_utf8(game_dir / "ui" / utf8_path("меню.html"))));
+        game::Vars vars;
+        bool menu = true;
+        auto to = [&](u32 frame) {
+            while (frames < frame) {
+                ++frames;
+                screens.update(vars, false, menu, 160, 120);
+            }
+        };
+        // At this frame: the tab's frame at the scene's time, `shows` of it.
+        auto as_tab = [&](f64 shows) {
+            const game::GameScene* scene = screens.scene_behind("меню");
+            REQUIRE(scene);
+            const f64 t = scene->time();
+            CAPTURE(t);
+            CAPTURE(frames);
+            const std::vector<u8> game = screen.draw();
+            const bool ok = tab.frame(t);
+            INFO(tab.error());
+            REQUIRE(ok);
+            const assets::CookedTexture want = tab.draw_frame(160, 120, Affine{});
+            std::string said;
+            const std::string differs = behind_differs(game, want, shows, {4, 4, 12, 12}, said);
+            INFO(said);
+            CHECK_MESSAGE(differs.empty(), differs);
+            return game;
+        };
+        screens.update(vars, false, menu, 160, 120);
+        CHECK(all_grey(screen.draw())); // the menu and its scene coming in from nothing
+        to(16);                         // half its coming: 0.875 of it
+        CHECK(screens.scene_behind("меню")->time() == doctest::Approx(0.25));
+        as_tab(0.875);
+        // In: the scene as the tab draws it (no transition of its own), the menu over it.
+        for (const u32 at : {32u, 64u, 96u, 112u, 127u, 128u, 144u}) {
+            to(at);
+            CHECK(screens.scene_behind("меню")->time() == doctest::Approx(std::fmod(at / 64.0, 2.0)));
+            const std::vector<u8> game = as_tab(1);
+            CHECK(rgba_at(game, 160, 8, 8) == Rgba8{255, 0, 255, 255});
+        }
+        // Going away: it fades with the menu, its time on; gone, nothing of it.
+        menu = false;
+        to(145 + 16);
+        as_tab(0.125);
+        to(145 + 40);
+        CHECK(screens.scene_behind("меню") == nullptr);
+        CHECK(all_grey(screen.draw()));
+        // Back: from its start.
+        menu = true;
+        to(186);
+        CHECK(screens.scene_behind("меню")->time() == 0);
+        to(186 + 32);
+        CHECK(screens.scene_behind("меню")->time() == doctest::Approx(0.5));
+        as_tab(1);
+    }
+    std::error_code ec;
+    fs::remove_all(game_dir, ec);
 }

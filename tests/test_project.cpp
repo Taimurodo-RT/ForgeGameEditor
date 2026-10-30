@@ -405,6 +405,15 @@ TEST_CASE("project: a template's conversations, quests, links and screens are ch
     screen.music = path_to_utf8(game / "sounds" / utf8_path("музыка.ogg"));
     put(ui / utf8_path("меню.json"), editor::design::save_screen(screen));
     has("экран «меню»: звук «" + screen.music + "» вне папки игры (нужен файл в sounds/)");
+    // Part 6г5б: its scene behind is one of the game's (a folder of game/scenes with its scene.json).
+    screen.music = "музыка.ogg";
+    screen.scene_behind = "Заставка";
+    put(ui / utf8_path("меню.json"), editor::design::save_screen(screen));
+    has("экран «меню»: сцены «Заставка» нет в игре (scenes/): экран покажется без неё");
+    fs::create_directories(game / "scenes" / utf8_path("Заставка"));
+    has("экран «меню»: сцены «Заставка» нет в игре (scenes/): экран покажется без неё");
+    put(game / "scenes" / utf8_path("Заставка") / "scene.json", "{}");
+    CHECK_MESSAGE(problems().empty(), problems());
     put(ui / utf8_path("меню.json"), "{ сломан");
     has("экран «меню»: ui/меню.json не читается");
 }

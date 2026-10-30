@@ -341,6 +341,8 @@ public:
     std::optional<editor::design::Rect> check_box(const std::string& window, const std::string& layer) const;
     // What has the keyboard in «Проверить»: "page:element id" ("" none; "page:" the page itself).
     std::string check_focus() const;
+    // The game's screens «Проверить» runs (tests: a screen's scene behind it); null when it is not on.
+    const forge::game::GameScreens* check_screens() const { return check_.get(); }
     // The page on the canvas (for tests: its elements).
     Rml::ElementDocument* page() const { return page_; }
     // Mouse on the screen's own pixels, as the check passes it to the page.
@@ -714,6 +716,10 @@ private:
         // Sound: the screen's music and its buttons' sound, a button's own
         // ("": as the screen's, "none": none).
         Rml::String music, button_sound, click_sound, sound_note;
+        // Part 6г5б: the scene that plays under the screen, and the line under its field (a warning when the game has
+        // no such scene).
+        Rml::String scene_behind, scene_note;
+        bool scene_missing = false;
     };
     // One key of the layer's own movement («Своё по ключам»).
     struct KeyRow {
@@ -818,6 +824,13 @@ private:
     std::vector<SoundRow> m_sounds_;
     Rml::String sound_note_; // why the last pick did not take
     void scan_sounds();
+    // Part 6г5б: the game's scenes (game/scenes) for «Сцена позади», the screen's own when the game has it not; the
+    // line under the field: how it plays, or that the game has no such scene (missing). Read again when the files
+    // change or the screen's scene does (its scene.json once, not at each refresh).
+    std::vector<SoundRow> m_scenes_;
+    std::string scenes_for_, scene_note_;
+    bool scene_missing_ = false;
+    void scan_scenes();
     void sync_sound_selects();
     // A drop-down's sound: a name of game/sounds as it is, "add:<path>" a
     // file of «Ресурсы» copied there first. Empty when it cannot be used.
@@ -908,7 +921,7 @@ private:
         Rml::String image, bar_value, bar_max, list_source, picture_from, show, over, inside;
         Rml::String ending = "none";
         Rml::String hidden;
-        Rml::String music, button_sound, click_sound;
+        Rml::String music, button_sound, click_sound, scene_behind;
         bool pauses = false, esc_closes = true, dim = false; // a window's: the game stops, Esc closes it, what is under is darkened
     };
     SimpleProps m_s_;

@@ -1,5 +1,7 @@
 #include "rpg_game.h"
 
+#include "scene_tunes.h"
+
 #include "forge/core/file.h"
 #include "forge/core/log.h"
 #include "forge/core/path.h"
@@ -82,6 +84,8 @@ bool RpgGame::init(game::Shell& shell, SDL_GPUDevice* device, SDL_GPUTextureForm
     if (!options_.silent && !mixer_.open()) FORGE_WARN("Звука нет: не открылось устройство вывода");
     screen_sounds_.attach(&mixer_, module_.library_ref().sounds_folder());
     shell.screens().on_music = [this](const std::string& name) { screen_sounds_.music(name); };
+    // Part 6г5б: a screen's scene behind plays its music as the screen's.
+    shell.screens().on_scene_music = [this](const std::vector<game::SceneTune>& tunes) { screen_sounds_.screen_tunes(screen_tunes_of(tunes)); };
     shell.screens().on_sound = [this](const std::string& name) { screen_sounds_.click(name); };
 
     // The inventory lives in variables (inv.key...): dialogues check and change it, saves carry it.

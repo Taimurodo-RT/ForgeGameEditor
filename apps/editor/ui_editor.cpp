@@ -1,6 +1,7 @@
 #include "ui_editor.h"
 
 #include "object_library.h"
+#include "scene_tunes.h"
 
 #include "forge/core/file.h"
 #include "forge/core/log.h"
@@ -8,6 +9,7 @@
 #include "forge/core/time.h"
 #include "forge/audio/audio.h"
 #include "forge/game/saves.h"
+#include "forge/game/scenes.h"
 #include "forge/ui/html.h"
 
 #include <yyjson.h>
@@ -338,6 +340,7 @@ bool UiEditor::init(ui::Ui& ui, const std::filesystem::path& game_dir) {
     install_art(ui.root() / "art");
     scan_pictures();
     scan_sounds();
+    scan_scenes();
 
     // The checkerboard under colours that may be see-through (the picker, the swatches).
     {
@@ -508,6 +511,7 @@ bool UiEditor::open(const std::string& name) {
     page_dirty_ = true;
     sound_note_.clear();
     scan_sounds();
+    scan_scenes();
     dirty_all();
     return true;
 }
@@ -643,6 +647,7 @@ void UiEditor::set_shown(bool shown) {
         page_dirty_ = true;
         scan_pictures();
         scan_sounds();
+        scan_scenes();
         refresh_openers(); // «Логика» may show the window now
     }
 }
@@ -655,6 +660,7 @@ void UiEditor::files_changed() {
     if (shown_) {
         scan_pictures();
         scan_sounds();
+        scan_scenes();
     }
 }
 
@@ -719,7 +725,13 @@ void UiEditor::rebuild_page() {
             check_->on_sound = [this](const std::string& name) {
                 if (!picker_living()) check_sound_.click(name);
             };
+            // Part 6г5б: the screen's scene behind and its music, as in the game.
+            check_->on_scene_music = [this](const std::vector<game::SceneTune>& tunes) {
+                check_sound_.screen_tunes(picker_living() ? std::vector<audio::ScreenSounds::Tune>{} : screen_tunes_of(tunes));
+            };
+            check_->set_ui(ui_);
         }
+        check_->set_game_dir(game_dir_);
         if (!check_mixer_open_) {
             // The device opens on the first «Проверить»; without one the sound still "plays" (tests).
             check_mixer_open_ = true;
@@ -921,6 +933,55 @@ void UiEditor::scan_sounds() {
     dirty("ue_sounds");
 }
 
+// Part 6г5б: the scenes «Векторная» gave the game, and the screen's own when the game has it not («нет в игре»); the
+// line under «Сцена позади»: how the scene plays under the screen, its length as «Векторная» gave it, or that the game
+// has no such scene.
+void UiEditor::scan_scenes() {
+    const std::string& own = screen_.scene_behind;
+    scenes_for_ = own;
+    std::vector<SoundRow> rows;
+    for (const std::string& name : game::scene_names(game_dir_)) rows.push_back({name, name});
+    if (!own.empty() && std::none_of(rows.begin(), rows.end(), [&](const SoundRow& r) { return r.value == own; }))
+        rows.push_back({own, own + " (нет в игре)"});
+    scene_missing_ = false;
+    if (own.empty()) {
+        scene_note_ = "Под экраном идёт сцена из «Векторной» по кругу, пока он открыт. Сначала отдайте сцену игре.";
+    } else {
+        std::vector<u8> bytes;
+        vector::SceneFile file;
+        std::string why;
+        if (!read_file(game_dir_ / "scenes" / utf8_path(own) / "scene.json", bytes) ||
+            !vector::read_scene_file(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), file, why)) {
+            scene_missing_ = true;
+            scene_note_ = "Сцены «" + own + "» нет в игре: экран покажется без неё. Отдайте её игре во вкладке «Векторная».";
+        } else {
+            char buf[32];
+            std::snprintf(buf, sizeof buf, "%g", std::round(file.length * 10) / 10);
+            std::string seconds = buf;
+            std::replace(seconds.begin(), seconds.end(), '.', ',');
+            scene_note_ = "Играет под экраном в «Проверить» и в игре · " + seconds + " с по кругу";
+        }
+    }
+    if (m_p_.scene_note != scene_note_ || m_p_.scene_missing != scene_missing_) {
+        m_p_.scene_note = scene_note_;
+        m_p_.scene_missing = scene_missing_;
+        dirty("ue_p");
+    }
+    if (rows == m_scenes_) return;
+    // The options change under the drop-downs: one still holding the focus from the author's last pick would take the
+    // option that comes into its place (a scene the game has under another name now) as a new pick. They let go of the
+    // focus first; their value is set back from the panel (sync_sound_selects).
+    if (context_)
+        for (const char* id : {"ue-screen-scene", "ue-s-scene"})
+            for (int i = 0; i < context_->GetNumDocuments(); ++i)
+                if (Rml::Element* e = context_->GetDocument(i)->GetElementById(id)) {
+                    if (e->IsPseudoClassSet("focus")) e->Blur();
+                    break;
+                }
+    m_scenes_ = std::move(rows);
+    dirty("ue_scenes");
+}
+
 // The sounds' drop-downs are not bound to the panel: their options come from a list, and a select whose value is
 // not (yet) among its options picks another, which a binding would write back over what is set. They are set
 // from here once the options are there instead. Not while the author has one open.
@@ -929,7 +990,7 @@ void UiEditor::sync_sound_selects() {
     const std::pair<const char*, const Rml::String*> selects[] = {
         {"ue-screen-music", &m_p_.music}, {"ue-screen-button-sound", &m_p_.button_sound}, {"ue-click-sound", &m_p_.click_sound},
         {"ue-s-music", &m_s_.music},      {"ue-s-button-sound", &m_s_.button_sound},      {"ue-s-click-sound", &m_s_.click_sound},
-        {"ue-f-sound", &m_s_.click_sound}};
+        {"ue-f-sound", &m_s_.click_sound},  {"ue-screen-scene", &m_p_.scene_behind}, {"ue-s-scene", &m_s_.scene_behind}};
     for (const auto& [id, value] : selects) {
         Rml::Element* e = nullptr;
         for (int i = 0; !e && i < context_->GetNumDocuments(); ++i) e = context_->GetDocument(i)->GetElementById(id);
@@ -1669,9 +1730,13 @@ void UiEditor::refresh_props() {
             p.covers_game = covers_game();
             p.music = screen_.music;
             p.button_sound = screen_.button_sound;
+            p.scene_behind = screen_.scene_behind;
         }
         p.click_sound = n->click_sound;
         p.sound_note = sound_note_;
+        if (screen_.scene_behind != scenes_for_) scan_scenes();
+        p.scene_note = scene_note_;
+        p.scene_missing = scene_missing_;
         p.show_if = n->show_if;
         p.list = n->list == d::ListSource::None ? "none" : d::list_word(n->list);
         p.list_gap = fmt(n->list_gap);
@@ -1918,6 +1983,7 @@ void UiEditor::refresh_simple(const d::Node* n) {
         s.ending = kWindowEndingWords[static_cast<int>(screen_.ending)];
         s.music = screen_.music;
         s.button_sound = screen_.button_sound;
+        s.scene_behind = screen_.scene_behind;
         s.click_sound = n->click_sound;
         if (b == d::Block::Group || b == d::Block::List)
             s.inside = "Внутри слоёв: " + std::to_string(n->children.size()) + ". Выберите любой из них на холсте или в списке слева.";
@@ -2030,6 +2096,7 @@ std::string UiEditor::simple_shown(const std::string& field) const {
     if (field == "anchor_h") return m_s_shown_.anchor_h;
     if (field == "anchor_v") return m_s_shown_.anchor_v;
     if (field == "music") return m_s_shown_.music;
+    if (field == "scene_behind") return m_s_shown_.scene_behind;
     if (field == "button_sound") return m_s_shown_.button_sound;
     if (field == "click_sound") return m_s_shown_.click_sound;
     return {};
@@ -2164,6 +2231,10 @@ bool UiEditor::set_simple_property(const std::string& field, const std::string& 
         if (!root || screen_.library) return false;
         ops.push_back({id, "screen." + field, value});
         word = field == "music" ? "Музыка экрана" : "Звук кнопок экрана";
+    } else if (field == "scene_behind") {
+        if (!root || screen_.library) return false;
+        ops.push_back({id, "screen.scene_behind", value});
+        word = "Сцена позади";
     } else if (field == "click_sound") {
         if (root || n->on_click.empty()) return false;
         ops.push_back({id, "click_sound", value});
@@ -2211,7 +2282,8 @@ std::string change_label(const std::string& field) {
         {"vertical", "Прилипание"}, {"width_sizing", "Ширина"}, {"height_sizing", "Высота"}, {"absolute", "Вне раскладки"},
         {"clip", "Обрезка"}, {"show_if", "Условие показа"}, {"name", "Имя"}, {"list", "Список"}, {"list_gap", "Расстояние в списке"},
         {"picture_from", "Картинка из данных"}, {"click_sound", "Звук нажатия"}, {"screen.music", "Музыка экрана"},
-        {"screen.button_sound", "Звук кнопок экрана"}, {"screen.pauses", "Пауза окна"}, {"screen.esc", "Закрытие по Esc"},
+        {"screen.button_sound", "Звук кнопок экрана"}, {"screen.scene_behind", "Сцена позади"}, {"screen.pauses", "Пауза окна"},
+        {"screen.esc", "Закрытие по Esc"},
         {"screen.dim", "Затемнение фона"}, {"screen.over", "Где появляется окно"},
         {"screen.ending", "Показывается сам"}};
     for (const auto& [f, word] : words)
@@ -2712,6 +2784,13 @@ bool UiEditor::set_on(d::Node& n, const std::string& field, const std::string& v
             std::string& sound = f == "music" ? screen_.music : screen_.button_sound;
             if (screen_.library || value == sound || !sound_name_ok(value, false)) return false;
             sound = value;
+            return true;
+        }
+        if (f == "scene_behind") { // part 6г5б: a scene of game/scenes by its folder's name, or none
+            if (screen_.library || value == screen_.scene_behind || value == "." || value == ".." ||
+                value.find_first_of("/\\:") != std::string::npos)
+                return false;
+            screen_.scene_behind = value;
             return true;
         }
         if (f == "font") {
@@ -4870,6 +4949,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("inside", &SimpleProps::inside);
         s.RegisterMember("hidden", &SimpleProps::hidden);
         s.RegisterMember("music", &SimpleProps::music);
+        s.RegisterMember("scene_behind", &SimpleProps::scene_behind);
         s.RegisterMember("button_sound", &SimpleProps::button_sound);
         s.RegisterMember("click_sound", &SimpleProps::click_sound);
     }
@@ -4990,6 +5070,9 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
         s.RegisterMember("button_sound", &Props::button_sound);
         s.RegisterMember("click_sound", &Props::click_sound);
         s.RegisterMember("sound_note", &Props::sound_note);
+        s.RegisterMember("scene_behind", &Props::scene_behind);
+        s.RegisterMember("scene_note", &Props::scene_note);
+        s.RegisterMember("scene_missing", &Props::scene_missing);
     }
     if (auto s = model.RegisterStruct<KeyRow>()) {
         s.RegisterMember("index", &KeyRow::index);
@@ -5128,6 +5211,7 @@ void UiEditor::bind(Rml::DataModelConstructor& model) {
     model.Bind("ue_nine", &m_nine_);
     model.Bind("ue_pictures", &m_pictures_);
     model.Bind("ue_sounds", &m_sounds_);
+    model.Bind("ue_scenes", &m_scenes_);
     model.Bind("ue_safe", &m_safe_);
     model.Bind("ue_has_safe", &m_has_safe_);
     if (auto s = model.RegisterStruct<GameColorRow>()) {

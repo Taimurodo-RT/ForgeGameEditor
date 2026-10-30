@@ -173,6 +173,7 @@ bool Shell::init(Game& game, SDL_GPUDevice* device, SDL_Window* window, SDL_GPUT
     screens_ = std::make_unique<GameScreens>();
     screens_->on_action = [this](const ScreenAction& a, const std::string&) { screen_action(a); };
     screens_->set_quests(&quests_); // the journal's list
+    screens_->set_ui(ui_.get()); // the masks of the scenes behind its pages (part 6г5б)
     // A scene's emits go to the logic as a button's «Сообщение логике» does, its sounds as a button's.
     scene_ = std::make_unique<GameScene>();
     scene_->set_ui(ui_.get()); // its masks (part 6г4)

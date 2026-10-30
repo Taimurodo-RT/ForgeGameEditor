@@ -4,6 +4,7 @@
 #include "forge/core/log.h"
 #include "forge/core/path.h"
 #include "forge/core/time.h"
+#include "forge/game/scenes.h"
 #include "forge/ui/html.h"
 #include "forge/ui/live_svg.h"
 #include "forge/vector/motion_file.h"
@@ -169,6 +170,15 @@ struct GameScreens::Page {
     std::string music, button_sound;
     u64 move_start = 0;   // 0: none
     bool leaving = false; // going away: hidden when the movement ends
+    f32 alpha = 1;        // how much of it shows now, coming or going (place)
+    // Part 6г5б: the scene that plays under it while it is up (forge-scene-behind): its player, the clock when it last
+    // went on, whether it was begun since the page was last hidden (one that is not in the game is tried once), its
+    // music now.
+    std::string scene_behind;
+    std::unique_ptr<GameScene> behind;
+    u64 behind_last = 0;
+    bool behind_tried = false;
+    std::vector<SceneTune> behind_tunes;
     std::vector<Bound> bound;
     std::vector<std::unique_ptr<ListView>> lists;
 };
@@ -185,6 +195,12 @@ struct GameScreens::Impl : Rml::EventListener {
     std::vector<std::string> svg_problems; // what live pictures did not take (forge::ui::svg_problems), in order
     std::string music; // what on_music was told last
     std::string place_music; // the game's place's (set_place_music)
+    // Part 6г5б: where scenes behind pages come from, the UI their masks go to, the scene music on_scene_music was told
+    // last, what was said of them once.
+    fs::path game_dir;
+    ui::Ui* scene_ui = nullptr;
+    std::vector<SceneTune> scene_music;
+    std::set<std::string> said_behind;
     // The lists' data.
     std::vector<ScreenItem> items;
     std::unordered_map<std::string, usize> item_index;
@@ -530,6 +546,7 @@ struct GameScreens::Impl : Rml::EventListener {
             if (p.appear_time <= 0) p.appear_time = 0.25f;
             p.music = attr("forge-music");
             p.button_sound = attr("forge-button-sound");
+            p.scene_behind = attr("forge-scene-behind");
         }
         bind_layer(p.name, e, p.bound);
         // The cell is the list's first element (a page written with line
@@ -780,7 +797,23 @@ struct GameScreens::Impl : Rml::EventListener {
         std::stable_sort(order.begin(), order.end(), [&](const Page* a, const Page* b) {
             return rank(a) != rank(b) ? rank(a) > rank(b) : a->order > b->order;
         });
-        for (Page* p : order) p->doc->PushToBack(); // the top one first: each next goes under it
+        // The top one first: each next goes under it; a page's scene behind right under the page (its documents' top
+        // one first).
+        for (Page* p : order) {
+            p->doc->PushToBack();
+            if (!p->behind) continue;
+            const std::vector<Rml::ElementDocument*> docs = p->behind->documents();
+            for (auto d = docs.rbegin(); d != docs.rend(); ++d) (*d)->PushToBack();
+        }
+    }
+
+    // The page whose scene behind shows this document (part 6г5б).
+    const Page* behind_of(Rml::ElementDocument* doc) const {
+        for (const auto& p : pages)
+            if (p->behind)
+                for (Rml::ElementDocument* d : p->behind->documents())
+                    if (d == doc) return p.get();
+        return nullptr;
     }
 
     // RmlUi brings a document to the front when something on it takes the keyboard (a click): a window under
@@ -791,24 +824,41 @@ struct GameScreens::Impl : Rml::EventListener {
         if (!context) return;
         auto rank = [](const Page* p) { return p->role == ScreenRole::Command ? 1 : 0; };
         const Page* under = nullptr;
+        const Page* above = nullptr; // part 6г5б: the page whose scene behind was just under: it comes next
         bool ui = false;
         for (int i = 0; i < context->GetNumDocuments(); ++i) { // back to front
             Rml::ElementDocument* d = context->GetDocument(i);
             if (!d->IsVisible()) continue;
+            if (const Page* q = behind_of(d)) {
+                if (ui || (above && above != q)) {
+                    restack();
+                    return;
+                }
+                above = q;
+                continue;
+            }
             const Page* p = of(d);
             if (!p) {
+                if (above) {
+                    restack();
+                    return;
+                }
                 ui = true;
                 continue;
             }
-            if (ui || (under && (rank(p) != rank(under) ? rank(p) < rank(under) : p->order < under->order))) {
+            if (ui || (above && above != p) || (under && (rank(p) != rank(under) ? rank(p) < rank(under) : p->order < under->order))) {
                 restack();
                 return;
             }
+            above = nullptr;
             under = p;
         }
+        if (above) restack();
     }
 
     void close(Page& p) {
+        stop_behind(p);
+        p.behind.reset();
         if (!p.doc) return;
         p.doc->RemoveEventListener(Rml::EventId::Click, this);
         context->UnloadDocument(p.doc);
@@ -879,6 +929,7 @@ struct GameScreens::Impl : Rml::EventListener {
         if (!p.root) return;
         if (t < 0) t = progress(p);
         if (p.appear.empty() || t >= 1) {
+            p.alpha = 1;
             p.root->SetProperty("transform", p.fit_transform);
             p.root->RemoveProperty("opacity");
             if (p.dim) p.dim->RemoveProperty("opacity");
@@ -903,6 +954,7 @@ struct GameScreens::Impl : Rml::EventListener {
         p.root->SetProperty("transform", buf);
         p.root->SetProperty("opacity", std::to_string(e));
         if (p.dim) p.dim->SetProperty("opacity", std::to_string(e)); // the veil comes and goes with it
+        p.alpha = e; // and its scene behind
     }
     f32 progress(const Page& p) const {
         if (!p.move_start) return 1;
@@ -970,19 +1022,69 @@ struct GameScreens::Impl : Rml::EventListener {
     // that has music, else a menu's, else the place's the game set, else a
     // screen's over the world (by name, so it does not depend on the order
     // the files were read in).
-    std::string wanted_music() const {
+    //
+    // Part 6г5б: a page without music of its own whose scene behind has music plays that, by the same choice: `scene` is
+    // that page (its music then "").
+    struct Want {
+        std::string music;
+        const Page* scene = nullptr;
+    };
+    Want wanted_music() const {
         const Page* top = nullptr;
         auto rank = [](const Page& p) { return p.role == ScreenRole::Command ? 2 : p.role == ScreenRole::Menu ? 1 : 0; };
+        auto scene_music = [](const Page& p) { return p.music.empty() && p.behind && p.behind->has_music(); };
         for (const auto& page : pages) {
             const Page& p = *page;
-            if (!p.doc || !p.visible || p.music.empty()) continue;
+            if (!p.doc || !p.visible || (p.music.empty() && !scene_music(p))) continue;
             if (!top || rank(p) > rank(*top) ||
                 (rank(p) == rank(*top) && (p.role == ScreenRole::Command ? p.order > top->order : p.name < top->name)))
                 top = &p;
         }
-        if (top && rank(*top) > 0) return top->music;
-        if (!place_music.empty()) return place_music;
-        return top ? top->music : std::string();
+        auto of = [&](const Page& p) { return scene_music(p) ? Want{{}, &p} : Want{p.music, nullptr}; };
+        if (top && rank(*top) > 0) return of(*top);
+        if (!place_music.empty()) return {place_music, nullptr};
+        return top ? of(*top) : Want{};
+    }
+
+    // Part 6г5б: a page's scene behind stops (the page is hidden, read again, or goes).
+    void stop_behind(Page& p) {
+        p.behind_tried = false;
+        p.behind_tunes.clear();
+        if (p.behind && p.behind->going()) p.behind->drop();
+    }
+
+    // A page drawn now (shown, or still going away) whose scene behind has not begun since it was hidden begins it, from
+    // its start: false when it did not (none such in the game: said once, the page shows without it). A page not drawn
+    // stops its own.
+    bool begin_behind(Page& p) {
+        const bool drawn = p.doc && p.doc->IsVisible() && !p.scene_behind.empty();
+        if (!drawn) {
+            stop_behind(p);
+            return false;
+        }
+        if (p.behind_tried) return false;
+        p.behind_tried = true;
+        if (!p.behind) {
+            p.behind = std::make_unique<GameScene>();
+            Page* page = &p;
+            p.behind->on_sound = [this](const std::string& file) {
+                if (self->on_sound) self->on_sound(file);
+            };
+            p.behind->on_music = [page](const std::vector<SceneTune>& tunes, f64) { page->behind_tunes = tunes; };
+        }
+        p.behind->set_ui(scene_ui);
+        SceneHow how;
+        how.pause = false;
+        how.skip = false;
+        how.behind = true;
+        std::string why = "игра не сказала, где её сцены";
+        if (game_dir.empty() || !p.behind->play(context, game_dir, p.scene_behind, how, why)) {
+            const std::string line = "экран «" + p.name + "»: сцена позади не идёт (" + why + "): экран показан без неё";
+            if (said_behind.insert(line).second) FORGE_WARN("%s", line.c_str());
+            return false;
+        }
+        p.behind_last = now();
+        return true;
     }
 
     // The cell an element is in, if any.
@@ -1056,6 +1158,7 @@ void GameScreens::load(Rml::Context* context, const fs::path& game_dir, bool wat
     unload();
     impl_->context = context;
     impl_->dir = game_dir / "ui";
+    impl_->game_dir = game_dir;
     impl_->watch = watch;
     impl_->next_poll = 0;
     impl_->poll();
@@ -1153,12 +1256,30 @@ void GameScreens::update(const Vars& vars, bool playing, bool menu, int width, i
             }
         }
     }
+    // Part 6г5б: the scenes behind the pages drawn begin (right under their pages), those of pages gone stop.
+    for (auto& page : impl_->pages)
+        if (impl_->begin_behind(*page)) restacked = true;
     if (restacked) impl_->restack();
     impl_->keep_order();
+    // They go on by the screens' clock (the world paused under a window too), as much of them showing as their pages.
+    for (auto& page : impl_->pages) {
+        Page& p = *page;
+        if (!p.behind || !p.behind->going()) continue;
+        const u64 now = impl_->now();
+        const f64 dt = now > p.behind_last ? static_cast<f64>(now - p.behind_last) * 1e-9 : 0.0;
+        p.behind_last = now;
+        p.behind->set_alpha(p.alpha);
+        p.behind->update(dt, width, height);
+    }
     impl_->play_clips(*this);
-    if (std::string m = impl_->wanted_music(); m != impl_->music) {
-        impl_->music = std::move(m);
+    Impl::Want want = impl_->wanted_music();
+    if (want.music != impl_->music) {
+        impl_->music = std::move(want.music);
         if (on_music) on_music(impl_->music);
+    }
+    if (std::vector<SceneTune> tunes = want.scene ? want.scene->behind_tunes : std::vector<SceneTune>{}; tunes != impl_->scene_music) {
+        impl_->scene_music = std::move(tunes);
+        if (on_scene_music) on_scene_music(impl_->scene_music);
     }
 }
 
@@ -1171,6 +1292,26 @@ const std::string& GameScreens::place_music() const { return impl_->place_music;
 void GameScreens::stop_music() {
     impl_->music.clear();
     if (on_music) on_music({});
+    impl_->scene_music.clear();
+    if (on_scene_music) on_scene_music({});
+}
+
+const std::vector<SceneTune>& GameScreens::scene_music() const { return impl_->scene_music; }
+
+void GameScreens::set_game_dir(const fs::path& game_dir) { impl_->game_dir = game_dir; }
+
+void GameScreens::set_ui(ui::Ui* ui) { impl_->scene_ui = ui; }
+
+const GameScene* GameScreens::scene_behind(std::string_view name) const {
+    for (const auto& p : impl_->pages)
+        if (p->name == name) return p->behind && p->behind->going() ? p->behind.get() : nullptr;
+    return nullptr;
+}
+
+std::string GameScreens::scene_behind_name(std::string_view name) const {
+    for (const auto& p : impl_->pages)
+        if (p->name == name) return p->scene_behind;
+    return {};
 }
 
 bool GameScreens::has_focus(Rml::Context* context) const {
