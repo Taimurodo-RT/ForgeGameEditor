@@ -1,0 +1,528 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Reaction",
+  "description": "A rule of reaction to a stimulus.",
+  "type": "object",
+  "properties": {
+    "cooldown": {
+      "$ref": "#/$defs/Int_0_2147483647"
+    },
+    "filter": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Cond"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "graph": {
+      "$ref": "#/$defs/Ref"
+    },
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "memory_minutes": {
+      "$ref": "#/$defs/Int_0_2147483647"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "response": {
+      "$ref": "#/$defs/Response"
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "stimulus": {
+      "$ref": "#/$defs/Ref"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "stimulus",
+    "graph",
+    "response",
+    "memory_minutes",
+    "cooldown"
+  ],
+  "$defs": {
+    "Cond": {
+      "description": "A condition. JSON form: an object with one key, the operation name.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "stock_gte": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "$ref": "#/$defs/Tag"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_m327680000_327670000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stock_gte"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "has_tag": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "$ref": "#/$defs/Tag"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "has_tag"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flag_is": {
+              "type": "object",
+              "properties": {
+                "flag": {
+                  "$ref": "#/$defs/LocalId"
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "flag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flag_is"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "time_between": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "$ref": "#/$defs/TimeOfDay"
+                },
+                "to": {
+                  "$ref": "#/$defs/TimeOfDay"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "from",
+                "to"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "time_between"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "all": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Cond"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "all"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "any": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Cond"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "any"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Cond"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "not"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need_below": {
+              "type": "object",
+              "properties": {
+                "need": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_0_1000000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "need",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "need_below"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need_above": {
+              "type": "object",
+              "properties": {
+                "need": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_0_1000000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "need",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "need_above"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "has_trait": {
+              "type": "object",
+              "properties": {
+                "trait": {
+                  "$ref": "#/$defs/Ref"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "trait"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "has_trait"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "day_part_is": {
+              "type": "object",
+              "properties": {
+                "part": {
+                  "$ref": "#/$defs/LocalId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "part"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "day_part_is"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event_phase_is": {
+              "type": "object",
+              "properties": {
+                "event": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "phase": {
+                  "$ref": "#/$defs/LocalId"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "event",
+                "phase"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "event_phase_is"
+          ]
+        }
+      ]
+    },
+    "Effect": {
+      "description": "An effect. JSON form: an object with one key, the operation name.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "stock_add": {
+              "type": "object",
+              "properties": {
+                "tag": {
+                  "$ref": "#/$defs/Tag"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_m327680000_327670000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "tag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stock_add"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "set_flag": {
+              "type": "object",
+              "properties": {
+                "flag": {
+                  "$ref": "#/$defs/LocalId"
+                },
+                "value": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "flag",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "set_flag"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "emit_stimulus": {
+              "type": "object",
+              "properties": {
+                "stimulus": {
+                  "$ref": "#/$defs/Ref"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "stimulus"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "emit_stimulus"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need_add": {
+              "type": "object",
+              "properties": {
+                "need": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_m327680000_327670000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "need",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "need_add"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "emotion_add": {
+              "type": "object",
+              "properties": {
+                "emotion": {
+                  "$ref": "#/$defs/Ref"
+                },
+                "value": {
+                  "$ref": "#/$defs/Num_m327680000_327670000"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "emotion",
+                "value"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "emotion_add"
+          ]
+        }
+      ]
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "Int_0_2147483647": {
+      "type": "integer",
+      "maximum": 2147483647,
+      "minimum": 0
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "LocalId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Num_0_1000000": {
+      "type": "number",
+      "maximum": 100.0,
+      "minimum": 0.0,
+      "multipleOf": 0.0001
+    },
+    "Num_m327680000_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": -32768.0,
+      "multipleOf": 0.0001
+    },
+    "PhaseAction": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/Ref"
+        },
+        "bucket": {
+          "$ref": "#/$defs/LocalId"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "bucket"
+      ]
+    },
+    "Ref": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "Response": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Effect"
+          }
+        },
+        {
+          "$ref": "#/$defs/PhaseAction"
+        }
+      ]
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    }
+  }
+}

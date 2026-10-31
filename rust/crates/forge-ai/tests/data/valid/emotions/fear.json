@@ -1,0 +1,8 @@
+{
+  "curve": "curve.linear_up",
+  "decay_minutes": 120,
+  "id": "emotion.fear",
+  "name": "loc.emotion.fear.name",
+  "schema": "emotion/1",
+  "tags": []
+}

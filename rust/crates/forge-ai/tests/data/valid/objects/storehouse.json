@@ -1,0 +1,31 @@
+{
+  "advertises": [
+    {
+      "action": "action.eat",
+      "slots": [
+        "door"
+      ]
+    }
+  ],
+  "id": "object.storehouse",
+  "name": "loc.object.storehouse.name",
+  "perception_radius": 40,
+  "schema": "object/1",
+  "slots": [
+    {
+      "facing": "s",
+      "id": "door",
+      "offset": [
+        1,
+        0
+      ]
+    }
+  ],
+  "stock": {
+    "food": {
+      "max": 50,
+      "start": 10
+    }
+  },
+  "tags": []
+}

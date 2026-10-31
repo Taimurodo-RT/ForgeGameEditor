@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Trait",
+  "description": "A character trait: only multipliers, no logic of its own.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "modifiers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Modifier"
+      }
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "modifiers"
+  ],
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "ModField": {
+      "type": "string",
+      "enum": [
+        "decay",
+        "weight",
+        "sensitivity"
+      ]
+    },
+    "Modifier": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/ModField"
+        },
+        "mul": {
+          "$ref": "#/$defs/Num_m327680000_327670000"
+        },
+        "target": {
+          "description": "A need (`decay`), an action (`weight`) or a stimulus (`sensitivity`).",
+          "$ref": "#/$defs/Ref"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "field",
+        "mul"
+      ]
+    },
+    "Num_m327680000_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": -32768.0,
+      "multipleOf": 0.0001
+    },
+    "Ref": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "blocks": [
+    {
+      "from": "22:00",
+      "kind": "sleep",
+      "to": "06:00"
+    },
+    {
+      "from": "06:00",
+      "kind": "work",
+      "to": "18:00"
+    },
+    {
+      "from": "18:00",
+      "kind": "free",
+      "to": "22:00"
+    }
+  ],
+  "id": "schedule.worker",
+  "name": "loc.schedule.worker.name",
+  "schema": "schedule/1",
+  "tags": [],
+  "weights": {
+    "free": {
+      "leisure": 2,
+      "social": 1.5
+    },
+    "sleep": {
+      "sleep": 3
+    },
+    "work": {
+      "eat": 1,
+      "work": 2
+    }
+  }
+}

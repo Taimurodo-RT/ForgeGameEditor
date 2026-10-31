@@ -1,0 +1,38 @@
+{
+  "edges": [
+    {
+      "from": "x.value",
+      "to": "comp.x"
+    }
+  ],
+  "id": "subgraph.dim",
+  "inputs": [
+    {
+      "id": "x",
+      "type": "unit"
+    }
+  ],
+  "kind": "subgraph",
+  "name": "loc.subgraph.dim.name",
+  "nodes": [
+    {
+      "id": "x",
+      "op": "subgraph_input",
+      "params": {
+        "input": "x"
+      }
+    },
+    {
+      "id": "comp",
+      "op": "compensate",
+      "params": {
+        "n": 2
+      }
+    }
+  ],
+  "outputs": {
+    "out": "comp.out"
+  },
+  "schema": "subgraph/1",
+  "tags": []
+}

@@ -1,0 +1,18 @@
+{
+  "clamp": true,
+  "id": "curve.linear_up",
+  "input_range": [
+    0,
+    1
+  ],
+  "kind": "linear",
+  "name": "loc.curve.linear_up.name",
+  "params": {
+    "b": 0,
+    "c": 0,
+    "k": 1,
+    "m": 1
+  },
+  "schema": "curve/1",
+  "tags": []
+}

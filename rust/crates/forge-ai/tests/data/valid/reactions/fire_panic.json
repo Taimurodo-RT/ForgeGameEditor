@@ -1,0 +1,25 @@
+{
+  "cooldown": 30,
+  "filter": {
+    "not": {
+      "has_trait": {
+        "trait": "trait.glutton"
+      }
+    }
+  },
+  "graph": "graph.fire_strength",
+  "id": "reaction.fire_panic",
+  "memory_minutes": 120,
+  "name": "loc.reaction.fire_panic.name",
+  "response": [
+    {
+      "emotion_add": {
+        "emotion": "emotion.fear",
+        "value": 0.6
+      }
+    }
+  ],
+  "schema": "reaction/1",
+  "stimulus": "stimulus.fire",
+  "tags": []
+}

@@ -1,0 +1,13 @@
+{
+  "id": "trait.glutton",
+  "modifiers": [
+    {
+      "field": "decay",
+      "mul": 1.3,
+      "target": "need.food"
+    }
+  ],
+  "name": "loc.trait.glutton.name",
+  "schema": "trait/1",
+  "tags": []
+}

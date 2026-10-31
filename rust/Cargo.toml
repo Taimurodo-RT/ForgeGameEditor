@@ -1,7 +1,7 @@
 # Forge on Rust. The C++ engine stays the working version until everything here is ported; see README.md.
 [workspace]
 resolver = "3"
-members = ["crates/forge-world", "crates/forge-input", "apps/world-demo"]
+members = ["crates/forge-world", "crates/forge-input", "crates/forge-ai", "apps/world-demo"]
 
 [workspace.package]
 edition = "2024"

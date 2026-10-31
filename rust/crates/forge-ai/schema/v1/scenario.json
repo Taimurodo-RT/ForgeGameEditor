@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Scenario",
+  "description": "A test scenario. Its body arrives with stage 2; until then only the header is checked.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "meta": {
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "schema": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    }
+  },
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags"
+  ],
+  "$defs": {
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    }
+  }
+}

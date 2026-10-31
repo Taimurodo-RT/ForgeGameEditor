@@ -1,0 +1,10 @@
+{
+  "id": "role.cook",
+  "name": "loc.role.cook.name",
+  "priorities": {
+    "job.haul": 1
+  },
+  "schedule": "schedule.worker",
+  "schema": "role/1",
+  "tags": []
+}

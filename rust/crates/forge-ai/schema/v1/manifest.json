@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Manifest",
+  "description": "`manifest.json`: what the Forge game can do. Forge writes it, nobody edits it by hand.",
+  "type": "object",
+  "properties": {
+    "animations": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LogicalName"
+      }
+    },
+    "channels": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LocalId"
+      }
+    },
+    "effects": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LogicalName"
+      }
+    },
+    "format": {
+      "$ref": "#/$defs/Int_1_1"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ManifestInput"
+      }
+    },
+    "sounds": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/LogicalName"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ManifestStep"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format"
+  ],
+  "$defs": {
+    "ArgType": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "real",
+        "int",
+        "bool",
+        "minutes",
+        "tag",
+        "logical_name",
+        "ref"
+      ]
+    },
+    "Int_1_1": {
+      "type": "integer",
+      "maximum": 1,
+      "minimum": 1
+    },
+    "LocalId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "LogicalName": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "ManifestInput": {
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Argument name → type; a name ending in `?` is optional.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ArgType"
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "type": {
+          "$ref": "#/$defs/PortType"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ]
+    },
+    "ManifestStep": {
+      "type": "object",
+      "properties": {
+        "args": {
+          "description": "Argument name → type; a name ending in `?` is optional.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ArgType"
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "result_reasons": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/LocalId"
+          }
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version"
+      ]
+    },
+    "PortType": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "real",
+        "bool",
+        "entity",
+        "flow",
+        "tag"
+      ]
+    }
+  }
+}

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Curve",
+  "description": "A response curve.",
+  "type": "object",
+  "properties": {
+    "clamp": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "default": null
+    },
+    "id": {
+      "$ref": "#/$defs/Id"
+    },
+    "input_range": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Num_m327680000_327670000"
+      },
+      "maxItems": 2,
+      "minItems": 2
+    },
+    "kind": {
+      "$ref": "#/$defs/CurveKind"
+    },
+    "meta": {
+      "description": "Free data for your own needs; the runtime never reads it.",
+      "default": null
+    },
+    "name": {
+      "$ref": "#/$defs/LocKey"
+    },
+    "params": {
+      "$ref": "#/$defs/CurveParams"
+    },
+    "schema": {
+      "description": "`<kind>/<version>`, for example `action/1`.",
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "schema",
+    "name",
+    "tags",
+    "kind",
+    "params",
+    "input_range"
+  ],
+  "$defs": {
+    "CurveKind": {
+      "type": "string",
+      "enum": [
+        "linear",
+        "poly",
+        "logistic",
+        "step",
+        "points"
+      ]
+    },
+    "CurveParams": {
+      "type": "object",
+      "properties": {
+        "b": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "c": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "k": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "m": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Num_m327680000_327670000"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "points": {
+          "description": "`[x, y]` pairs, x ascending, from 2 to 32 points.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/Num_0_10000"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z]+\\.[a-z][a-z0-9_]*(\\.[a-z0-9_]+)*$"
+    },
+    "LocKey": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^loc(\\.[a-z0-9_]+)+$"
+    },
+    "Num_0_10000": {
+      "type": "number",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "multipleOf": 0.0001
+    },
+    "Num_m327680000_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": -32768.0,
+      "multipleOf": 0.0001
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    }
+  }
+}

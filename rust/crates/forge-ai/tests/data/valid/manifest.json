@@ -1,0 +1,62 @@
+{
+  "animations": [
+    "celebrate",
+    "eat",
+    "panic"
+  ],
+  "channels": [
+    "hearing",
+    "rumor",
+    "sight"
+  ],
+  "effects": [],
+  "format": 1,
+  "inputs": [
+    {
+      "id": "light_level",
+      "type": "unit"
+    },
+    {
+      "args": {
+        "tag": "tag"
+      },
+      "id": "stock_shortage",
+      "type": "unit"
+    }
+  ],
+  "sounds": [
+    "bell"
+  ],
+  "steps": [
+    {
+      "args": {
+        "speed_mul?": "real"
+      },
+      "id": "goto_slot",
+      "result_reasons": [
+        "blocked",
+        "no_path"
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "args": {
+        "count": "int",
+        "tag": "tag"
+      },
+      "id": "take_item",
+      "result_reasons": [
+        "empty"
+      ],
+      "version": "1.0.0"
+    },
+    {
+      "args": {
+        "animation": "logical_name",
+        "minutes": "minutes"
+      },
+      "id": "play_animation",
+      "version": "1.0.0"
+    }
+  ]
+}

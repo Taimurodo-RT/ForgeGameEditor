@@ -1,0 +1,27 @@
+{
+  "id": "curve.hunger",
+  "input_range": [
+    0,
+    1
+  ],
+  "kind": "points",
+  "name": "loc.curve.hunger.name",
+  "params": {
+    "points": [
+      [
+        0,
+        0
+      ],
+      [
+        0.5,
+        0.2
+      ],
+      [
+        1,
+        1
+      ]
+    ]
+  },
+  "schema": "curve/1",
+  "tags": []
+}
