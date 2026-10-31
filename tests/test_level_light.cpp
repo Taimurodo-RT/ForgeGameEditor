@@ -15,9 +15,11 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -268,6 +270,61 @@ TEST_CASE("lamp light: two lamps, the brightest wins per channel; a large radius
     CHECK(coarse.at(50, 50) > 0);
     CHECK(coarse.at(54, 50) > 0);   // cell centre 109: 8.5 tiles
     CHECK(coarse.at(55, 50) == 0.0f); // 111: 10.5
+}
+
+// tests/data/lamp_light.txt: the light of lamps over one grid; rust/crates/forge-render/tests/lamp_parity.rs reads
+// it too, so lamps light a level the same in both versions.
+TEST_CASE("lamp light: the grid of tests/data/lamp_light.txt is lit as the file says") {
+    // 48 × 36 cells from tile -10, -6: a rock wall, a closed block, water.
+    const auto kind_of = [](i32 cx, i32 cy) -> u32 {
+        if (cx == 20 && cy < 26) return 2;
+        if (cx >= 30 && cx < 34 && cy >= 10 && cy < 16) return 3;
+        if (cy == 28 || (cx < 10 && (cx + cy) % 11 == 0)) return 1;
+        return 0;
+    };
+    constexpr u32 w = 48, h = 36;
+    std::vector<u32> cells(w * h);
+    for (u32 i = 0; i < w * h; ++i) cells[i] = kind_of(static_cast<i32>(i % w), static_cast<i32>(i / w)) << 30;
+    std::ifstream file(fs::path(FORGE_SOURCE_DIR) / "tests/data/lamp_light.txt");
+    REQUIRE(file);
+    std::vector<PointLight> lamps;
+    struct Lit {
+        u32 step, x, y;
+        f32 rgb[3];
+    };
+    std::vector<Lit> want;
+    std::string word;
+    while (file >> word) {
+        if (word[0] == '#') {
+            std::getline(file, word);
+        } else if (word == "lamp") {
+            PointLight l;
+            file >> l.x >> l.y >> l.r >> l.g >> l.b >> l.radius;
+            lamps.push_back(l);
+        } else {
+            REQUIRE(word == "cell");
+            Lit c{};
+            file >> c.step >> c.x >> c.y >> c.rgb[0] >> c.rgb[1] >> c.rgb[2];
+            want.push_back(c);
+        }
+    }
+    REQUIRE(lamps.size() == 6);
+    usize lit = 0;
+    for (u32 step : {1u, 2u}) {
+        std::vector<f32> rgb;
+        render::lamp_light(cells.data(), w, h, -10, -6, step, kTransmit, lamps, rgb);
+        std::vector<f32> expect(rgb.size(), 0.0f);
+        for (const Lit& c : want)
+            if (c.step == step)
+                for (u32 k = 0; k < 3; ++k) expect[(c.y * w + c.x) * 3 + k] = c.rgb[k];
+        for (usize i = 0; i < rgb.size(); ++i) {
+            CAPTURE(step);
+            CAPTURE(i / 3);
+            CHECK(std::fabs(rgb[i] - expect[i]) <= 1e-6f * std::max(expect[i], 1.0f));
+        }
+        for (usize i = 0; i < rgb.size(); i += 3) lit += (expect[i] > 0 || expect[i + 1] > 0 || expect[i + 2] > 0);
+    }
+    CHECK(lit == want.size());
 }
 
 TEST_CASE("sky through a day: noon is the light of before, evenings in between, across midnight") {

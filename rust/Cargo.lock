@@ -817,6 +817,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "forge-world",
+ "rayon",
+]
+
+[[package]]
 name = "forge-world"
 version = "0.1.0"
 dependencies = [

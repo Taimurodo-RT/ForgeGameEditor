@@ -1,0 +1,12 @@
+[package]
+name = "forge-render"
+description = "Forge's renderer on Rust (wgpu), ported from engine/render"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-world.workspace = true
+rayon.workspace = true
+bytemuck.workspace = true
