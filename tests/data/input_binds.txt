@@ -1,0 +1,103 @@
+# A bind as text, the text it is written back as and its words for the player; "-" when the text names nothing.
+# Both engine/input (tests/test_input.cpp) and rust/crates/forge-input (tests/parity.rs) check every line:
+# a bind in input.json or settings.json means the same in both versions.
+# Columns are separated by tabs.
+key:Space	key:Space	Пробел
+key:space	key:Space	Пробел
+key:A	key:A	A
+key:a	key:A	A
+key:Z	key:Z	Z
+key:0	key:0	0
+key:9	key:9	9
+key:Return	key:Return	Enter
+key:Escape	key:Escape	Esc
+key:Backspace	key:Backspace	Backspace
+key:Tab	key:Tab	Tab
+key:-	key:-	-
+key:=	key:=	=
+key:[	key:[	[
+key:]	key:]	]
+key:\	key:\	\
+key:;	key:;	;
+key:'	key:'	'
+key:`	key:`	`
+key:,	key:,	,
+key:.	key:.	.
+key:/	key:/	/
+key:CapsLock	key:CapsLock	CapsLock
+key:F1	key:F1	F1
+key:F5	key:F5	F5
+key:F12	key:F12	F12
+key:F13	key:F13	F13
+key:F24	key:F24	F24
+key:PrintScreen	key:PrintScreen	PrintScreen
+key:ScrollLock	key:ScrollLock	ScrollLock
+key:Pause	key:Pause	Pause
+key:Insert	key:Insert	Insert
+key:Home	key:Home	Home
+key:PageUp	key:PageUp	PageUp
+key:Delete	key:Delete	Delete
+key:End	key:End	End
+key:PageDown	key:PageDown	PageDown
+key:Left	key:Left	←
+key:Right	key:Right	→
+key:Up	key:Up	↑
+key:Down	key:Down	↓
+key:Numlock	key:Numlock	Numlock
+key:Keypad /	key:Keypad /	Keypad /
+key:Keypad *	key:Keypad *	Keypad *
+key:Keypad -	key:Keypad -	Keypad -
+key:Keypad +	key:Keypad +	Keypad +
+key:Keypad Enter	key:Keypad Enter	Enter (цифровой блок)
+key:Keypad 1	key:Keypad 1	Keypad 1
+key:Keypad 0	key:Keypad 0	Keypad 0
+key:Keypad .	key:Keypad .	Keypad .
+key:Application	key:Application	Application
+key:Left Ctrl	key:Left Ctrl	Левый Ctrl
+key:Left Shift	key:Left Shift	Левый Shift
+key:Left Alt	key:Left Alt	Левый Alt
+key:Left GUI	key:Left GUI	Left GUI
+key:Right Ctrl	key:Right Ctrl	Правый Ctrl
+key:Right Shift	key:Right Shift	Правый Shift
+key:Right Alt	key:Right Alt	Правый Alt
+key:Right GUI	key:Right GUI	Right GUI
+mouse:left	mouse:left	Левая кнопка мыши
+mouse:right	mouse:right	Правая кнопка мыши
+mouse:middle	mouse:middle	Средняя кнопка мыши
+mouse:x1	mouse:x1	Кнопка мыши 4
+mouse:x2	mouse:x2	Кнопка мыши 5
+pad:south	pad:south	Геймпад: A (нижняя)
+pad:east	pad:east	Геймпад: B (правая)
+pad:west	pad:west	Геймпад: X (левая)
+pad:north	pad:north	Геймпад: Y (верхняя)
+pad:back	pad:back	Геймпад: Back
+pad:guide	pad:guide	Геймпад: Guide
+pad:start	pad:start	Геймпад: Start
+pad:ls	pad:ls	Геймпад: левый стик (нажатие)
+pad:rs	pad:rs	Геймпад: правый стик (нажатие)
+pad:lb	pad:lb	Геймпад: левый бампер
+pad:rb	pad:rb	Геймпад: правый бампер
+pad:dpup	pad:dpup	Геймпад: крестовина ↑
+pad:dpdown	pad:dpdown	Геймпад: крестовина ↓
+pad:dpleft	pad:dpleft	Геймпад: крестовина ←
+pad:dpright	pad:dpright	Геймпад: крестовина →
+pad:leftx-	pad:leftx-	Геймпад: левый стик ←
+pad:leftx+	pad:leftx+	Геймпад: левый стик →
+pad:lefty-	pad:lefty-	Геймпад: левый стик ↑
+pad:lefty+	pad:lefty+	Геймпад: левый стик ↓
+pad:rightx-	pad:rightx-	Геймпад: правый стик ←
+pad:rightx+	pad:rightx+	Геймпад: правый стик →
+pad:righty-	pad:righty-	Геймпад: правый стик ↑
+pad:righty+	pad:righty+	Геймпад: правый стик ↓
+pad:lt	pad:lt	Геймпад: левый курок
+pad:rt	pad:rt	Геймпад: правый курок
+key:	-	-
+key:Пробел	-	-
+key:NoSuchKey	-	-
+Space	-	-
+mouse:side	-	-
+mouse:LEFT	-	-
+pad:z	-	-
+pad:leftx	-	-
+pad:South	-	-
+joy:1	-	-

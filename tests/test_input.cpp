@@ -10,6 +10,8 @@
 #include <SDL3/SDL.h>
 #include <doctest/doctest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -71,6 +73,34 @@ TEST_CASE("input: a bind is read and written back as the same text, and has word
         CHECK_MESSAGE(!parse(bad, b), bad);
     // The key's place, not the letter: the same text whatever the layout.
     CHECK(B("key:W").code == SDL_SCANCODE_W);
+}
+
+// tests/data/input_binds.txt: the Rust version (rust/crates/forge-input/tests/parity.rs) reads every line the same.
+TEST_CASE("input: every bind of tests/data/input_binds.txt reads as the fixture says") {
+    std::ifstream file(std::filesystem::path(FORGE_SOURCE_DIR) / "tests/data/input_binds.txt");
+    REQUIRE(file);
+    std::string line;
+    int lines = 0;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> cols;
+        size_t from = 0;
+        for (size_t tab; (tab = line.find('\t', from)) != std::string::npos; from = tab + 1)
+            cols.push_back(line.substr(from, tab - from));
+        cols.push_back(line.substr(from));
+        REQUIRE_MESSAGE((cols.size() == 2 || cols.size() == 3), line);
+        Bind b;
+        if (cols[1] == "-") {
+            CHECK_MESSAGE(!parse(cols[0], b), cols[0]);
+        } else {
+            REQUIRE_MESSAGE(parse(cols[0], b), cols[0]);
+            CHECK_MESSAGE(format(b) == cols[1], cols[0]);
+            CHECK_MESSAGE(words(b) == cols[2], cols[0]);
+        }
+        ++lines;
+    }
+    CHECK(lines > 50);
 }
 
 TEST_CASE("input: the module's defaults, then the author's choice, then the player's") {
