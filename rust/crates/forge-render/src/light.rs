@@ -490,8 +490,12 @@ impl LightGrid {
             for b in &boxes {
                 merge_lamp(b, gw, &mut lamp_rgb);
             }
-            lamp_packed =
-                lamp_rgb.chunks_exact(3).map(|c| channel(c[0]) | channel(c[1]) << 10 | channel(c[2]) << 20).collect();
+            lamp_packed = lamp_rgb
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|c| channel(c[0]) | channel(c[1]) << 10 | channel(c[2]) << 20)
+                .collect();
         }
         LightGrid {
             cells,

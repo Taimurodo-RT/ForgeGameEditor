@@ -170,7 +170,7 @@ impl ParticleSystem {
         let particles = gpu::buffer(device, "particles", capacity as u64 * PARTICLE_BYTES, U::STORAGE | U::COPY_DST);
         // Every slot starts dead (age >= life).
         let mut dead = vec![0.0f32; capacity as usize * 12];
-        for p in dead.chunks_exact_mut(12) {
+        for p in dead.as_chunks_mut::<12>().0 {
             p[4] = 1.0; // age 1, life 0
         }
         queue.write_buffer(&particles, 0, bytemuck::cast_slice(&dead));
