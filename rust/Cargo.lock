@@ -822,7 +822,10 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "forge-world",
+ "log",
+ "pollster",
  "rayon",
+ "wgpu",
 ]
 
 [[package]]

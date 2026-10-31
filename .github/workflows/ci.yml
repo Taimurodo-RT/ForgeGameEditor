@@ -23,14 +23,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: rust
-      - name: libudev for the gamepads (gilrs), Linux
+      - name: libudev for the gamepads (gilrs) and software Vulkan for the render tests, Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev mesa-vulkan-drivers
       - name: Formatting
         run: cargo fmt --all --check
       - name: Clippy, warnings are errors
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-      - name: Tests (the same chunks, saves and binds as C++, tests/data)
+      - name: Tests (the same chunks, saves, binds and lamp light as C++, tests/data; pictures on a video card)
         run: cargo test --workspace --all-features --locked
       - name: World demo, 3 s headless (streaming and the crowd, no window)
         run: cargo run --release --locked -p forge-world-demo -- --headless 3 --crowd 20000

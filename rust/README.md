@@ -10,7 +10,9 @@ application with a bridge to Forge.
 
 | Folder | What | Ported from |
 |---|---|---|
-| `crates/forge-world` | tile worlds in 64 × 64 chunks: sample generators, streaming around a focus | `engine/world` |
+| `crates/forge-world` | tile worlds in 64 × 64 chunks: sample generators, streaming around a focus, saves in region files | `engine/world` |
+| `crates/forge-input` | actions and their binds (`input.json`), keyboard, mouse and gamepads | `engine/input` |
+| `crates/forge-render` | camera, tiles, sprites, particles on the video card, light and shadow | `engine/render` |
 | `apps/world-demo` | the big-world demo: flight over a 64k × 64k world, 200k creatures, 1M particles | `apps/world_demo` |
 
     cargo test --workspace                         every test
@@ -18,7 +20,9 @@ application with a bridge to Forge.
 
 `crates/forge-world/tests/parity.rs` checks that the generators make the same tiles as C++: both it and
 `tests/test_world.cpp` check the chunk hashes in `tests/data/world_chunks.txt`. Ported modules get such a check
-wherever C++ and Rust must agree.
+wherever C++ and Rust must agree: `tests/data/world_save` (region files), `tests/data/input_binds.txt` (binds),
+`tests/data/lamp_light.txt` (lamps with a radius). `crates/forge-render/tests/render.rs` draws on a real video card
+(software Vulkan on CI) and checks the picture.
 
 CI (`.github/workflows/ci.yml`, job `rust`) runs rustfmt, clippy with warnings as errors, the tests and a headless
 demo on Windows and Linux.
