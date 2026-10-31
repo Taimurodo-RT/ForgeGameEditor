@@ -332,7 +332,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: ./build/apps/editor/Release/forge_editor.exe --self-test
-      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template, modules, animation, pixel, frame-limit, pixel-motion, input, rpg-template, match3-template, images, ui-scale and vector-live, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
+      - name: New game from a template on Windows (editor self-test parts new-game, two-games, levels with links between levels, platformer, platformer-template, modules, animation, pixel, frame-limit, input, rpg-template, match3-template, images, ui-scale and vector-live, each game in an editor of its own) and the games in the package, the build's forge_game and forge_slice
         if: runner.os == 'Windows'
         shell: bash
         run: |
@@ -345,7 +345,6 @@ jobs:
           ./build/apps/editor/Release/forge_editor.exe --self-test animation
           ./build/apps/editor/Release/forge_editor.exe --self-test pixel
           ./build/apps/editor/Release/forge_editor.exe --self-test frame-limit
-          ./build/apps/editor/Release/forge_editor.exe --self-test pixel-motion
           ./build/apps/editor/Release/forge_editor.exe --self-test input
           ./build/apps/editor/Release/forge_editor.exe --self-test rpg-template
           ./build/apps/editor/Release/forge_editor.exe --self-test match3-template
@@ -365,3 +364,19 @@ jobs:
         with:
           name: world-screenshots
           path: world-*.png
+
+  # The motion tab's self-test is the longest of all on Windows (about two hours with the software device), so it runs
+  # on a machine of its own, next to the build job, which runs the other parts. It needs only the editor and what the
+  # editor starts (forge_game, forge_slice, the converters' Python): those targets are built, not the benchmarks,
+  # demos and tests.
+  editor-windows-motion:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Configure
+        run: cmake -S . -B build
+      - name: Build the editor
+        run: cmake --build build --config Release --parallel --target forge_editor_app
+      - name: The motion tab of «Векторная» on Windows (editor self-test part pixel-motion, the same as on Linux)
+        shell: bash
+        run: ./build/apps/editor/Release/forge_editor.exe --self-test pixel-motion
