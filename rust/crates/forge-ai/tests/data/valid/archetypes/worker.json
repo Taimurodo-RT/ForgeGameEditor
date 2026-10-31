@@ -1,0 +1,17 @@
+{
+  "category_weights": {
+    "eat": 1,
+    "work": 1.5
+  },
+  "curves": {
+    "curve.hunger": "curve.linear_up"
+  },
+  "id": "archetype.worker",
+  "name": "loc.archetype.worker.name",
+  "schedule": "schedule.worker",
+  "schema": "archetype/1",
+  "tags": [],
+  "traits": [
+    "trait.glutton"
+  ]
+}

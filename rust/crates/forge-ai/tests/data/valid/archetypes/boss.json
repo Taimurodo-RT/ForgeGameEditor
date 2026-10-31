@@ -1,0 +1,9 @@
+{
+  "id": "archetype.boss",
+  "mode": "choice",
+  "move_speed": 4.5,
+  "name": "loc.archetype.boss.name",
+  "schema": "archetype/1",
+  "tags": [],
+  "think_ticks": 1
+}

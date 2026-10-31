@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project",
+  "description": "`project.json`. It has no resource header: it is the root of the folder.",
+  "type": "object",
+  "properties": {
+    "buckets": {
+      "description": "From 1 to 5 priority groups, strongest first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Bucket"
+      }
+    },
+    "calendar": {
+      "$ref": "#/$defs/Calendar"
+    },
+    "day_parts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DayPart"
+      }
+    },
+    "far_think_minutes": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Int_0_2147483647"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "format": {
+      "description": "Project format version. Format 0 (28.10.2026) is migrated, see `migrate`.",
+      "$ref": "#/$defs/Int_0_1"
+    },
+    "inertia": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Num_10000_20000"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/LocalId"
+      }
+    },
+    "memory_limit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Int_8_1024"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "meta": {
+      "default": null
+    },
+    "move_speed": {
+      "description": "Tiles per second of world time.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Num_1_327670000"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stay_ratio": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Num_0_10000"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Tag"
+      }
+    },
+    "think_interval": {
+      "$ref": "#/$defs/Int_1_1440"
+    },
+    "tick_minutes": {
+      "$ref": "#/$defs/Int_1_1440"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "tick_minutes",
+    "think_interval",
+    "day_parts",
+    "calendar",
+    "buckets",
+    "tags",
+    "languages"
+  ],
+  "$defs": {
+    "Bucket": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "interrupt": {
+          "$ref": "#/$defs/Interrupt"
+        },
+        "threshold": {
+          "$ref": "#/$defs/Num_0_10000"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "threshold",
+        "interrupt"
+      ]
+    },
+    "Calendar": {
+      "type": "object",
+      "properties": {
+        "days_per_season": {
+          "$ref": "#/$defs/Int_1_2147483647"
+        },
+        "seasons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LocalId"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "seasons",
+        "days_per_season"
+      ]
+    },
+    "DayPart": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LocalId"
+        },
+        "start": {
+          "$ref": "#/$defs/TimeOfDay"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "start"
+      ]
+    },
+    "Int_0_1": {
+      "type": "integer",
+      "maximum": 1,
+      "minimum": 0
+    },
+    "Int_0_2147483647": {
+      "type": "integer",
+      "maximum": 2147483647,
+      "minimum": 0
+    },
+    "Int_1_1440": {
+      "type": "integer",
+      "maximum": 1440,
+      "minimum": 1
+    },
+    "Int_1_2147483647": {
+      "type": "integer",
+      "maximum": 2147483647,
+      "minimum": 1
+    },
+    "Int_8_1024": {
+      "type": "integer",
+      "maximum": 1024,
+      "minimum": 8
+    },
+    "Interrupt": {
+      "type": "string",
+      "enum": [
+        "now",
+        "step_boundary",
+        "walking",
+        "never"
+      ]
+    },
+    "LocalId": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Num_0_10000": {
+      "type": "number",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "multipleOf": 0.0001
+    },
+    "Num_10000_20000": {
+      "type": "number",
+      "maximum": 2.0,
+      "minimum": 1.0,
+      "multipleOf": 0.0001
+    },
+    "Num_1_327670000": {
+      "type": "number",
+      "maximum": 32767.0,
+      "minimum": 0.0001,
+      "multipleOf": 0.0001
+    },
+    "Tag": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    }
+  }
+}
