@@ -404,3 +404,40 @@ TEST_CASE("a damaged region file falls back to the generator") {
     CHECK(w.find_chunk({0, 0}) != nullptr);
     CHECK(w.stats().restored == 0);
 }
+
+// The Rust port runs the same scenario (rust/crates/forge-world/tests/save_parity.rs): both engines must write exactly
+// the region files in tests/data/world_save/1 and /2, so a world saved by one opens in the other.
+TEST_CASE("a save is the region files in tests/data/world_save") {
+    PoolScope pool;
+    SaveDir dir;
+    auto gen = std::make_shared<SideViewGenerator>(1, 0);
+    const std::filesystem::path fixtures = std::filesystem::path(FORGE_SOURCE_DIR) / "tests/data/world_save";
+    World w(WorldDesc{}, gen);
+    REQUIRE(w.open_save(dir.path));
+
+    load_around(w, view_at(0, 0, 64, 64));
+    CHECK(w.set_tile(1, 3, 4, 7));
+    CHECK(w.set_tile(0, 10, 10, 0xffff));
+    load_around(w, view_at(-70, -70, 64, 64)); // chunk (-2,-2), region (-1,-1)
+    CHECK(w.set_tile(1, -70, -70, 9));
+    load_around(w, view_at(5000, 0, 64, 64)); // chunk (78,0), region (2,0); (0,0) leaves memory changed
+    CHECK(w.set_tile(0, 5001, 1, 3));
+    CHECK(w.stats().stored_edits == 2);
+    const SaveReport first = w.save();
+    CHECK(first.ok);
+    CHECK(first.chunks == 3);
+    CHECK(first.regions == 3);
+    CHECK(folder_files(dir.path) == folder_files(fixtures / "1"));
+
+    // (78,0) back to what the generator makes: its saved copy goes; (0,0) changes again.
+    std::vector<TileId> generated(2 * kChunkTiles);
+    gen->generate({78, 0}, {generated.data(), 2});
+    CHECK(w.set_chunk_tiles({78, 0}, generated.data(), false));
+    load_around(w, view_at(0, 0, 64, 64));
+    CHECK(w.set_tile(1, 2, 2, 5));
+    const SaveReport second = w.save();
+    CHECK(second.ok);
+    CHECK(second.chunks == 1);
+    CHECK(second.regions == 2);
+    CHECK(folder_files(dir.path) == folder_files(fixtures / "2"));
+}
